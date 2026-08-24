@@ -1,0 +1,16 @@
+{
+    "plugins/smartclim/plugin_info/configuration.php": {
+        "Compte AUX Home": "AUX Home account",
+        "Adresse e-mail": "Email address",
+        "Adresse e-mail du compte AUX Home (celle de l'application mobile)": "Email address of the AUX Home account (the one used in the mobile app)",
+        "Mot de passe": "Password",
+        "Mot de passe du compte AUX Home. Il est stocké chiffré et n'est jamais journalisé.": "Password of the AUX Home account. It is stored encrypted and never logged.",
+        "Pays": "Country",
+        "Code pays ISO à 3 lettres (FRA, BEL, CHE, DEU…). Pré-rempli depuis le fuseau horaire de Jeedom ; hors Europe, saisissez-le manuellement. Un pays erroné fait échouer la connexion au cloud AUX Home.": "3-letter ISO country code (FRA, BEL, CHE, DEU…). Pre-filled from Jeedom's time zone; outside Europe, enter it manually. An incorrect country will cause the connection to the AUX Home cloud to fail.",
+        "Sans pays valide — ni saisi, ni déduit du fuseau horaire de Jeedom — aucune connexion au cloud n'est tentée.": "Without a valid country — neither entered manually nor derived from Jeedom's time zone — no connection to the cloud is attempted.",
+        "Rafraîchissement": "Refresh",
+        "Intervalle de rafraîchissement (minutes)": "Refresh interval (minutes)",
+        "Entre 1 et 1440 minutes, 5 minutes par défaut.": "Between 1 and 1440 minutes, 5 minutes by default.",
+        "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "The room temperature reported by AUX Home refreshes slowly (up to about 30 minutes); reducing this interval does not speed up the data."
+    }
+}

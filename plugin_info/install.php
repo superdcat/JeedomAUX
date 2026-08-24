@@ -19,12 +19,19 @@ require_once dirname(__FILE__) . '/../../../core/php/core.inc.php';
 
 // Fonction exécutée automatiquement après l'installation du plugin
 function smartclim_install() {
+  smartclim::amorcerPaysAuxHome();
 }
 
 // Fonction exécutée automatiquement après la mise à jour du plugin
 function smartclim_update() {
+  smartclim::amorcerPaysAuxHome();
 }
 
 // Fonction exécutée automatiquement après la suppression du plugin
 function smartclim_remove() {
+  // Volontairement vide : le core appelle cette fonction à chaque DÉSACTIVATION du
+  // plugin (plugin::setIsEnable(0) -> callInstallFunction('remove')), pas seulement à
+  // la désinstallation. Y purger les clés détruirait les identifiants cloud lors d'un
+  // simple cycle désactiver/réactiver. L'effacement volontaire passera par un bouton
+  // dédié en UC02.
 }

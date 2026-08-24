@@ -15,7 +15,8 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-08-24** (ajout des 7 analyses `smartclim-*`).
+> **Dernière mise à jour de cet index : 2026-08-25** (ajout de
+> `jeedom-config-plugin-et-cycle-de-vie.md`, issu du cycle UC01 du MVP).
 
 ---
 
@@ -32,6 +33,13 @@
 | **CSP Jeedom bloque tout média/image EXTERNE** → proxy same-origin (ex. tuile carte) | `jeedom-widgets-commandes.md` § 7 |
 | Ajouter une **PAGE** au menu Jeedom (panel) ; toggle natif `displayDesktopPanel/Mobile` ; page non-admin | `jeedom-panel-page-menu.md` |
 | **Afficher une image externe dans un panel** (carte…) : `data:` URI inline (panel serveur) vs proxy (widget client) | `jeedom-panel-page-menu.md` § 4 |
+| **Config plugin** : ordre réel de `config::save`, pourquoi `preConfig_<clé>` est parfois **court-circuité**, pourquoi valider **en lecture ET en écriture** | `jeedom-config-plugin-et-cycle-de-vie.md` § 1 |
+| **Valeur par défaut** d'une clé de config (`core/config/<id>.config.ini`) ; défaut **dynamique** non exprimable en INI | `jeedom-config-plugin-et-cycle-de-vie.md` § 2 |
+| `$_encryptConfigKey` : chiffré au repos **mais renvoyé en clair au navigateur** ; ne jamais vider un champ mot de passe en JS | `jeedom-config-plugin-et-cycle-de-vie.md` § 3 |
+| **Un `throw` dans `preConfig_*` fait PERDRE les clés suivantes** (`addKey` boucle sans transaction) | `jeedom-config-plugin-et-cycle-de-vie.md` § 4 |
+| Écrire un défaut dynamique **par construction** ; garde d'auth de `plugin_info/configuration.php` | `jeedom-config-plugin-et-cycle-de-vie.md` § 5 |
+| ⚠️ **`<id>_remove()` est appelée à chaque DÉSACTIVATION** du plugin → n'y rien mettre de destructif | `jeedom-config-plugin-et-cycle-de-vie.md` § 6 |
+| **Fichier du plugin exposé au web sans authentification** (`.txt` dans `plugin_info/`, dossiers en point, `.git/`) | `jeedom-config-plugin-et-cycle-de-vie.md` § 7 |
 
 ### SmartClim — plugin climatiseurs AUX / Broadlink / AC Freedom
 
@@ -65,6 +73,7 @@
 | Fichier | Sujet | Points clés indexés |
 |---|---|---|
 | `jeedom-widgets-commandes.md` | Widgets de commande Jeedom (templates dashboard/mobile), vérifié contre la source du core. | `cmd.<type>.<subType>.<nom>.html` + `setTemplate('<id>::<nom>')` ; tokens (`#id#`/`#logicalId#`/`#eqLogic_id#`/`#uid#`…) ; `#cmd_id[…]#` & `jeedom.cmd.byEqLogicId` **n'existent pas** → résoudre par AJAX **`byEqLogic`** ; **masqué ≠ non-exécutable** ; `jeedom.cmd.execute` (CSRF/droits, `success.result`=retour PHP) ; confirmation d'action `actionConfirm=1` → -32006 ; commande **paramétrée** subType `message` ; AJAX plugin admin-only inutilisable au dashboard ; **§ 7 CSP : média/image externe bloqué → proxy same-origin**. |
+| `jeedom-config-plugin-et-cycle-de-vie.md` | **Config plugin, hooks `preConfig`/`postConfig` et cycle de vie install/remove** — intégralement vérifié dans la source du core. | Ordre réel de `config::save` (défaut INI → `remove()` + **`preConfig_` NON appelé**) → d'où la **double barrière** valider-en-écriture-ET-en-lecture ; `postConfig_` d'une clé chiffrée reçoit **le chiffré** ; **pas de tiret dans les clés** (`preConfig_`/`postConfig_` ne manglent pas pareil) ; défauts via `core/config/<id>.config.ini` section `[<id>]`, fusionnés par `byKey` **et** `byKeys` ; `$_encryptConfigKey` déchiffré et **renvoyé en clair au navigateur** par `getKey` → ne **jamais** vider un champ mot de passe `configKey` en JS (écrasement silencieux) ; **`addKey` boucle sans transaction** → un `throw` dans `preConfig_*` perd les clés suivantes, donc normalisation silencieuse + `is_scalar` ; `configuration.php` = point d'entrée exécuté avant `getKey` (amorçage paresseux) et à passer en `isConnect('admin')` dès qu'il écrit ; ⚠️⚠️ **`<id>_remove()` appelée à chaque DÉSACTIVATION** (`plugin::setIsEnable(0)`) → rien de destructif dedans ; **exposition web** : `.txt` dans `plugin_info/`, dossiers en point, `.git/config` et son éventuel jeton. |
 | `jeedom-panel-page-menu.md` | Page de plugin au **menu** Jeedom (panel) & toggle d'affichage natif. | `info.json "display"`/`"mobile"` enregistre une page-panneau ; le core ajoute nativement les cases « Afficher le panneau desktop/mobile » (`displayDesktopPanel`/`displayMobilePanel`, masqué par défaut) → aucun toggle custom ; `plugin::getDisplay()` statique ; page panel = `isConnect()` non-admin + accès par eqLogic `hasRight('r')` + sélection par équipement ; **image externe : `data:` URI inline en panel serveur vs proxy same-origin en widget client** ; réf. `jeedom/plugin-gsl`. |
 
 ### Analyses propres au plugin **SmartClim** (créées le 2026-08-24, phase `/init-plugin`)

@@ -63,11 +63,15 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
     chiffre automatiquement les champs de config **plugin** sensibles.
   - `smartclimCmd extends cmd` — commande (info ou action). `execute($_options)` exécute une action
     (typiquement un `switch` sur `logicalId`).
-- **Classes annexes prévues** (chacune dans **son propre** fichier `<Classe>.class.php`, cf. Autoload) :
-  `smartclimException` (erreurs typées auth/réseau/protocole), `smartclimCapabilities` (énumérations
-  génériques + tables de correspondance), `smartclimFrame` (décodage/encodage de la trame HVAC),
-  `smartclimTransport` (sélection du transport actif), et **une brique par transport** :
-  `smartclimAuxHomeApi`, `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
+- **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**. **Existe** depuis
+  l'UC01 du MVP, où elle ne porte encore que la connaissance de protocole liée au **pays** : table de
+  correspondance fuseau IANA → ISO-3 (Europe) et `paysParDefaut()`. L'UC02 y ajoutera `getPubkey`,
+  `login/pwd`, l'en-tête `country` et la correspondance `auxhome_email` → champ `account`.
+- **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, cf.
+  Autoload) : `smartclimException` (erreurs typées auth/réseau/protocole), `smartclimCapabilities`
+  (énumérations génériques + tables de correspondance), `smartclimFrame` (décodage/encodage de la trame
+  HVAC), `smartclimTransport` (sélection du transport actif), et les deux autres briques de transport :
+  `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
   `isConnect('admin')`, `ajax::init()`, puis aiguille sur `init('action')` en branches
   `if (init('action') == '...')`. Pour un endpoint **non-admin** (widget de dashboard, page-panneau), créer
@@ -92,7 +96,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `.memory/analyse/jeedom-panel-page-menu.md`.
 - **`plugin_info/configuration.php`** — formulaire de la page de config **plugin** (`gotoPluginConf`).
   Champs liés en `class="configKey" data-l1key="<clé>"` (auto-load/save core via
-  `config::byKey/save(..., 'smartclim')`).
+  `config::byKey/save(..., 'smartclim')`). ⚠️ Ce fichier **écrit** en configuration (amorçage du pays
+  déduit du fuseau) : il est donc gardé par **`isConnect('admin')`**, comme les autres points d'entrée.
+- **`core/config/smartclim.config.ini`** — **valeurs par défaut** de la config plugin, section
+  `[smartclim]`. Mécanisme natif du core : `config::byKey()` **et** `config::byKeys()` y retombent quand
+  la clé est absente ou vide en base. ⚠️ Corollaire à connaître : `config::save()` d'une valeur **égale**
+  au défaut INI **supprime la ligne** en base et **court-circuite `preConfig_<clé>`** — d'où la règle de
+  **double barrière** (normaliser à l'écriture *et* à la lecture) appliquée dans `smartclim`.
 
 > ⚠️ **Accès restreint à `plugin_info/configuration.php`** — Claude Code **ne peut ni lire ni éditer**
 > ce fichier via les outils Read/Edit/Write (refusé par les permissions de session), et même un
@@ -148,9 +158,14 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
 
 ## Configuration & secrets
 
-- **Config plugin** (`config::save/byKey(..., 'smartclim')`) : compte(s) cloud et options globales —
-  identifiants AUX Home (e-mail, mot de passe, pays ISO-3), intervalle de rafraîchissement, et plus tard le
-  compte AUX Cloud legacy + sa région. Les clés **sensibles** se déclarent dans
+- **Config plugin** (`config::save/byKey(..., 'smartclim')`) : compte(s) cloud et options globales.
+  **Clés figées pour tout le MVP** (UC01), en `snake_case` anglais, **sans tiret** (`preConfig_<clé>`
+  dérive son nom de méthode de la clé) : `auxhome_email`, `auxhome_password` (**chiffrée**),
+  `auxhome_country` (ISO-3 majuscules, défaut déduit du fuseau Jeedom), `refresh_interval`
+  (1..1440 min, défaut 5 via l'INI). Plus tard s'y ajouteront le compte AUX Cloud legacy + sa région.
+  Les accesseurs normalisés `smartclim::emailAuxHome()`, `paysAuxHome()`, `intervalleRafraichissement()`
+  sont le **seul** point de lecture — ne jamais relire ces clés via `config::byKey` ailleurs.
+  `smartclim::compteConfigure()` est le **garde-fou à appeler avant tout appel réseau**. Les clés **sensibles** se déclarent dans
   `public static $_encryptConfigKey = array('<clé_mot_de_passe>', …);` sur la classe principale → le core
   les **chiffre/déchiffre automatiquement**. Les hooks `preConfig_<clé>($value)` permettent de
   valider/normaliser avant enregistrement (⚠️ `preConfig_<clé>` est un **nom de méthode fixe** — pas
@@ -164,6 +179,19 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   re-login réactif, avec anti-boucle (une seule tentative par cycle).
 - ⚠️ **Jamais** de secret/token/mot de passe en clair dans les logs (y compris dans une trace
   d'exception), le DOM, les réponses AJAX ou les commentaires. Au plus un préfixe tronqué.
+  **Unique exception, nommée et délibérée** : le mécanisme **`configKey` du core**. `config.ajax.php`
+  (`action=getKey` → `config::byKeys()`) **déchiffre** les clés de `$_encryptConfigKey` et les renvoie
+  **en clair** au navigateur, où elles atterrissent dans l'attribut `value` du champ. C'est le
+  comportement natif de **tout** plugin Jeedom — et du core lui-même (mots de passe SMTP, clés d'API) —
+  sur une surface **admin authentifiée**. Arbitré par l'utilisateur au cycle UC01 du MVP. Le champ est
+  donc `type="password"` (**masqué**, jamais vidé), et le secret reste chiffré au repos.
+  ⚠️ **Corollaire critique** : ne **jamais** vider en JS un champ mot de passe porteur de `configKey` —
+  la modale réenvoie **toutes** les clés à chaque sauvegarde, un champ vidé **écraserait le secret
+  stocké par une chaîne vide**, y compris lors d'un enregistrement visant un tout autre champ.
+- ⚠️ **Ne jamais mettre de purge de configuration dans `<id>_remove()`** : le core l'appelle à chaque
+  **désactivation** du plugin (`plugin::setIsEnable(0)` → `callInstallFunction('remove')`), pas seulement
+  à la désinstallation, et n'expose **aucun** hook distinguant les deux. Un effacement d'identifiants
+  doit être une **action volontaire** de l'utilisateur (bouton dédié).
 - ⚠️ **TLS toujours vérifié** — les implémentations publiques de référence du cloud legacy le désactivent ;
   ce plugin ne le fait pas. Si un certificat pose problème, l'anomalie est remontée, jamais contournée.
 
@@ -233,8 +261,17 @@ d'acceptation** des specs (`.memory/specs/`) qui en tiennent lieu.
   équipement**. Un seul appel réseau global par cycle quand l'API le permet, puis distribution.
   ⚠️ **Période de grâce après commande** (~60 s) : un état scruté plus ancien qu'une commande envoyée ne
   doit pas écraser les champs commandés (anti-rollback de consigne/marche).
-- Les `.htaccess` de `core/php`, `core/class`, `core/ajax`, `resources/`… interdisent l'accès web direct —
-  **les conserver**.
+- Les `.htaccess` interdisent l'accès web direct — **les conserver**. Présents dans `core/php`,
+  `core/class`, `core/config`, `plugin_info`, `.memory`, `.claude`, `.github`. ⚠️ `core/ajax` n'en a
+  **pas** et ne doit pas en avoir : il est appelé par le navigateur.
+  ⚠️ **`plugin_info/.htaccess` whiteliste des extensions** (`allow from all` sur les images) pour servir
+  `smartclim_icon.png` — cette section **neutralise** le `Deny from all` du dossier pour les extensions
+  listées. `txt` en a été **retiré** : sans quoi le miroir `configuration.txt` était téléchargeable **sans
+  authentification**, exposant le source de la page de configuration. **Ne jamais y remettre `txt`**, et
+  n'y ajouter aucune extension sans vérifier ce qu'elle rendrait public.
+  ⚠️ **Non couvert** : `.git/` reste servi sur une installation clonée en git — `GET .../.git/config`
+  expose l'URL du dépôt distant, et un **jeton** si le clone utilisait `https://user:token@…`. Aucun
+  `.htaccess` interne ne peut le fermer. Préférer une installation **par archive**.
 - `docs/<langue>/` = documentation **utilisateur** ; `.memory/` = analyse & specs **internes** (français).
 
 ## Internationalisation (i18n) — natif multilingue

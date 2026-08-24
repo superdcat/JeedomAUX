@@ -8,13 +8,13 @@
     "requests" : {"reinstall" : true}
   },
   "npm": {
-    "plugins/template/ressources/demond"  : {}
+    "plugins/smartclim/ressources/demond"  : {}
   },
   "composer": {
-       "plugins/template"  : {}
+       "plugins/smartclim"  : {}
   },
   "yarn": {
-    "plugins/template/ressources/demond"  : {}
+    "plugins/smartclim/ressources/demond"  : {}
   },
   "plugin": {
   },

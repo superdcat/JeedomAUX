@@ -1,73 +1,35 @@
 {
-	"id": "template",
-	"name": "Template",
+	"id": "smartclim",
+	"name": "SmartClim",
 	"pluginVersion": "0.1",
-	"specialAttributes": {
-		"object": {
-			"toto": {
-				"name": {
-					"fr_FR": "Plop je suis un attribut spécial"
-				},
-				"type": "input"
-			},
-			"toto2": {
-				"name": {
-					"fr_FR": "Plop je suis un attribut spécial number"
-				},
-				"type": "number"
-			}
-		},
-		"user": {
-			"toto": {
-				"name": {
-					"fr_FR": "Plop je suis un attribut spécial"
-				},
-				"type": "select",
-				"values": [
-					{
-						"value": "1",
-						"name": "valeur 1"
-					},
-					{
-						"value": "plop",
-						"name": "valeur plop"
-					}
-				]
-			}
-		}
-	},
 	"description": {
-		"fr_FR": "Template servant de base à la création de plugins pour Jeedom"
+		"fr_FR": "Pilotez depuis Jeedom vos climatiseurs Wi-Fi de l'écosystème AUX, Broadlink et AC Freedom (AUX Home, Ballu, Centek, Tornado, Royal Clima…) : marche/arrêt, mode, température de consigne, ventilation et fonctions de confort, en réseau local ou via le cloud.",
+		"en_US": "Control your AUX, Broadlink and AC Freedom Wi-Fi air conditioners from Jeedom (AUX Home, Ballu, Centek, Tornado, Royal Clima and more): power, mode, target temperature, fan speed and comfort features, over the local network or through the cloud.",
+		"de_DE": "Steuern Sie Ihre WLAN-Klimageräte des AUX-, Broadlink- und AC-Freedom-Ökosystems (AUX Home, Ballu, Centek, Tornado, Royal Clima …) direkt aus Jeedom: Ein/Aus, Betriebsart, Solltemperatur, Lüftung und Komfortfunktionen – lokal oder über die Cloud.",
+		"es_ES": "Controla desde Jeedom tus aires acondicionados Wi-Fi del ecosistema AUX, Broadlink y AC Freedom (AUX Home, Ballu, Centek, Tornado, Royal Clima…): encendido, modo, consigna de temperatura, ventilación y funciones de confort, en red local o a través de la nube."
 	},
 	"licence": "AGPL",
-	"author": "Jeedom SAS",
+	"author": "dcat",
 	"require": "4.2",
 	"os" : {
 		"min" : 10,
 		"max" : 12.99
 	},
-	"category": "programming",
+	"category": "wellness",
 	"hasDependency": false,
 	"hasOwnDeamon": false,
-	"maxDependancyInstallTime": 0,
-	"changelog_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/programming\/template\/beta\/changelog",
-	"changelog": "https:\/\/doc.jeedom.com\/#language#\/plugins\/programming\/template\/changelog",
-	"documentation_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/programming\/template\/beta",
-	"documentation": "https:\/\/doc.jeedom.com\/#language#\/plugins\/programming\/template",
+	"changelog_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/beta\/changelog",
+	"changelog": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/changelog",
+	"documentation_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/beta",
+	"documentation": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim",
 	"link": {
-		"forum": "Lien vers le forum",
-		"video": "Lien vers une video"
+		"forum": "https:\/\/community.jeedom.com\/"
 	},
 	"language": [
 		"fr_FR",
 		"en_US",
-		"es_ES",
 		"de_DE",
-		"ru_RU",
-		"id_ID",
-		"it_IT",
-		"ja_JP",
-		"pt_PT"
+		"es_ES"
 	],
 	"compatibility": [
 		"smart",

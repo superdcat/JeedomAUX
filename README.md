@@ -1,160 +1,132 @@
-# Template de plugin Jeedom (outillé pour Claude Code)
+# SmartClim — climatiseurs AUX / Broadlink / AC Freedom pour Jeedom
 
-Ce dépôt est une **base réutilisable pour créer un plugin [Jeedom](https://jeedom.com)**, augmentée d'un
-**outillage [Claude Code](https://claude.com/claude-code)** qui automatise le cadrage, la rédaction des
-specs et l'implémentation des fonctionnalités.
+Plugin [Jeedom](https://jeedom.com) pour piloter les **climatiseurs Wi-Fi de l'écosystème AUX / Broadlink /
+AC Freedom**, *quelle que soit la marque commerciale* : AUX, Ballu, Centek, Dunham Bush, Kenwood, Rinnai,
+Rcool, Tornado, Akai, Hyundai, Hisense, Royal Clima… **et toute autre marque utilisant le même protocole**.
 
-Vous pouvez l'utiliser de **deux façons** :
+> 🚧 **Statut : en développement.** Le socle MVP est spécifié et en cours d'implémentation, une UC à la
+> fois. Le plugin n'est pas encore publiable sur le market.
 
-- **Avec Claude Code** (recommandé) : deux commandes couvrent tout le cycle — `/init-plugin` cadre le
-  plugin et génère les specs, `/feature` implémente chaque fonctionnalité (spec technique → code → reviews
-  → traduction).
-- **À la main** (classique) : renommer le squelette avec l'assistant `helperConfiguration.php` puis coder
-  en suivant la [doc développeur Jeedom](https://doc.jeedom.com/fr_FR/dev/).
+## Pourquoi ce plugin
 
-> L'id du plugin dans ce template est `template` (classes `template` / `templateCmd`). C'est un
-> **placeholder à renommer** au début d'un vrai projet (voir « Renommer le squelette »).
+Les intégrations existantes ciblent soit le cloud historique **AC Freedom**, soit le **LAN Broadlink**,
+soit l'une des générations d'appareils. SmartClim vise une **couche générique** qui ne dépend pas du
+protocole :
 
----
+```text
+Device → Capabilities → Generic AC API → Transport
+                                            ├── Broadlink Local (UDP)
+                                            ├── AUX Cloud legacy (AC Freedom)
+                                            └── AUX Home Cloud (appareils récents)
+```
+
+Conséquences concrètes :
+
+- **Pas de whitelist de modèles.** Un appareil est pris en charge s'il est **joignable** par un des
+  transports ; ses commandes Jeedom sont créées d'après ses **capacités réellement détectées**, pas d'après
+  une liste de références.
+- **Les commandes ne bougent pas quand le transport change.** Un scénario écrit pour un climatiseur piloté
+  en LAN continue de fonctionner s'il bascule sur le cloud.
+- **Ajouter une génération de firmware = enrichir une table de données**, pas réécrire la logique.
+
+## Transports
+
+| Transport | Statut | Ce qu'il apporte |
+|---|---|---|
+| **AUX Home** (cloud récent) | 🟢 socle MVP | Les appareils récents, qui ne répondent plus au Broadlink UDP |
+| **Broadlink LAN** (UDP port 80) | ⚪ prévu | Pilotage **local**, sans Internet, latence divisée |
+| **AUX Cloud legacy / AC Freedom** | ⚪ prévu | Le parc historique et les régions USA / Chine / Russie |
+
+Une fois plusieurs transports disponibles, trois stratégies seront proposées **par équipement** :
+**AUTO** (défaut — LAN prioritaire, repli cloud automatique en cas d'échecs répétés, et retour au LAN
+dès qu'il redevient joignable), **LOCAL** (jamais de cloud) et **CLOUD** (jamais de LAN). Le transport
+réellement utilisé reste **visible** dans l'interface.
+
+## Fonctionnalités visées
+
+- **Découverte** des climatiseurs (« Scanner les climatiseurs »), avec **fusion** d'un même appareil trouvé
+  à la fois en LAN et dans le cloud — un équipement, pas deux.
+- **Pilotage** : marche/arrêt, mode (auto, froid, déshumidification, chaud, ventilation), température de
+  consigne, vitesse de ventilation, oscillations verticale et horizontale.
+- **Lecture d'état** : température ambiante, état en ligne, transport actif, fraîcheur de la donnée — y
+  compris après un changement fait **à la télécommande** ou **dans l'application constructeur**.
+- **Fonctions de confort** selon l'appareil : éco, sommeil, afficheur, ioniseur/santé, anti-moisissure,
+  nettoyage, silence, sécurité enfant, codes d'erreur.
+- **Ergonomie Jeedom** : widget « climatiseur » (dashboard + mobile) et page-panneau multi-climatiseurs
+  accessible aux utilisateurs non-admin.
 
 ## Prérequis
 
-- Une instance **Jeedom** pour tester (le plugin s'installe sous `<jeedom>/plugins/<id>/` et dépend du
-  core Jeedom ; il ne fonctionne pas isolément).
-- **Claude Code** si vous voulez utiliser l'outillage (`.claude/`).
-- `php` en ligne de commande pour l'assistant de renommage `helperConfiguration.php`.
+- Une instance **Jeedom** (4.2 minimum) — le plugin s'installe sous `<jeedom>/plugins/smartclim/` et dépend
+  du core Jeedom : il ne fonctionne pas isolément.
+- Un **compte AUX Home** (ou AC Freedom pour le transport historique) et au moins un climatiseur compatible.
+- Aucune dépendance système au MVP : le plugin est **100 % PHP**, sans démon.
 
----
+## Limites connues
 
-## Démarrage rapide avec Claude Code
+- ⚠️ **La température ambiante remontée par le cloud AUX Home n'est pas temps réel** : elle peut avoir
+  plusieurs dizaines de minutes de retard, y compris dans l'application officielle. Ne l'utilisez pas comme
+  sonde de régulation fine dans un scénario.
+- ⚠️ Un appareil dont la MAC appartient à Broadlink **n'est pas forcément pilotable en UDP local** :
+  plusieurs firmwares récents ignorent complètement le protocole Broadlink LAN. Le plugin bascule alors sur
+  le cloud, ce n'est pas une erreur.
+- ⚠️ Les protocoles sont issus de **reverse engineering** de sources tierces : une mise à jour de firmware
+  ou de backend peut casser un transport. C'est exactement ce que le multi-transport cherche à amortir.
 
-### 1. `/init-plugin` — cadrer et générer les specs
+## Développement
 
-Lancez la commande dans Claude Code :
+Le dépôt embarque un outillage [Claude Code](https://claude.com/claude-code) :
 
-```
-/init-plugin
-```
+- **`/feature <spec>`** implémente une UC de bout en bout : spec technique → code → reviews croisées
+  (qualité + sécurité) → traduction i18n → capitalisation mémoire.
+- **`/init-plugin`** a déjà servi au cadrage initial (analyses, roadmap, specs, renommage du squelette) et
+  n'est plus à relancer.
 
-Elle **vous interroge** sur ce que doit faire le plugin (but, appareil/service cible, id/nom, type
-d'intégration, sens des échanges, besoin d'un démon, authentification), puis :
+La feuille de route vit dans **`.memory/specs/`** : `MVP/` (8 UC ordonnées) puis `post-mvp/` (7 domaines).
+La connaissance protocolaire et les décisions d'architecture vivent dans **`.memory/analyse/`**, découvrable
+via son `INDEX.md`. Le brief d'origine est dans **`.memory/brief.md`**. Les conventions de code sont dans
+**`CLAUDE.md`**.
 
-1. **analyse** l'intégration (recherche du contrat de l'API/appareil + du fit Jeedom) et écrit des
-   **fichiers d'analyse** dans `.memory/analyse/` ;
-2. vous **présente une roadmap** (identité + socle MVP ordonné + fonctionnalités post-MVP par domaine) à
-   valider ;
-3. **renomme automatiquement le squelette** à votre id (`template` → `<id>` : contenu, noms de fichiers,
-   `info.json`) — **sans PHP**, via le port Python `plugin_info/helperConfiguration.py` ;
-4. **génère toutes les specs fonctionnelles** (`.memory/specs/MVP/` puis `.memory/specs/post-mvp/`) ;
-5. **met à jour `CLAUDE.md` et `README.md`** pour décrire le vrai plugin.
-
-> `/init-plugin` ne produit **pas** de code ni de spec technique : c'est le rôle de `/feature`, par UC.
-
-### 2. `/feature` — implémenter chaque fonctionnalité
-
-Pour chaque spec (en commençant par le socle MVP dans l'ordre) :
-
-```
-/feature 01-config-plugin
-```
-
-`/feature` produit la **spec technique**, la fait valider, délègue l'écriture du code à un agent
-développeur, lance des **reviews croisées** (qualité + sécurité), puis la **traduction** (i18n) et met à
-jour la mémoire du projet.
-
----
-
-## L'outillage Claude Code en détail
-
-Tout vit dans deux dossiers **versionnés** :
-
-### `.claude/` — commandes, agents, skills
-
-| Type | Nom | Rôle |
-|---|---|---|
-| **Commande** | `/init-plugin` | Cadrage : interview → analyse → roadmap → specs + mise à jour docs. |
-| **Commande** | `/feature <spec>` | Implémentation d'une fonctionnalité de bout en bout. |
-| **Agent** | `jeedom-plugin-architect` | Analyse la cible + Jeedom, écrit `.memory/analyse/`, produit la roadmap. |
-| **Agent** | `spec-writer` | Écrit les specs fonctionnelles d'un domaine (fan-out par `/init-plugin`). |
-| **Agent** | `php-jeedom-dev` | Développeur PHP/Jeedom : implémente une spec technique. |
-| **Agent** | `code-reviewer` | Review qualité (conventions, clarté, complexité, i18n, cohérence spec). |
-| **Agent** | `security-reviewer` | Review sécurité (secrets, injections, auth, dépendances). |
-| **Agent** | `translator` | Traduit les chaînes UI (`fr_FR` → `en_US`/`de_DE`/`es_ES`). |
-| **Skill** | `spec` | Méthode/format d'écriture d'une spec fonctionnelle. |
-| **Skill** | `dev` | Boucle d'implémentation (cadrer → coder → vérifier → auto-revue). |
-
-`.claude/agent-memory/` contient des **apprentissages persistants** de l'agent développeur sur cet
-environnement (ex. absence de `php -l` local, fichiers `desktop/php/*` en tabulations, restriction
-d'écriture de `configuration.php`).
-
-### `.memory/` — connaissance interne du projet
-
-- **`specs/`** — les specs des fonctionnalités : une **spec fonctionnelle** `NN-nom.md` (le « quoi » +
-  critères d'acceptation) et, produite par `/feature`, une **spec technique** `NN-nom-tech.md` (le
-  « comment »). Voir `.memory/specs/README.md`.
-- **`analyse/`** — connaissance Jeedom réutilisable, **découvrable via `.memory/analyse/INDEX.md`** (fournie
-  avec le template : widgets de commande, page au menu ; enrichie à l'analyse de votre plugin).
-- **`external/doc/jeedom/INDEX.md`** — index de la doc développeur Jeedom pour des consultations ciblées.
-
-### `CLAUDE.md`
-
-Fichier lu par **chaque session** Claude Code : conventions, architecture, i18n, pièges Jeedom
-(`packages.json`, autoload « 1 classe ↔ 1 fichier », restriction `configuration.php`…). `/init-plugin` le
-spécialise pour votre plugin ; tenez-le à jour ensuite.
-
----
-
-## Structure du dépôt
+### Structure du dépôt
 
 ```
 core/            Cœur PHP (classes eqLogic/cmd, ajax, includes, widgets)
 desktop/         UI desktop (page de config PHP, JS, modales)
-plugin_info/     Manifeste (info.json), install, configuration, packages.json, helperConfiguration.php
-resources/       Squelette de démon Python (optionnel, si canal persistant nécessaire)
+plugin_info/     Manifeste (info.json), install, configuration, packages.json
 docs/            Documentation utilisateur (par langue)
 .claude/         Outillage Claude Code (commandes, agents, skills, mémoire)
-.memory/         Specs, analyses et index de doc (connaissance interne, versionnée)
+.memory/         Brief, specs, analyses et index de doc (connaissance interne, versionnée)
 CLAUDE.md        Guide projet lu par Claude Code
 ```
 
-> ⚠️ **`plugin_info/configuration.php`** est édité via son miroir **`configuration.txt`** (source de vérité
+> ⚠️ **`plugin_info/configuration.php`** s'édite via son miroir **`configuration.txt`** (source de vérité
 > éditable), resynchronisé par `cp plugin_info/configuration.txt plugin_info/configuration.php`. Voir
 > `CLAUDE.md`.
 
----
-
-## Développement à la main (sans Claude Code)
-
-Le template reste un template Jeedom standard. Documentation :
-
-- [Utilisation du template de plugin](https://doc.jeedom.com/fr_FR/dev/plugin_template)
-- [Fichier info.json](https://doc.jeedom.com/fr_FR/dev/structure_info_json)
-- [Icône du plugin](https://doc.jeedom.com/fr_FR/dev/Icone_de_plugin)
-- [Widget du plugin](https://doc.jeedom.com/fr_FR/dev/widget_plugin)
-- [Documentation du plugin](https://doc.jeedom.com/fr_FR/dev/documentation_plugin)
-- [Publication du plugin](https://doc.jeedom.com/fr_FR/dev/publication_plugin)
-
-Renommage du squelette (`template` → votre id), deux options équivalentes :
-
-- **Avec PHP** (assistant interactif officiel) : `cd plugin_info && php helperConfiguration.php`.
-- **Sans PHP** (port Python, non interactif) :
-  `python plugin_info/helperConfiguration.py --id <id> --name "<Nom>" --category <cat> --daemon <yes|no> --dependency <yes|no>`
-  (ajoutez `--dry-run` pour prévisualiser). C'est ce que `/init-plugin` fait automatiquement.
-
-Votre plugin est alors prêt à coder.
-
----
-
-## Intégration continue & formatage
+### Intégration continue & formatage
 
 - La CI s'appuie sur les workflows réutilisables de Jeedom (`.github/workflows/work.yml`) : check du plugin
   sur push/PR vers `beta` et PR vers `master`.
-- Pousser sur une branche nommée **`prettier`** déclenche un bot qui reformate le code et commite
-  (uniformisation automatique).
+- Pousser sur une branche nommée **`prettier`** déclenche un bot qui reformate le code et commite.
 
-## Internationalisation
+### Internationalisation
 
-Le plugin est **nativement multilingue** : langue source **français** (la clé est le texte français),
-chaînes UI enveloppées (`{{...}}` en HTML/JS, `__('...', __FILE__)` en PHP), traductions dans
-`core/i18n/<langue>.json`. Avec Claude Code, la traduction est gérée en fin de `/feature` par l'agent
-`translator`.
+Plugin **nativement multilingue** : langue source **français** (la clé *est* le texte français), chaînes UI
+enveloppées (`{{...}}` en HTML/JS, `__('...', __FILE__)` en PHP), traductions dans
+`core/i18n/<langue>.json` pour `en_US`, `de_DE` et `es_ES`.
+
+## Crédits
+
+L'implémentation s'appuie sur l'analyse de projets open source ayant documenté ces protocoles, notamment
+[`maeek/ha-aux-cloud`](https://github.com/maeek/ha-aux-cloud),
+[`fparrav/homebridge-aux-cloud`](https://github.com/fparrav/homebridge-aux-cloud),
+[`azadaydinli/ac_freedom`](https://github.com/azadaydinli/ac_freedom),
+[`azadaydinli/homebridge-ac-freedom`](https://github.com/azadaydinli/homebridge-ac-freedom),
+[`latentharbor/ha-aux-a-plus`](https://github.com/latentharbor/ha-aux-a-plus) et
+[`GijsZwegers/com.zwegersit.auxairco`](https://github.com/GijsZwegers/com.zwegersit.auxairco).
+La liste complète, avec les licences et notices, sera publiée avec la documentation utilisateur.
+
+## Licence
+
+AGPL — voir la doc [développeur Jeedom](https://doc.jeedom.com/fr_FR/dev/) pour le cadre de publication des
+plugins.

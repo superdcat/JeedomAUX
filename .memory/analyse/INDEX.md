@@ -12,8 +12,10 @@
 > fichier thématique (ou en créer un) **et mettre à jour cet index** (ligne + déclencheurs § 0 + date).
 >
 > Le template est livré avec **deux analyses génériques Jeedom** (vérifiées contre la source du core),
-> réutilisables par tout plugin. Les analyses **propres à un plugin concret** viendront s'ajouter ici au
-> fil du développement.
+> réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
+> AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
+>
+> **Dernière mise à jour de cet index : 2026-08-24** (ajout des 7 analyses `smartclim-*`).
 
 ---
 
@@ -31,6 +33,27 @@
 | Ajouter une **PAGE** au menu Jeedom (panel) ; toggle natif `displayDesktopPanel/Mobile` ; page non-admin | `jeedom-panel-page-menu.md` |
 | **Afficher une image externe dans un panel** (carte…) : `data:` URI inline (panel serveur) vs proxy (widget client) | `jeedom-panel-page-menu.md` § 4 |
 
+### SmartClim — plugin climatiseurs AUX / Broadlink / AC Freedom
+
+| Si l'incertitude porte sur… | Fichier |
+|---|---|
+| **Quel protocole parle CET appareil ?** générations G1/G2/G3, marques, matrice de décision, **une MAC Broadlink ne garantit rien** | `smartclim-ecosysteme-aux-broadlink.md` §§ 1-4 |
+| **Licences** des projets étudiés : qui est réutilisable, sous quelle condition (AGPL du plugin) | `smartclim-ecosysteme-aux-broadlink.md` § 6 |
+| **AUX Home** (`eu-smthome-api.aux-global.com`) : `getPubkey`, chiffrement RSA/AES du login, bearer, `/app/user_device`, `/app/device/v2/control` | `smartclim-transport-aux-home.md` §§ 1-4 |
+| En-tête **`country` (ISO-3)** : cause documentée d'échec de login AUX Home | `smartclim-transport-aux-home.md` § 5 |
+| Décoder `status.control` / `status.running` (trames `bb00…`) ; **température ambiante = octet[15] − 32** ; fraîcheur très lente | `smartclim-transport-aux-home.md` § 6 |
+| **Broadlink LAN** : découverte broadcast, auth `0x65`, AES-128-CBC, structure de paquet, décodage/encodage d'état | `smartclim-transport-broadlink-lan.md` §§ 1-6 |
+| ⚠️ LAN : l'écriture est un **état COMPLET** (un champ manquant = 0 = extinction) ; marqueur `0x0F` obligatoire | `smartclim-transport-broadlink-lan.md` §§ 5.4-5.5 |
+| Repli LAN → cloud (seuil de 3 échecs, backoff) | `smartclim-transport-broadlink-lan.md` § 7 |
+| **AUX Cloud legacy** (`app-service-*.smarthomecs.*`) : login AES, familles, `sdkcontrol`, `cookie` à recomposer, WebSocket relay | `smartclim-transport-aux-cloud-legacy.md` |
+| ⚠️ Toujours inclure `pwr` dans une commande cloud legacy | `smartclim-transport-aux-cloud-legacy.md` § 4.1 |
+| **Tables de correspondance** générique ↔ codes propriétaires (modes, vitesses, oscillations, échelles de température) — ⚠️ 3 numérotations différentes | `smartclim-modele-abstrait-capacites.md` § 3 |
+| **Profil de capacités** : comment le détecter par transport, comment le faire évoluer sans casser les scénarios | `smartclim-modele-abstrait-capacites.md` § 4 |
+| **Modèle eqLogic**, `logicalId` (MAC normalisée), fusion des doublons LAN/cloud, config plugin chiffrée, crons | `smartclim-architecture-jeedom.md` §§ 1-6 |
+| **Nomenclature des `logicalId` de commande** + règles de création dynamique | `smartclim-architecture-jeedom.md` § 5 |
+| **État optimiste / anti-état-périmé** après une commande | `smartclim-architecture-jeedom.md` § 7 |
+| **Démon ou pas ?** Python vs Node vs PHP pur, dépendances `packages.json`, ce qui déclencherait une révision | `smartclim-daemon-choix.md` |
+
 > Si aucun fichier ne couvre le sujet : ce n'est pas (encore) analysé en interne → passer à la doc externe
 > (`.memory/external/doc/jeedom/INDEX.md` pour le core Jeedom, ou la doc de l'API tierce du plugin), et
 > penser à capitaliser en Étape 12.
@@ -43,3 +66,15 @@
 |---|---|---|
 | `jeedom-widgets-commandes.md` | Widgets de commande Jeedom (templates dashboard/mobile), vérifié contre la source du core. | `cmd.<type>.<subType>.<nom>.html` + `setTemplate('<id>::<nom>')` ; tokens (`#id#`/`#logicalId#`/`#eqLogic_id#`/`#uid#`…) ; `#cmd_id[…]#` & `jeedom.cmd.byEqLogicId` **n'existent pas** → résoudre par AJAX **`byEqLogic`** ; **masqué ≠ non-exécutable** ; `jeedom.cmd.execute` (CSRF/droits, `success.result`=retour PHP) ; confirmation d'action `actionConfirm=1` → -32006 ; commande **paramétrée** subType `message` ; AJAX plugin admin-only inutilisable au dashboard ; **§ 7 CSP : média/image externe bloqué → proxy same-origin**. |
 | `jeedom-panel-page-menu.md` | Page de plugin au **menu** Jeedom (panel) & toggle d'affichage natif. | `info.json "display"`/`"mobile"` enregistre une page-panneau ; le core ajoute nativement les cases « Afficher le panneau desktop/mobile » (`displayDesktopPanel`/`displayMobilePanel`, masqué par défaut) → aucun toggle custom ; `plugin::getDisplay()` statique ; page panel = `isConnect()` non-admin + accès par eqLogic `hasRight('r')` + sélection par équipement ; **image externe : `data:` URI inline en panel serveur vs proxy same-origin en widget client** ; réf. `jeedom/plugin-gsl`. |
+
+### Analyses propres au plugin **SmartClim** (créées le 2026-08-24, phase `/init-plugin`)
+
+| Fichier | Sujet | Points clés indexés |
+|---|---|---|
+| `smartclim-ecosysteme-aux-broadlink.md` | Panorama de l'écosystème AUX / Broadlink / AC Freedom, matrice de décision de transport, licences des sources. | **3 générations** : G1 Broadlink UDP 80 · G2 AUX Cloud legacy (`smarthomecs`/`ibroadlink`) · G3 AUX Home / AUX A+ (`aux-global.com`, LAN **AUXLink** TCP 12416) ; ⚠️ **une MAC Broadlink ne garantit PAS le pilotage UDP** (cas de l'appareil de validation) ; **les 3 transports véhiculent la même trame HVAC `bb00…`** → décodeur mutualisable ; multimarque = critère protocole, pas whitelist ; ⚠️ les deux dépôts `azadaydinli` sont **sans licence** (pas de copie de code). |
+| `smartclim-transport-aux-home.md` | **Transport du MVP** : nouveau cloud `eu-smthome-api.aux-global.com`. | Enveloppe `{code,message,data}` — **succès = `code == 200`**, pas le code HTTP ; `GET /app/auth/getPubkey` (**vérifié live**) → `POST /app/auth/login/pwd` (mot de passe **RSA/ECB/PKCS1** par blocs de 117 o., compte **AES-128-ECB** clé fixe de l'APK) ; **pas de refresh token** → re-login réactif ; en-tête **`country` ISO-3 critique** ; `GET /app/user_device?getStatus=1` (**un seul appel = tous les états**) ; `POST /app/device/v2/control` avec `{intent, dst, deviceId}` ; ⚠️ **une intention par requête** ; ambiante = `status.running` octet[15] − 32, **fraîcheur de plusieurs minutes à 30 min** ; **aucun push confirmé** ; ❓ table `wind_speed` contestée. |
+| `smartclim-transport-broadlink-lan.md` | Transport LAN historique (UDP 80, protocole Broadlink AC). | Découverte broadcast (80/15001/2415) ; auth `0x65` → clé + id de session, **attendre 200 ms** ; AES-128-CBC **zero padding**, ⚠️ IV octet 3 = `0x99` ; 2 sommes de contrôle distinctes ; magics `getState`(32 o.)/`getInfo`(48 o.) ; ⚠️ **l'écriture est un état COMPLET** (champ absent = 0 = extinction) et le marqueur `0x0F` de l'octet 12 est **obligatoire** ; repli LAN→cloud au **3ᵉ** échec ; ⚠️ MAC lue à des offsets/ordres **opposés** selon les références ; faisable **en PHP pur**. |
+| `smartclim-transport-aux-cloud-legacy.md` | Transport cloud historique AC Freedom / AUX Cloud. | 4 régions (`smarthomecs.de/.com`, `ibroadlink.com`) ; login = SHA1+MD5+**AES-128-CBC** sur corps binaire ; `getfamilylist` → `dev/query` → `sdkcontrol` (get **et** set) ; ⚠️ `cookie` à **décoder puis recomposer** ; ⚠️ **toujours inclure `pwr`** sinon extinction ; `get` avec `params: []` = **meilleure détection de capacités** ; **WebSocket relay** (keep-alive 10 s) = **seul push confirmé de l'écosystème** ; ⚠️ les références désactivent TLS — **SmartClim ne le fera pas**. |
+| `smartclim-modele-abstrait-capacites.md` | Abstraction `Device → Capabilities → Generic AC API → Transport` + tables de correspondance. | Contrat de transport (`decouvrir`/`sonder`/`lireEtat`/`lireCapacites`/`appliquer`) ; état générique ; ⚠️ **3 numérotations différentes** de `mode` (AUX Home = fil ≠ legacy) et de `fanSpeed` ; ⚠️ **3 échelles de température** (entier / bits / ×10) ; `SILENT`/`MEDIUM_LOW`/`MEDIUM_HIGH` **écrivables mais non relisables** en AUX Home ; profil de capacités persisté, **enrichi jamais amputé** (ne pas casser les scénarios). |
+| `smartclim-architecture-jeedom.md` | Traduction Jeedom : eqLogic, commandes, config, crons, UI. | Catégorie **`wellness`** ; 8 classes, **1 classe ↔ 1 fichier** ; **1 eqLogic = 1 climatiseur**, `logicalId = mac:<MAC normalisée>` ; fusion des doublons (⚠️ tester **MAC ET MAC inversée**) ; `$_encryptConfigKey` + jeton en **cache chiffré** ; ⚠️ `configuration.txt` → `cp` vers `.php` ; nomenclature **stable** des `logicalId` de commande (survit à un changement de transport) ; création dynamique idempotente **sans écraser les choix utilisateur** ; `cron5` global + `try/catch` par équipement ; **état optimiste** + période de grâce ~60 s + déduplication (anti-rollback, anti-bips). |
+| `smartclim-daemon-choix.md` | Arbitrage démon : PHP pur vs Python vs Node.js. | **MVP sans démon** (`hasOwnDeamon: false`, `hasDependency: false`) : AUX Home est du REST et sa lenteur vient du backend ; PHP couvre RSA/AES/UDP nativement ; **le code réutilisable est massivement Python (MIT)** et couvre justement WebSocket/MQTT/TCP persistant ; Node = squelette et `packages.json` npm inexploitables en l'état ; ⚠️ `--daemon no` **supprime `resources/`** → à récupérer si un démon arrive ; rappels des pièges `packages.json` (version dans la valeur, exacte, pas de `dependancy_info()`). |

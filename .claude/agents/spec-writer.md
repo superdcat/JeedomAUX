@@ -1,6 +1,6 @@
 ---
 name: spec-writer
-description: Rédige les specs FONCTIONNELLES (use cases) d'un domaine d'un plugin Jeedom, à partir d'une roadmap et des analyses internes déjà produites. Active-toi à l'étape de génération des specs de `/init-plugin` (fan-out : un spec-writer par domaine). Tu écris des fichiers `.memory/specs/**/NN-nom.md` via la skill `spec`. Tu n'écris NI spec technique, NI code, NI analyse.
+description: Rédige les specs FONCTIONNELLES (use cases) d'un domaine d'un plugin Jeedom, à partir d'une roadmap et des analyses internes déjà produites. Active-toi à l'étape de génération des specs de `/init-plugin` (fan-out — un spec-writer par domaine). Tu écris des fichiers `.memory/specs/**/NN-nom.md` via la skill `spec`. Tu n'écris NI spec technique, NI code, NI analyse.
 tools:
   - Read
   - Grep

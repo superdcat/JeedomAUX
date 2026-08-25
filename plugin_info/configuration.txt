@@ -15,7 +15,13 @@
 * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
 */
 
-require_once dirname(__FILE__) . '/../../../core/php/core.inc.php';
+// Ce fichier est TOUJOURS inclus par le core (index.php?v=d&plugin=smartclim&configure=1),
+// donc core.inc.php est déjà chargé : volontairement AUCUN require_once ici. Un chemin
+// relatif ('/../../../core/php/core.inc.php') devient faux dès que le dossier du plugin
+// n'est pas directement sous <jeedom>/plugins (montage Docker, lien symbolique, install
+// atypique) et produit alors un E_COMPILE_ERROR NON rattrapable : HTTP 500 sur le panneau
+// de configuration, donc un panneau VIDE, sans le moindre message pour l'admin. Même
+// convention que desktop/php/smartclim.php, également inclus par le core sans require.
 include_file('core', 'authentification', 'php');
 if (!isConnect('admin')) {
   include_file('desktop', '404', 'php');
@@ -25,7 +31,17 @@ if (!isConnect('admin')) {
 // Amorçage paresseux du pays AUX Home depuis le fuseau horaire de Jeedom : couvre le cas
 // d'un plugin posé à la main ou cloné en git, où smartclim_install() n'est pas garanti
 // d'avoir été exécuté (ceinture + bretelles avec plugin_info/install.php).
-smartclim::amorcerPaysAuxHome();
+// ⚠ Enveloppé dans un try/catch(Throwable) : cet amorçage n'est qu'un CONFORT (pré-remplir
+// le pays). S'il échoue — classe annexe absente d'une mise à jour partielle (l'autoload lève
+// une Error PHP 7+ "Class not found", donc rattrapable ici), cache indisponible, hook
+// postConfig_auxhome_country en erreur — le formulaire doit MALGRÉ TOUT s'afficher : sans
+// cela l'admin perd l'accès à toute la configuration du plugin (HTTP 500 = panneau vide) et
+// n'a plus aucun moyen de saisir ses identifiants. L'échec part au log, jamais à l'écran.
+try {
+  smartclim::amorcerPaysAuxHome();
+} catch (Throwable $t) {
+  log::add('smartclim', 'error', 'Amorçage du pays AUX Home impossible : ' . get_class($t) . ' : ' . $t->getMessage() . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
+}
 ?>
 <form class="form-horizontal">
   <fieldset>
@@ -88,7 +104,7 @@ smartclim::amorcerPaysAuxHome();
   // message déjà traduit — il n'envoie et ne lit AUCUN secret, et NE TOUCHE JAMAIS à un
   // champ .configKey (un champ vidé côté client écraserait le secret stocké à
   // l'enregistrement suivant de la modale).
-  // ⚠️ Les 5 chaînes JS de ce bloc (lignes 101, 112, 114, 132, 154) sont toutes en
+  // ⚠️ Les 5 chaînes JS de ce bloc (lignes 117, 128, 130, 148, 170) sont toutes en
   // guillemets DOUBLES (jamais simples) : le français comme plusieurs traductions
   // cibles contiennent des apostrophes, qui casseraient une chaîne délimitée par des
   // guillemets simples — panne invisible à php -l comme à la CI. Numéros de ligne

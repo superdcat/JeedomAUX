@@ -9,6 +9,7 @@ tools:
   - Write
   - Bash
 model: sonnet
+effort: low
 ---
 
 # Sub-agent Translator (i18n)

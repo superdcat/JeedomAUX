@@ -6,6 +6,7 @@ tools:
   - Grep
   - Glob
 model: sonnet
+effort: high
 ---
 
 # Sub-agent Security Reviewer

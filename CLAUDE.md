@@ -44,8 +44,16 @@ enrichissant une **table de données**, pas en modifiant la logique.
 Ce dépôt embarque, en plus du code du plugin, un **outillage Claude Code** pour développer les features de
 manière structurée :
 - **`.claude/`** — commandes `/init-plugin` (cadrage, déjà joué) et `/feature` (implémentation d'une UC),
-  sous-agents (`jeedom-plugin-architect`, `spec-writer`, `php-jeedom-dev`, `code-reviewer`,
-  `security-reviewer`, `translator`), skills `spec` et `dev`, mémoire d'agent.
+  sous-agents (`jeedom-plugin-architect`, `jeedom-tech-planner`, `spec-writer`, `php-jeedom-dev`,
+  `code-reviewer`, `security-reviewer`, `translator`), skills `spec` et `dev`, mémoire d'agent.
+  ⚠️ **Chaque sous-agent épingle son `effort` dans son frontmatter** : sans cette ligne il **hérite de
+  l'effort de la session**, et la boucle d'édition mécanique tourne au niveau de réflexion de
+  l'orchestrateur — c'est là que partent les tokens, pas dans le raisonnement de l'orchestrateur lui-même.
+  La réflexion coûteuse est concentrée là où une erreur se paie cher : le **plan**
+  (`jeedom-tech-planner`, Opus `xhigh`) et les **reviews** (`code-reviewer`/`security-reviewer`, `high`).
+  Elle est volontairement basse là où le travail est mécanique et déjà cadré (`php-jeedom-dev` `medium`,
+  `spec-writer` `medium`, `translator` `low`). Les commandes s'élèvent elles-mêmes : `/feature` en `high`
+  (il ne fait plus que piloter), `/init-plugin` en `xhigh` (cadrage = arbitrage).
 - **`.memory/`** — connaissance interne **versionnée** : `specs/` (specs fonctionnelles/techniques des
   features), `analyse/` (décisions/pièges Jeedom **et** protocoles AUX/Broadlink), `external/doc/` (index
   de la doc externe).
@@ -447,10 +455,11 @@ L'outillage `/` fonctionne en **deux temps** :
 
 - **Bootstrap — `/init-plugin`** : ✅ **déjà joué** (cadrage, analyses, renommage du squelette, specs
   fonctionnelles). Ne pas le relancer : il refuserait d'écraser un cadrage existant.
-- **Implémentation — `/feature <spec>`** (à lancer par UC) : à partir d'une spec fonctionnelle, produit le
-  plan technique, le fait valider, délègue l'implémentation à l'agent `php-jeedom-dev` (skill `dev`), lance
-  les reviews croisées (`code-reviewer`, `security-reviewer`), puis la traduction (`translator`) et la
-  capitalisation mémoire.
+- **Implémentation — `/feature <spec>`** (à lancer par UC) : à partir d'une spec fonctionnelle, **fait
+  produire le plan technique par l'agent `jeedom-tech-planner`**, le fait valider par l'utilisateur, écrit
+  la spec technique, délègue l'implémentation à l'agent `php-jeedom-dev` (skill `dev`), lance les reviews
+  croisées (`code-reviewer`, `security-reviewer`), puis la traduction (`translator`) et la capitalisation
+  mémoire.
 
 > **Maintenance de ce fichier** : `CLAUDE.md` est lu par **toute** future session. Le tenir à jour quand
 > l'architecture, les conventions ou l'outillage changent. En revanche, l'**avancement détaillé** (quelle

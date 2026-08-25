@@ -1,26 +1,34 @@
 ---
-description: Prépare et valide le plan technique complet d'une feature à partir de sa spec fonctionnelle, puis délègue l'implémentation à l'agent php-jeedom-dev, exécute les reviews croisées et la traduction.
+description: Fait produire le plan technique d'une feature par le sous-agent jeedom-tech-planner, le fait valider par l'utilisateur, puis délègue l'implémentation à l'agent php-jeedom-dev, exécute les reviews croisées et la traduction.
 argument-hint: [nom-de-la-spec]
 model: opus
-effort: xhigh
+effort: high
 ---
 
 # Workflow agentic complet — orchestrateur
 
 Tu vas dérouler le workflow complet pour la feature `$ARGUMENTS`.
 
-Tu es l'**orchestrateur/architecte** (Opus, `effort: xhigh`). Ton travail : **préparer et faire valider
-le plan technique**, puis **déléguer l'implémentation** à l'agent `php-jeedom-dev` (Sonnet), et enfin
-piloter reviews croisées, traduction et capitalisation. **Tu ne codes pas toi-même** la feature :
-l'écriture du code est confiée à l'agent développeur (étape 6). Tu restes responsable de la qualité du
-plan, de la validation utilisateur, des gates de review et de la synthèse finale.
+Tu es l'**orchestrateur** (Opus, `effort: high`). Ton travail : **faire produire puis faire valider le
+plan technique**, **déléguer l'implémentation** à l'agent `php-jeedom-dev` (Sonnet), et enfin piloter
+reviews croisées, traduction et capitalisation. **Tu ne codes pas toi-même** la feature (étape 6), et
+**tu ne rédiges pas le plan toi-même** (étape 2) : l'arbitrage d'architecture est porté par le sous-agent
+`jeedom-tech-planner` (Opus, `effort: xhigh`) en contexte isolé. Tu restes responsable du **jugement** sur
+son plan, de la validation utilisateur, des gates de review et de la synthèse finale.
+
+**Répartition de l'effort — délibérée, ne l'inverse pas.** La réflexion coûteuse est concentrée là où une
+erreur se paie cher : le **plan** (`jeedom-tech-planner`, `xhigh`) et les **reviews** (`code-reviewer` et
+`security-reviewer`, `high`). Elle est volontairement basse là où le travail est mécanique et déjà cadré
+(`php-jeedom-dev` en `medium`, `translator` en `low`). Corollaire : **ne re-fais pas en `high` le travail
+d'un agent en `xhigh`** — si son livrable ne te convient pas, relance-le, ne le remplace pas.
 
 ## Consultation doc & connaissance — À LA DEMANDE seulement (lazy)
 
-Tu élabores le **plan** à partir de la spec et de `CLAUDE.md` (déjà en contexte). **Ne charge RIEN « par
-sécurité ».** Ne consulte une source externe/interne **que si une incertitude concrète te bloque**
-(typiquement étapes 2 et 7 — le plan et sa vérification ; la consultation en cours de code est gérée par
-l'agent `php-jeedom-dev` via la skill `dev`) ; sinon, avance.
+Tu pilotes à partir de la spec et de `CLAUDE.md` (déjà en contexte). **Ne charge RIEN « par sécurité ».**
+Ne consulte une source externe/interne **que si une incertitude concrète te bloque** — typiquement à
+l'**étape 7** (vérification du livrable). L'étude des contrats externes du plan est portée par
+`jeedom-tech-planner` (étape 2) et la consultation en cours de code par `php-jeedom-dev` via la skill
+`dev` : c'est **exprès** que ces lectures ne remontent pas dans ton contexte. Sinon, avance.
 
 Quand c'est le cas, dans cet ordre et en t'arrêtant dès que tu as la réponse — chaque INDEX porte son
 propre mode d'emploi en en-tête, ne le redécris pas ici :
@@ -46,23 +54,40 @@ Confirme en 1-2 phrases ce que tu as chargé. Si aucune spec fonctionnelle n'exi
 feature, **demande à l'utilisateur** de la fournir/valider avant de continuer (le plan technique dérive
 de ses critères d'acceptation).
 
-## Étape 2 — Générer le plan technique
+## Étape 2 — Plan technique (sous-agent `jeedom-tech-planner`)
 
-Sur la base de la spec, propose un plan concis :
+**Tu ne rédiges pas le plan.** Invoque le sous-agent **`jeedom-tech-planner`** (Opus, `effort: xhigh`) :
+c'est lui qui porte l'arbitrage d'architecture **et** la recherche des contrats externes, en contexte
+isolé — ce qui garde ton contexte d'orchestrateur propre sur toute la durée du cycle.
 
-- **Contrats externes** : pour chaque appel réseau (API HTTP, commande via démon…), l'endpoint/topic, les
-  paramètres/payload et le format de réponse. En cas de doute, applique *Consultation à la demande*
-  (interne d'abord, puis code de référence/doc de l'API) **avant** de figer le plan — pas en cours
-  d'implémentation.
-- Type de composant ; architecture (fichiers à créer/modifier) ; logique de validation ; appels AJAX /
-  actions nécessaires ; dépendances éventuelles (`packages.json`).
-- **Impact i18n** : lister les nouvelles chaînes UI **en français uniquement** (clés `{{...}}` / `__()`).
-  La traduction est différée (étape 10) — ici on anticipe juste la liste FR.
+Passe-lui **explicitement** dans son prompt de lancement :
+
+- le **nom de la feature** `$ARGUMENTS` ;
+- le **chemin de la spec fonctionnelle** chargée à l'étape 1 ;
+- toute **contrainte** exprimée par l'utilisateur dans sa demande (choix déjà arrêté, périmètre à ne pas
+  dépasser, décision de recette à respecter).
+
+Il te rend un plan structuré : critères couverts, contrats externes (avec sources citées), architecture
+fichier par fichier, signatures, validation/erreurs, impact i18n FR, risques, questions ouvertes.
+
+Relis-le **de façon critique** avant de l'exposer :
+
+- une **question ouverte** qu'il remonte se tranche avec l'utilisateur à l'étape 4, **jamais en silence** ;
+- un critère d'acceptation non couvert est un **blocage**, pas un détail ;
+- si le plan est hors spec ou incomplet, **relance le même agent** via `SendMessage` (son contexte est
+  conservé) plutôt que d'écrire le plan à sa place — c'est lui qui est en `xhigh`.
+
+**Conserve son `agentId`** : tu peux avoir à le rappeler à l'étape 3 (contradiction avec l'advisor) ou à
+l'étape 4 (ajustement demandé par l'utilisateur).
 
 ## Étape 3 — Challenge par advisor
 
 Invoque le sous-agent `code-reviewer` en mode advisor (revue critique du **plan**, pas du code) : risques
 d'architecture, points de convention, suggestions. Présente la synthèse.
+
+Si l'advisor **contredit** le planner sur un point d'architecture, **ne tranche pas seul** : renvoie la
+contradiction au planner via `SendMessage`, ou porte-la explicitement à l'utilisateur à l'étape 4. Deux
+avis divergents laissés non arbitrés dans la spec technique se paient en dette d'implémentation.
 
 ## Étape 4 — Validation utilisateur du plan
 
@@ -97,8 +122,11 @@ Plan validé, écris la spec technique dans `.memory/specs/[même dossier]/$ARGU
 
 ## Étape 6 — Délégation de l'implémentation à l'agent `php-jeedom-dev`
 
-**Tu ne codes pas.** Invoque le sous-agent **`php-jeedom-dev`** (Sonnet, `effort: xhigh`) pour écrire le
-code à partir de la spec technique. Il tourne en contexte neuf : passe-lui **explicitement** dans son
+**Tu ne codes pas.** Invoque le sous-agent **`php-jeedom-dev`** (Sonnet, `effort: medium`) pour écrire le
+code à partir de la spec technique. Son effort est volontairement modéré : le plan est **déjà arbitré**,
+son travail est de l'exécuter et de boucler jusqu'au vert. Corollaire à surveiller à l'étape 7 — s'il
+remonte une **décision d'architecture** au lieu de l'avoir prise, c'est le comportement attendu : c'est à
+toi (ou au planner) de la trancher, pas à lui. Il tourne en contexte neuf : passe-lui **explicitement** dans son
 prompt de lancement :
 
 - le **nom de la feature** `$ARGUMENTS` ;

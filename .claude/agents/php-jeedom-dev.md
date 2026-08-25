@@ -10,7 +10,7 @@ tools:
   - Bash
   - Skill
 model: sonnet
-effort: xhigh
+effort: medium
 memory: project
 skills:
   - dev
@@ -100,7 +100,10 @@ aveuglément.
 Suis la boucle de la skill `dev` (cadrer → implémenter par petits incréments → vérifier → auto-revue →
 itérer). **Boucle autant de fois que nécessaire** : tu ne rends la main que lorsque **tous** les critères
 d'acceptation sont couverts (ou explicitement marqués « à valider en recette ») **et** que la checklist
-qualité de la skill est intégralement verte. Tu tournes en `effort: xhigh` : sois rigoureux, pas rapide.
+qualité de la skill est intégralement verte. Tu tournes en `effort: medium` : le plan technique est
+**déjà arbitré** (sous-agent `jeedom-tech-planner`, en `xhigh`), ton travail est de l'exécuter proprement
+et de boucler jusqu'au vert — pas de le re-concevoir. Si tu butes sur une décision d'architecture, **remonte-la**
+dans ton rapport plutôt que de raisonner longuement dessus.
 
 ## Rapport de sortie (obligatoire)
 

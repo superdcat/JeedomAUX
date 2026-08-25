@@ -41,6 +41,7 @@ LANGUES = ('en_US', 'de_DE', 'es_ES')
 # git le normalise et ce n'est pas du code exécuté.
 EXT_CODE = ('.php', '.js', '.json', '.ini', '.txt', '.html')
 EXT_STRUCT = ('.php', '.js', '.txt', '.html')
+BLANCS = ' \t\r\n'
 
 # CRLF exigé uniquement là où une divergence coûte quelque chose : le bot prettier et les
 # éditeurs y produiraient un diff intégral. ⚠️ `.json` en est EXCLU : tout le JSON du dépôt
@@ -190,16 +191,142 @@ def _segments_a_analyser(rel, texte):
 def check_structure(rel, texte):
     if not rel.endswith(EXT_STRUCT):
         return 'n/a'
-    etats = []
+    # Les segments d'un MÊME genre sont recollés avant comptage : en PHP, une accolade
+    # ouverte avant une sortie HTML se referme dans le bloc `<?php` suivant
+    # (`foreach (…) { ?> … <?php }`), motif tout à fait normal d'une vue Jeedom. Compter
+    # segment par segment produisait deux « {} déséquilibré » permanents sur
+    # configuration.txt — et un contrôle qui crie au loup finit par être ignoré.
+    par_genre = {}
     for genre, src in _segments_a_analyser(rel, texte):
-        propre = _sans_chaines_ni_commentaires(src)
+        par_genre.setdefault(genre, []).append(_sans_chaines_ni_commentaires(src))
+    etats = []
+    for genre, morceaux in par_genre.items():
+        propre = ''.join(morceaux)
         for ouvre, ferme, nom in (('{', '}', '{}'), ('(', ')', '()'), ('[', ']', '[]')):
             a, b = propre.count(ouvre), propre.count(ferme)
             if a != b:
-                problemes.append('%s : %s déséquilibré dans un segment %s (%d vs %d)'
+                problemes.append('%s : %s déséquilibré dans le code %s (%d vs %d)'
                                  % (rel, nom, genre, a, b))
                 etats.append('%s!' % nom)
     return 'OK' if not etats else ' '.join(etats)
+
+
+# ------------------------------------------------- méta-séquences prises pour du code
+
+
+# Fichiers dont le HTML est RENDU par le core, donc balayé par son moteur i18n : un `{{`
+# y est dangereux jusque dans un commentaire. Ailleurs (core/class, core/php) il n'est
+# jamais interprété, et le signaler ne ferait que du bruit.
+PREFIXES_RENDUS = ('desktop/', 'plugin_info/configuration.', 'core/template/')
+RE_SCRIPT = re.compile(r'<script[^>]*>', re.I)
+
+
+def check_meta_commentaires(rel, texte):
+    """Traque les séquences qu'un délimiteur avale — ce que check_structure ne PEUT pas voir.
+
+    Cas réel qui a motivé ce contrôle : `mb_*/intl` écrit dans un docblock. Le `*/` du
+    milieu ferme le commentaire, `intl, …` est relu comme du code (« syntax error,
+    unexpected 'intl' ») et la classe entière devient introuvable au runtime. Invisible à
+    la relecture — une phrase française bien formée, dans un commentaire bien formé — et
+    invisible au comptage de délimiteurs : le texte éjecté du commentaire ne contient ni
+    accolade, ni parenthèse, ni crochet, donc l'équilibre reste parfait.
+
+    Trois variantes, un seul mécanisme (un littéral pris pour de la méta-syntaxe) :
+      · `*/` collé à du texte, dans un commentaire de bloc ;
+      · `?>` dans un commentaire `//` ou `#` : PHP QUITTE le mode PHP à cet endroit, et la
+        fin de la ligne part telle quelle au navigateur ;
+      · `{{` dans un commentaire d'un fichier rendu : le moteur i18n du core y voit un
+        début de clé de traduction et avale tout jusqu'à la fermeture suivante.
+    """
+    if not rel.endswith(EXT_STRUCT):
+        return 'n/a'
+    rendu = rel.startswith(PREFIXES_RENDUS)
+    n = len(texte)
+    i = 0
+    en_code = rel.endswith('.js')          # un .js est du code de bout en bout
+    fin_code = n                           # sortie forcée du mode code (fin de <script>)
+    nb = 0
+
+    def signale(pos, quoi):
+        eol = texte.find('\n', pos)
+        extrait = texte[texte.rfind('\n', 0, pos) + 1:n if eol < 0 else eol].strip()
+        problemes.append('%s:%d : %s — l. %s'
+                         % (rel, texte.count('\n', 0, pos) + 1, quoi,
+                            repr(extrait[:70] + ('…' if len(extrait) > 70 else ''))))
+
+    while i < n:
+        if en_code and i >= fin_code:
+            en_code = False
+            continue
+        if not en_code:                    # du HTML : seuls ses commentaires nous intéressent
+            if texte[i:i + 5] == '<?php' or texte[i:i + 3] == '<?=':
+                en_code, fin_code, i = True, n, i + 3
+                continue
+            m = RE_SCRIPT.match(texte, i)
+            if m:
+                ferme = texte.lower().find('</script>', m.end())
+                en_code, fin_code, i = True, (n if ferme < 0 else ferme), m.end()
+                continue
+            if texte[i:i + 4] == '<!--':
+                fin = texte.find('-->', i + 4)
+                fin = n if fin < 0 else fin
+                if rendu and '{{' in texte[i:fin]:
+                    signale(texte.index('{{', i, fin), "'{{' dans un commentaire HTML : le moteur "
+                            'i18n du core le lit dans le HTML rendu et avale la suite')
+                    nb += 1
+                i = fin + 3
+                continue
+            i += 1
+            continue
+        deux = texte[i:i + 2]
+        if deux == '?>':
+            en_code, i = False, i + 2
+            continue
+        if deux == '/*':
+            fin = texte.find('*/', i + 2)
+            if fin < 0 or fin >= fin_code:
+                signale(i, 'commentaire de bloc jamais refermé')
+                nb += 1
+                break
+            # Une fermeture saine est précédée d'un blanc ou d'une étoile (` */`, `**/`).
+            # Collée à autre chose, elle vient du TEXTE : c'est une fermeture accidentelle.
+            if texte[fin - 1] not in BLANCS and texte[fin - 1] != '*':
+                signale(fin, "'*/' collé à du texte : le commentaire se FERME ici, la suite est "
+                        'relue comme du code')
+                nb += 1
+            if rendu and '{{' in texte[i:fin]:
+                signale(texte.index('{{', i, fin), "'{{' dans un commentaire de bloc : lu par le "
+                        'moteur i18n du core')
+                nb += 1
+            i = fin + 2
+            continue
+        if deux == '//' or (texte[i] == '#' and deux != '#['):
+            fin = texte.find('\n', i)
+            fin = n if fin < 0 else fin
+            corps = texte[i:fin]
+            if '?>' in corps:
+                signale(i, "'?>' dans un commentaire de ligne : PHP QUITTE le mode PHP ici, la "
+                        'fin de la ligne part au navigateur')
+                nb += 1
+            if rendu and '{{' in corps:
+                signale(i, "'{{' dans un commentaire de ligne : lu par le moteur i18n du core")
+                nb += 1
+            i = fin
+            continue
+        if texte[i] in '"\'':               # une chaîne n'est pas du commentaire : on saute
+            quote = texte[i]
+            i += 1
+            while i < n:
+                if texte[i] == '\\':
+                    i += 2
+                    continue
+                if texte[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        i += 1
+    return 'OK' if not nb else '%d!' % nb
 
 
 # ------------------------------------------------------------------ espaces de fin
@@ -381,8 +508,9 @@ def main():
         fdl = check_fins_de_ligne(rel, data)
         ctrl = check_octets_controle(rel, data)
         struct = check_structure(rel, texte)
+        meta = check_meta_commentaires(rel, texte)
         check_espaces_fin(rel, texte)
-        print('  %-52s %-8s ctrl=%d  struct=%s' % (rel, fdl, ctrl, struct))
+        print('  %-52s %-8s ctrl=%d  struct=%-8s meta=%s' % (rel, fdl, ctrl, struct, meta))
 
     print('\n=== Transverse ===')
     check_miroir(fichiers)

@@ -136,7 +136,8 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   sur son premier item et **écraserait** le pays au premier enregistrement — même déclenché par un autre
   champ. ⚠️ Et **jamais de double accolade ouvrante littérale** dans ce fichier, pas même en commentaire :
   le core y voit un début de clé de traduction sur le HTML rendu et avale tout jusqu'à la fermeture
-  suivante — la chaîne d'après cesse silencieusement d'être traduite.
+  suivante — la chaîne d'après cesse silencieusement d'être traduite. Cas particulier de la règle
+  générale « aucune méta-séquence littérale » (cf. Conventions), qui couvre aussi `*/` et `?>`.
 - **`core/config/smartclim.config.ini`** — **valeurs par défaut** de la config plugin, section
   `[smartclim]`. Mécanisme natif du core : `config::byKey()` **et** `config::byKeys()` y retombent quand
   la clé est absente ou vide en base. ⚠️ Corollaire à connaître : `config::save()` d'une valeur **égale**
@@ -361,6 +362,24 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   d'entrée (`core/ajax/*.ajax.php`, crons, `desktop/php/*.php`, `install.php`). Chaque nouvelle classe
   (`smartclimCapabilities`, `smartclimFrame`, `smartclimTransport`, `smartclimAuxCloudApi`,
   `smartclimBroadlinkLan`) **doit** être ajoutée à cette liste — l'oublier ne casse ni `php -l` ni la CI.
+- **Aucune méta-séquence littérale dans un commentaire ou une chaîne (fatale, et invisible à la
+  relecture)** — un délimiteur écrit au milieu d'une phrase n'est pas du texte : le parseur le prend pour
+  lui. **Cas vécu** (recette UC01) : `mb_*/intl` dans un docblock de `smartclimAuxHomeApi`. Le `*/` du
+  milieu a **fermé le commentaire**, `intl, …` a été relu comme du code (`syntax error, unexpected
+  'intl'`), donc `smartclim.class.php` n'a plus été chargée en entier et **toute la classe `smartclim`
+  est devenue introuvable** — symptôme visible : la liste déroulante des pays disparue de la page de
+  configuration. Trois séquences, un seul mécanisme :
+
+  | Séquence | Où elle est fatale | Ce qui se passe |
+  |---|---|---|
+  | `*/` **collé à du texte** | commentaire `/* … */` | ferme le commentaire ici ; la suite est relue comme du code |
+  | `?>` | commentaire `//` ou `#` | PHP **quitte le mode PHP** ; la fin de la ligne part telle quelle au navigateur |
+  | `{{` | fichier **rendu** (`desktop/`, `plugin_info/configuration.*`, `core/template/`), **commentaire compris** | le moteur i18n du core y voit un début de clé et avale tout jusqu'à la fermeture suivante |
+
+  Écrire `mb_* ou intl`, « balise fermante PHP », « double accolade ouvrante ». ⚠️ Aucun de ces cas
+  n'est rattrapé ici : `php` **n'est pas installé** sur la machine de dev, et la CI ne se déclenche ni
+  sur push `master` ni hors PR. Le seul filet réellement en place est
+  `python .claude/scripts/verif-plugin.py` (colonne **`meta=`**) — **à lancer avant chaque commit**.
 - **Centraliser les accès externes** : **tous** les appels HTTP passent par la brique du transport concerné
   (`smartclimAuxHomeApi`, `smartclimAuxCloudApi`) et tout le LAN par `smartclimBroadlinkLan` — jamais de
   cURL ou de socket épars. Le reste du plugin ne parle qu'à l'**API générique**, jamais à un transport.

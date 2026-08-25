@@ -50,6 +50,13 @@ class smartclimAuxHomeApi {
   const TIMEOUT_REQUETE = 10;
   const BUDGET_LOGIN = 18;
 
+  // Budget de temps GLOBAL d'un scan de découverte (UC03, § 6.1 de la spec technique),
+  // mesuré depuis l'entrée de listerAppareils() — login éventuel COMPRIS. Ce n'est pas
+  // un timeout par requête : chaque requête reçoit une part de ce budget (cf.
+  // listerAppareils() ci-dessous), et un rejeu après re-login n'est tenté que si le
+  // budget restant permet encore un login complet.
+  const BUDGET_SCAN = 25;
+
   // Cache (chiffré) de la session AUX Home — cf. § 1.5 de la spec technique.
   const CLE_CACHE_SESSION = 'smartclim::session_auxhome';
   const DUREE_CACHE_SESSION = 1800; // 30 minutes — pari documenté, à calibrer en UC08.
@@ -349,6 +356,166 @@ class smartclimAuxHomeApi {
       // de la laisser remonter, pour ne jamais dépendre de la discipline de l'appelant.
       throw new smartclimException($e->getMessage(), $e->getType(), $e->getContexte());
     }
+  }
+
+  /**
+   * Liste les appareils du compte AUX Home configuré (UC03, § 2/5.1 de la spec
+   * technique), normalisés en clés génériques françaises. Un tableau vide est un
+   * SUCCÈS (compte sans appareil), jamais une exception.
+   *
+   * Budget de temps GLOBAL (BUDGET_SCAN = 25 s), login compris (§ 6.1) : chaque
+   * requête reçoit max(3, min(TIMEOUT_REQUETE, BUDGET_SCAN - écoulé)). Un re-login
+   * réactif + UN SEUL rejeu (anti-boucle par booléen local, jamais de récursion)
+   * n'est tenté que si l'échec initial est TYPE_AUTH ET que le budget restant permet
+   * encore un login complet (BUDGET_LOGIN + 3 s de marge).
+   *
+   * @return array<int, array{mac:string, identifiant:string, nom:string, modele:string, enLigne:bool}>
+   * @throws smartclimException message TECHNIQUE, recréée sur place avant propagation
+   *   (même motif que login()/session() : la trace de requete() porte le jeton).
+   */
+  public static function listerAppareils() {
+    try {
+      $debut = microtime(true);
+      $session = self::session();
+      $rejoue = false;
+      while (true) {
+        $ecoule = microtime(true) - $debut;
+        $tempsRequete = (int) max(3, min(self::TIMEOUT_REQUETE, self::BUDGET_SCAN - $ecoule));
+        try {
+          $donnees = self::requeteAppareils($session['jeton'], $tempsRequete);
+          break;
+        } catch (smartclimException $e) {
+          $budgetRestant = self::BUDGET_SCAN - (microtime(true) - $debut);
+          if (!$rejoue && $e->getType() === smartclimException::TYPE_AUTH && $budgetRestant >= self::BUDGET_LOGIN + 3) {
+            $rejoue = true;
+            self::purgerSession();
+            $session = self::login();
+            continue;
+          }
+          throw $e;
+        }
+      }
+
+      $appareils = array();
+      foreach ($donnees['data'] as $element) {
+        if (!is_array($element)) {
+          log::add('smartclim', 'warning', 'AUX Home : élément de user_device ignoré (type inattendu)');
+          continue;
+        }
+        $normalise = self::normaliserAppareil($element);
+        if ($normalise !== null) {
+          $appareils[] = $normalise;
+        }
+      }
+      return $appareils;
+    } catch (smartclimException $e) {
+      // Recrée l'exception À CE POINT D'APPEL, même motif que login()/session()
+      // ci-dessus (§ 3.1 de la spec technique UC02, réutilisée pour UC03).
+      throw new smartclimException($e->getMessage(), $e->getType(), $e->getContexte());
+    }
+  }
+
+  /**
+   * Appelle GET /app/user_device?getStatus=1 (§ 2 de la spec technique UC03). La query
+   * string est un LITTÉRAL constant (aucune entrée utilisateur dans l'URL) ; requete()
+   * valide déjà jetonConforme($_jeton).
+   *
+   * @param string $_jeton Jeton de session UTILISATEUR (pas STATIC_APP_TOKEN).
+   * @param int $_tempsRequete Timeout de cette requête, en secondes.
+   * @return array Enveloppe décodée, avec 'data' garanti être un tableau.
+   * @throws smartclimException classement délégué à classerCodeMetier('user_device', …, TYPE_AUTH).
+   */
+  private static function requeteAppareils($_jeton, $_tempsRequete) {
+    $donnees = self::requete('GET', '/app/user_device?getStatus=1', null, $_tempsRequete, $_jeton);
+    $code = self::codeMetierVersInt($donnees);
+    if ($code !== 200) {
+      self::classerCodeMetier('user_device', $donnees, smartclimException::TYPE_AUTH);
+    }
+    if (!isset($donnees['data']) || !is_array($donnees['data'])) {
+      throw new smartclimException('AUX Home user_device : champ data absent ou non tableau', smartclimException::TYPE_PROTOCOLE);
+    }
+    return $donnees;
+  }
+
+  /**
+   * Normalise un élément brut de la réponse user_device en tableau générique
+   * français, ou null si le brut lui-même n'est pas exploitable (défensif ; le seul
+   * appelant, listerAppareils(), a déjà écarté tout élément qui n'est pas un tableau).
+   * ⚠️ Ne filtre PAS un appareil sans MAC ni identifiant exploitables : cette
+   * décision ("ignore_identifiant") est portée par smartclim::scannerAuxHome() sur le
+   * tableau normalisé (§ 6.4/§ 9 de la spec technique UC03 — le libellé "Ignoré —
+   * aucun identifiant exploitable" doit rester visible à l'utilisateur dans le
+   * résultat du scan, pas disparaître silencieusement ici). Seule classe du plugin qui
+   * connaît les noms de champs AUX ("mac", "deviceId", "alias", "modelId", "online") :
+   * elle n'en laisse aucun sortir.
+   *
+   * @param array $_brut
+   * @return array{mac:string, identifiant:string, nom:string, modele:string, enLigne:bool}|null
+   */
+  private static function normaliserAppareil($_brut) {
+    if (!is_array($_brut)) {
+      return null;
+    }
+
+    $macBrute = isset($_brut['mac']) ? $_brut['mac'] : '';
+    $mac = '';
+    if (is_scalar($macBrute)) {
+      $mac = preg_replace('/[^0-9a-f]/', '', strtolower((string) $macBrute));
+      if (strlen($mac) !== 12) {
+        $mac = '';
+      }
+    }
+
+    $identifiantBrut = isset($_brut['deviceId']) ? $_brut['deviceId'] : '';
+    $identifiant = is_scalar($identifiantBrut) ? self::nettoyerTexteExterne($identifiantBrut, 100) : '';
+
+    $nomBrut = isset($_brut['alias']) ? $_brut['alias'] : '';
+    $nom = is_scalar($nomBrut) ? self::nettoyerTexteExterne($nomBrut, 127) : '';
+
+    $modeleBrut = isset($_brut['modelId']) ? $_brut['modelId'] : '';
+    $modele = is_scalar($modeleBrut) ? self::nettoyerTexteExterne($modeleBrut, 64) : '';
+
+    $enLigneBrut = isset($_brut['online']) ? $_brut['online'] : null;
+    $enLigne = in_array($enLigneBrut, array(true, 1, '1', 'true'), true);
+
+    return array(
+      'mac' => $mac,
+      'identifiant' => $identifiant,
+      'nom' => $nom,
+      'modele' => $modele,
+      'enLigne' => $enLigne,
+    );
+  }
+
+  /**
+   * Nettoie une chaîne d'origine externe (nom, modèle, identifiant) avant log, DOM ou
+   * base (§ 5.1 de la spec technique UC03) : is_scalar → retrait des octets de
+   * contrôle → repli sur un filtre imprimable UNIQUEMENT si le résultat n'est pas de
+   * l'UTF-8 valide → trim → troncature PUIS retrait des octets de queue jusqu'à
+   * redevenir de l'UTF-8 valide (une troncature brute pourrait couper au milieu d'un
+   * caractère multi-octets). ⚠️ Volontairement SANS fonctions mb_* (non garanties sur
+   * un Jeedom minimal — même arbitrage que cleDeTri()). Volontairement DISTINCTE de
+   * journaliserErreurBackend() (qui ajoute la neutralisation base64, propre aux
+   * messages backend d'erreur) : on ne refactore pas du code UC02 déjà livré.
+   *
+   * @param mixed $_valeur
+   * @param int $_longueurMax
+   * @return string
+   */
+  private static function nettoyerTexteExterne($_valeur, $_longueurMax) {
+    if (!is_scalar($_valeur)) {
+      return '';
+    }
+    $valeur = preg_replace('/[\x00-\x1F\x7F]/', ' ', (string) $_valeur);
+    if (preg_match('//u', $valeur) !== 1) {
+      $valeur = preg_replace('/[^\x20-\x7E]/', ' ', $valeur);
+    }
+    $valeur = trim($valeur);
+    $valeur = substr($valeur, 0, $_longueurMax);
+    while ($valeur !== '' && preg_match('//u', $valeur) !== 1) {
+      $valeur = substr($valeur, 0, -1);
+    }
+    return $valeur;
   }
 
   /**

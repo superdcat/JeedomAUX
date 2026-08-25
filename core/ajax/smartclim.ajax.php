@@ -43,6 +43,10 @@ try {
         ajax::success(array('message' => smartclim::effacerIdentifiantsAuxHome()));
     }
 
+    if (init('action') == 'scannerClimatiseurs') {
+        ajax::success(smartclim::scannerAuxHome());
+    }
+
     // Même neutralisation que dans le catch(Throwable) plus bas (is_scalar, filtre
     // imprimable, troncature courte) : $_GET['action']/$_POST['action'] vient du CLIENT,
     // au même titre que le "message" backend neutralisé par

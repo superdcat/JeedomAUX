@@ -24,6 +24,52 @@ $eqLogics = eqLogic::byType($plugin->getId());
 				<br>
 				<span>{{Configuration}}</span>
 			</div>
+			<div class="cursor eqLogicAction" id="bt_scannerClimatiseurs">
+				<i class="fas fa-search"></i>
+				<br>
+				<span>{{Scanner les climatiseurs}}</span>
+			</div>
+		</div>
+		<div class="col-xs-12" id="div_scanResultat" style="display:none;">
+			<legend><i class="fas fa-search"></i> {{Résultat}}</legend>
+			<p id="span_scanResume"></p>
+			<div id="div_scanTrouvesWrapper">
+				<h4>{{Climatiseurs trouvés}}</h4>
+				<div class="table-responsive">
+					<table id="table_scanTrouves" class="table table-bordered table-condensed">
+						<thead>
+							<tr>
+								<th>{{Nom}}</th>
+								<th>{{Modèle}}</th>
+								<th>{{Adresse MAC}}</th>
+								<th>{{Identifiant cloud}}</th>
+								<th>{{État}}</th>
+								<th>{{Résultat}}</th>
+							</tr>
+						</thead>
+						<tbody>
+						</tbody>
+					</table>
+				</div>
+			</div>
+			<div id="div_scanDisparusWrapper">
+				<h4>{{Climatiseurs introuvables sur le compte}}</h4>
+				<div class="table-responsive">
+					<table id="table_scanDisparus" class="table table-bordered table-condensed">
+						<thead>
+							<tr>
+								<th>{{Nom}}</th>
+								<th>{{Adresse MAC}}</th>
+								<th>{{Identifiant cloud}}</th>
+								<th>{{Résultat}}</th>
+							</tr>
+						</thead>
+						<tbody>
+						</tbody>
+					</table>
+				</div>
+			</div>
+			<a class="btn btn-primary hidden" id="bt_scanRecharger"><i class="fas fa-sync"></i> <span></span></a>
 		</div>
 		<legend><i class="fas fa-table"></i> {{Mes smartclims}}</legend>
 		<?php

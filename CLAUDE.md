@@ -76,7 +76,15 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification
   complète (UC02) : `login()` (toujours frais — `getPubkey` + `login/pwd` — **et écrit** la session en
   cache), `session()` (**lit** le cache, sinon `login()`), `purgerSession()`, la crypto RSA/AES et les
-  constantes de protocole embarquées (source + licence MIT citées en commentaire).
+  constantes de protocole embarquées (source + licence MIT citées en commentaire), et enfin la
+  **découverte des appareils** (UC03) : `listerAppareils()` (`GET /app/user_device?getStatus=1`, budget
+  de temps global `BUDGET_SCAN`, re-login réactif borné à **un** rejeu) qui renvoie des lignes
+  **normalisées à clés génériques françaises** — aucun nom de champ AUX (`deviceId`, `alias`, `modelId`,
+  `online`) n'en sort.
+  ⚠️ **`nettoyerTexteExterne()` est la frontière d'assainissement du transport** : c'est elle, et elle
+  seule, qui garantit qu'un champ du cloud (dont l'`identifiant` d'où dérive un `logicalId`) ne porte pas
+  de caractère de contrôle. Toute nouvelle source d'appareil doit passer par un nettoyage équivalent
+  **avant** de construire un `logicalId` ou d'être journalisée.
   ⚠️ **Budget de temps global** : un login enchaîne **deux** requêtes, donc les timeouts par requête ne
   suffisent pas à tenir une exigence exprimée en budget total — cf.
   `.memory/analyse/smartclim-transport-aux-home.md` § 8.3.

@@ -58,6 +58,13 @@ class smartclim extends eqLogic {
   // Le mot de passe du compte AUX Home est chiffré au repos par le core Jeedom.
   public static $_encryptConfigKey = array('auxhome_password');
 
+  // Verrou anti double-scan (UC03, § 6.3 de la spec technique) : cache::byKey() puis
+  // cache::set() ne sont PAS atomiques — une atténuation (double-clic, deux onglets),
+  // jamais un mutex. TTL court pour qu'un fatal ne laisse pas le plugin bloqué ;
+  // libéré dans un finally quoi qu'il arrive.
+  const CLE_CACHE_VERROU_SCAN = 'smartclim::scan_en_cours';
+  const DUREE_VERROU_SCAN = 60;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -182,6 +189,468 @@ class smartclim extends eqLogic {
     // purge de session doit donc être explicite ici, pas déléguée au hook.
     smartclimAuxHomeApi::purgerSession();
     return __('Identifiants effacés', __FILE__);
+  }
+
+  /**
+   * Scanne le compte AUX Home configuré et crée un équipement Jeedom par appareil
+   * découvert, ou rafraîchit les seuls champs cloud (auxhome_device_id, modele) d'un
+   * équipement déjà connu (UC03). Écriture toujours CONDITIONNÉE : sur un équipement
+   * existant, `save()` n'est appelé que si l'un de ces deux champs a réellement changé
+   * (§ 7.1 de la spec technique — jamais sur getChanged() seul). Hors périmètre,
+   * strictement : aucune smartclimCmd, aucune capacité, aucune trame HVAC, aucune
+   * suppression/désactivation d'équipement (§ 0).
+   *
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array}
+   * @throws smartclimException Message DÉJÀ curaté en français (via messageErreurAuxHome()).
+   */
+  public static function scannerAuxHome() {
+    // Garde "zéro requête si compte non configuré" (§ 5.2/§ 6.2 de la spec technique) :
+    // délègue à compteConfigure() (garde-fou déjà en place, appelé avant tout appel
+    // réseau) et réutilise LE LITTÉRAL EXISTANT de testerConnexionAuxHome() (même clé
+    // i18n, pas de nouvelle entrée).
+    if (!self::compteConfigure()) {
+      throw new smartclimException(__('Compte AUX Home non configuré : renseignez l\'e-mail et le mot de passe', __FILE__), smartclimException::TYPE_AUTH);
+    }
+
+    if (cache::byKey(self::CLE_CACHE_VERROU_SCAN)->getValue(null) !== null) {
+      throw new smartclimException(__('Un scan est déjà en cours, réessayez dans quelques instants', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    cache::set(self::CLE_CACHE_VERROU_SCAN, '1', self::DUREE_VERROU_SCAN);
+
+    try {
+      try {
+        $appareilsBruts = smartclimAuxHomeApi::listerAppareils();
+      } catch (smartclimException $e) {
+        // Point de bascule message TECHNIQUE -> message CURATÉ (même motif que
+        // testerConnexionAuxHome()) : une smartclimException qui remonterait sans
+        // curation mettrait un code métier brut dans le DOM.
+        log::add('smartclim', 'error', 'Scan AUX Home échoué (type ' . $e->getType() . ') : ' . $e->getMessage());
+        throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
+      }
+
+      $index = self::indexerEquipements();
+      $compteurs = array(
+        'trouves' => count($appareilsBruts),
+        'crees' => 0,
+        'existants' => 0,
+        'ignores' => 0,
+        'erreurs' => 0,
+        'disparus' => 0,
+      );
+      $appareilsResultat = array();
+      // logicalId des équipements rapprochés PENDANT ce scan : sert à la fois à
+      // détecter un doublon dans la réponse cloud (jamais écrasé) et à calculer les
+      // disparus (§ 5.2/§ 0 de la spec technique).
+      $consommes = array();
+
+      foreach ($appareilsBruts as $appareil) {
+        $macNorm = self::normaliserMac($appareil['mac']);
+        $identifiant = is_string($appareil['identifiant']) ? $appareil['identifiant'] : '';
+        $nomAffiche = $appareil['nom'];
+
+        // Un équipement en erreur ne doit jamais interrompre la boucle (CLAUDE.md,
+        // robustesse cron) : try/catch PAR appareil, Exception puis Throwable.
+        try {
+          if ($macNorm === '' && $identifiant === '') {
+            $compteurs['ignores']++;
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_identifiant');
+            continue;
+          }
+
+          $logicalId = $macNorm !== '' ? ('mac:' . $macNorm) : ('auxhome:' . $identifiant);
+          $eqLogic = self::chercherEquipementExistant($macNorm, $identifiant, $index);
+          // Clé de "consommation" = l'identité RÉELLE de l'équipement rapproché (son
+          // propre logicalId, potentiellement différent de $logicalId sur un
+          // rapprochement par MAC inversée ou par auxhome_device_id), sinon le
+          // logicalId qui SERA créé. Comparer sur $logicalId seul manquerait un
+          // doublon de la réponse cloud pointant vers un équipement déjà rapproché
+          // via un autre chemin (§ 5.2 de la spec technique).
+          $cleConsommee = is_object($eqLogic) ? $eqLogic->getLogicalId() : $logicalId;
+
+          if (in_array($cleConsommee, $consommes, true)) {
+            $compteurs['ignores']++;
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_doublon');
+            continue;
+          }
+
+          if (is_object($eqLogic)) {
+            $consommes[] = $cleConsommee;
+            // Écriture CONDITIONNÉE (§ 7.1, finding advisor) : comparer AVANT
+            // d'écrire, ne JAMAIS se reposer sur getChanged() comme unique condition.
+            $modifie = false;
+            if ($eqLogic->getConfiguration('auxhome_device_id') !== $identifiant) {
+              $eqLogic->setConfiguration('auxhome_device_id', $identifiant);
+              $modifie = true;
+            }
+            if ($eqLogic->getConfiguration('modele') !== $appareil['modele']) {
+              $eqLogic->setConfiguration('modele', $appareil['modele']);
+              $modifie = true;
+            }
+            if ($modifie) {
+              $eqLogic->save();
+            }
+            $compteurs['existants']++;
+            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'existant');
+          } else {
+            $eqLogic = self::creerEquipement($logicalId, $appareil, $macNorm, $index['noms']);
+            $consommes[] = $logicalId;
+            $compteurs['crees']++;
+            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'cree');
+          }
+        } catch (Exception $e) {
+          // Même neutralisation que le catch(Throwable) ci-dessous (finding sécurité LOW
+          // de la revue croisée UC03, tour 2) : ces deux branches traitent le même motif,
+          // un message d'exception venu du core ne doit pas pouvoir forger des lignes de log.
+          log::add('smartclim', 'error', 'Scan AUX Home : erreur lors du traitement de l\'appareil (identifiant=' . $identifiant . ') : ' . self::neutraliserPourLog($e->getMessage()));
+          $compteurs['erreurs']++;
+          $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'erreur');
+        } catch (Throwable $t) {
+          // $t->getMessage() neutralisé AVANT journalisation (finding sécurité LOW de
+          // la revue croisée UC03, tour 1) : cohérent avec le catch(Throwable) de
+          // smartclim.ajax.php, qui filtre déjà toute valeur non garantie inoffensive.
+          log::add('smartclim', 'error', 'Scan AUX Home : erreur inattendue lors du traitement de l\'appareil (identifiant=' . $identifiant . ') : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+          $compteurs['erreurs']++;
+          $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'erreur');
+        }
+      }
+
+      $disparus = self::appareilsDisparus($index, $consommes);
+      $compteurs['disparus'] = count($disparus);
+
+      return array(
+        'resume' => self::resumeScan($compteurs),
+        'compteurs' => $compteurs,
+        'appareils' => $appareilsResultat,
+        'disparus' => $disparus,
+      );
+    } finally {
+      cache::delete(self::CLE_CACHE_VERROU_SCAN);
+    }
+  }
+
+  /**
+   * Construit une ligne du tableau "appareils" renvoyé par scannerAuxHome() : liste
+   * BLANCHE de champs (AC2 — jamais de jeton, uid ou e-mail).
+   *
+   * @return array{nom:string, modele:string, mac:string, identifiant:string, enLigne:bool, enLigneLibelle:string, statut:string, statutLibelle:string}
+   */
+  private static function ligneResultatScan($_nom, $_modele, $_mac, $_identifiant, $_enLigne, $_statut) {
+    return array(
+      'nom' => $_nom,
+      'modele' => $_modele,
+      'mac' => $_mac,
+      'identifiant' => $_identifiant,
+      'enLigne' => (bool) $_enLigne,
+      'enLigneLibelle' => self::libelleEnLigne($_enLigne),
+      'statut' => $_statut,
+      'statutLibelle' => self::libelleStatut($_statut),
+    );
+  }
+
+  /**
+   * Charge tous les équipements smartclim en UNE seule requête
+   * (eqLogic::byType('smartclim')) et construit les index utilisés par le
+   * rapprochement (§ 5.2 de la spec technique UC03) : par logicalId, par
+   * auxhome_device_id, la liste complète (pour appareilsDisparus()) et l'ensemble des
+   * noms déjà utilisés (pour nomUnique()).
+   *
+   * @return array{parLogicalId:array<string,smartclim>, parDeviceId:array<string,smartclim>, tous:smartclim[], noms:array<string,bool>}
+   */
+  private static function indexerEquipements() {
+    $tous = eqLogic::byType('smartclim');
+    $parLogicalId = array();
+    $parDeviceId = array();
+    $noms = array();
+    foreach ($tous as $eqLogic) {
+      $parLogicalId[$eqLogic->getLogicalId()] = $eqLogic;
+      $deviceId = $eqLogic->getConfiguration('auxhome_device_id');
+      if (is_string($deviceId) && $deviceId !== '') {
+        $parDeviceId[$deviceId] = $eqLogic;
+      }
+      $noms[$eqLogic->getName()] = true;
+    }
+    return array(
+      'parLogicalId' => $parLogicalId,
+      'parDeviceId' => $parDeviceId,
+      'tous' => $tous,
+      'noms' => $noms,
+    );
+  }
+
+  /**
+   * Rapproche un appareil renvoyé par le cloud avec un équipement Jeedom déjà connu,
+   * dans l'ordre imposé par § 5.2 de la spec technique UC03 (conforme à
+   * .memory/analyse/smartclim-architecture-jeedom.md § 4) : MAC normalisée, puis MAC
+   * inversée (journalisée en warning), puis auxhome_device_id déjà mémorisé.
+   * `logicalId` n'est JAMAIS réécrit après création — c'est l'identité de
+   * l'équipement, rien n'en garantit l'unicité au niveau SQL.
+   *
+   * @param string $_macNorm
+   * @param string $_deviceId
+   * @param array $_index Index construit par indexerEquipements().
+   * @return smartclim|null
+   */
+  private static function chercherEquipementExistant($_macNorm, $_deviceId, array $_index) {
+    if ($_macNorm !== '') {
+      if (isset($_index['parLogicalId']['mac:' . $_macNorm])) {
+        return $_index['parLogicalId']['mac:' . $_macNorm];
+      }
+      $macInversee = self::macInversee($_macNorm);
+      if ($macInversee !== '' && isset($_index['parLogicalId']['mac:' . $macInversee])) {
+        log::add('smartclim', 'warning', 'AUX Home : appareil rapproché via la MAC inversée (' . $_macNorm . ' / ' . $macInversee . ')');
+        return $_index['parLogicalId']['mac:' . $macInversee];
+      }
+    }
+    if ($_deviceId !== '' && isset($_index['parDeviceId'][$_deviceId])) {
+      return $_index['parDeviceId'][$_deviceId];
+    }
+    return null;
+  }
+
+  /**
+   * Crée un équipement Jeedom pour un appareil AUX Home nouvellement découvert
+   * (AC1) : setName() UNIQUEMENT ici (AC3 — jamais réappelé sur un équipement
+   * existant), setObject_id() JAMAIS appelé (AC4). Aucune smartclimCmd, aucune
+   * capacité, aucune trame HVAC : hors périmètre UC03 (§ 0 de la spec technique).
+   *
+   * @param string $_logicalId
+   * @param array $_appareil Normalisé par smartclimAuxHomeApi::normaliserAppareil().
+   * @param string $_macNorm
+   * @param array $_noms Noms déjà utilisés, par référence (nomUnique()).
+   * @return smartclim
+   */
+  private static function creerEquipement($_logicalId, array $_appareil, $_macNorm, array &$_noms) {
+    $eqLogic = new smartclim();
+    $eqLogic->setEqType_name('smartclim');
+    $eqLogic->setLogicalId($_logicalId);
+
+    // Même fonction que celle appliquée par setName() (§ 6.4 de la spec technique) :
+    // un alias non vide après nettoyage côté transport peut le redevenir une fois
+    // passé au filtre du core -> repli sur le nom par défaut dans ce cas.
+    $alias = $_appareil['nom'];
+    $souhaite = (trim(cleanComponanteName($alias)) !== '') ? $alias : self::nomAppareilParDefaut($_macNorm);
+    $eqLogic->setName(self::nomUnique($souhaite, $_noms));
+
+    $eqLogic->setIsEnable(1);
+    $eqLogic->setIsVisible(1);
+    $eqLogic->setCategory('heating', 1);
+    if ($_macNorm !== '') {
+      $eqLogic->setConfiguration('mac', $_macNorm);
+    }
+    $eqLogic->setConfiguration('auxhome_device_id', $_appareil['identifiant']);
+    $eqLogic->setConfiguration('modele', $_appareil['modele']);
+    $eqLogic->save();
+
+    return $eqLogic;
+  }
+
+  /**
+   * Nom de repli quand l'alias renvoyé par le cloud est vide (ou inexploitable) après
+   * nettoyage (§ 6.4 de la spec technique UC03) : "Climatiseur <4 derniers hexa de la
+   * MAC>", ou "Climatiseur" seul si aucune MAC n'est disponible.
+   *
+   * @param string $_macNorm
+   * @return string
+   */
+  private static function nomAppareilParDefaut($_macNorm) {
+    if ($_macNorm !== '') {
+      return __('Climatiseur', __FILE__) . ' ' . strtoupper(substr($_macNorm, -4));
+    }
+    return __('Climatiseur', __FILE__);
+  }
+
+  /**
+   * Garantit l'unicité du nom d'un équipement CRÉÉ (AC3 : jamais appelé sur un
+   * équipement existant). eqLogic::save() lève une exception si `name` est vide, et la
+   * table porte un index UNIQUE(name, object_id) : suffixe parenthésé numéroté,
+   * borné à 50 essais.
+   *
+   * @param string $_souhaite
+   * @param array $_noms Noms déjà utilisés ; mis à jour avec le nom retenu.
+   * @return string
+   */
+  private static function nomUnique($_souhaite, array &$_noms) {
+    $nom = $_souhaite;
+    $essai = 1;
+    while (isset($_noms[$nom]) && $essai <= 50) {
+      $essai++;
+      $nom = $_souhaite . ' (' . $essai . ')';
+    }
+    $_noms[$nom] = true;
+    return $nom;
+  }
+
+  /**
+   * Normalise une MAC brute en 12 caractères hexadécimaux minuscules, ou '' si non
+   * conforme (déjà fait côté transport par smartclimAuxHomeApi::normaliserAppareil() ;
+   * revalidation défensive, idempotente, avant tout usage en `logicalId`).
+   *
+   * @param mixed $_valeur
+   * @return string
+   */
+  private static function normaliserMac($_valeur) {
+    if (!is_scalar($_valeur)) {
+      return '';
+    }
+    $mac = preg_replace('/[^0-9a-f]/', '', strtolower((string) $_valeur));
+    return strlen($mac) === 12 ? $mac : '';
+  }
+
+  /**
+   * MAC dans l'ordre d'octets INVERSÉ (certaines implémentations Broadlink de
+   * référence lisent des ordres d'octets opposés, cf.
+   * .memory/analyse/smartclim-architecture-jeedom.md § 4). Inverse les OCTETS
+   * (str_split par paire + array_reverse), JAMAIS strrev() qui inverserait aussi les
+   * quartets.
+   *
+   * @param string $_macNorm 12 caractères hexadécimaux minuscules, ou ''.
+   * @return string
+   */
+  private static function macInversee($_macNorm) {
+    if (strlen($_macNorm) !== 12) {
+      return '';
+    }
+    return implode('', array_reverse(str_split($_macNorm, 2)));
+  }
+
+  /**
+   * Équipements smartclim déjà connus, plausiblement issus d'AUX Home (§ 1 AC6 / § 5.2
+   * de la spec technique — `auxhome_device_id` OU `mac` non vide), mais non retrouvés
+   * dans la réponse de ce scan (AC6) : jamais supprimés ni désactivés ici — écran de
+   * résultat + log 'warning' uniquement (§ 0 de la spec technique, décision actée avec
+   * l'utilisateur). ⚠️ Un équipement smartclim créé manuellement (ou plus tard par un
+   * autre transport) sans AUCUNE des deux clés n'est jamais candidat "disparu" : rien
+   * ne le rapprochera jamais d'un scan AUX Home, il serait sinon signalé à chaque
+   * cycle, indéfiniment (finding MAJOR de la revue croisée UC03, tour 1).
+   *
+   * @param array $_index Index construit par indexerEquipements().
+   * @param array $_consommes logicalId des équipements rapprochés PENDANT ce scan.
+   * @return array
+   */
+  private static function appareilsDisparus(array $_index, array $_consommes) {
+    $disparus = array();
+    foreach ($_index['tous'] as $eqLogic) {
+      if (in_array($eqLogic->getLogicalId(), $_consommes, true)) {
+        continue;
+      }
+      $deviceId = $eqLogic->getConfiguration('auxhome_device_id');
+      $mac = $eqLogic->getConfiguration('mac');
+      $issuAuxHome = (is_string($deviceId) && $deviceId !== '') || (is_string($mac) && $mac !== '');
+      if (!$issuAuxHome) {
+        continue;
+      }
+      // Nom neutralisé AVANT journalisation : getName() est une entrée CLIENT
+      // (renommable, y compris via un appel direct à l'API Jeedom qui ne filtre pas
+      // les sauts de ligne) — même motif que
+      // smartclimAuxHomeApi::nettoyerTexteExterne()/journaliserErreurBackend() (finding
+      // MEDIUM de la revue croisée UC03, tour 1).
+      log::add('smartclim', 'warning', 'AUX Home : équipement "' . self::neutraliserPourLog($eqLogic->getName()) . '" (' . $eqLogic->getLogicalId() . ') introuvable au dernier scan');
+      $disparus[] = array(
+        'nom' => $eqLogic->getName(),
+        'mac' => $mac,
+        'identifiant' => $deviceId,
+        'statutLibelle' => __('Introuvable au dernier scan', __FILE__),
+      );
+    }
+    return $disparus;
+  }
+
+  /**
+   * Neutralise les caractères de CONTRÔLE (dont \n) d'une valeur qui n'est PAS
+   * garantie exempte d'injection avant de la passer à log::add() — un nom
+   * d'équipement (entrée CLIENT, renommable hors UI) ou le message d'un Throwable
+   * (peut embarquer un fragment de donnée applicative). Même motif que
+   * smartclimAuxHomeApi::nettoyerTexteExterne()/journaliserErreurBackend() (finding
+   * sécurité de la revue croisée UC03, tour 1) : sans ce filtre, un "\n" forgé
+   * fabrique des lignes de log arbitraires.
+   *
+   * @param mixed $_valeur
+   * @return string
+   */
+  private static function neutraliserPourLog($_valeur) {
+    if (!is_scalar($_valeur)) {
+      return '';
+    }
+    return preg_replace('/[\x00-\x1F\x7F]/', ' ', (string) $_valeur);
+  }
+
+  /**
+   * Libellé traduit d'un statut de traitement d'appareil (AC8 — traduit côté
+   * serveur, renvoyé prêt à l'affichage).
+   *
+   * @param string $_statut
+   * @return string
+   */
+  private static function libelleStatut($_statut) {
+    if ($_statut === 'cree') {
+      return __('Créé', __FILE__);
+    }
+    if ($_statut === 'existant') {
+      return __('Déjà présent', __FILE__);
+    }
+    if ($_statut === 'ignore_identifiant') {
+      return __('Ignoré — aucun identifiant exploitable', __FILE__);
+    }
+    if ($_statut === 'ignore_doublon') {
+      return __('Ignoré — doublon dans la réponse du cloud', __FILE__);
+    }
+    if ($_statut === 'erreur') {
+      return __('Erreur lors de la création — consultez les logs du plugin', __FILE__);
+    }
+    return '';
+  }
+
+  /**
+   * Libellé traduit de l'état en ligne/hors ligne d'un appareil (AC8).
+   *
+   * @param bool $_enLigne
+   * @return string
+   */
+  private static function libelleEnLigne($_enLigne) {
+    return $_enLigne ? __('En ligne', __FILE__) : __('Hors ligne', __FILE__);
+  }
+
+  /**
+   * Phrase française résumant le résultat d'un scan (AC7/AC8). ⚠️ Message pluralisé :
+   * chaque fragment enveloppe __() D'ABORD, puis sprintf() ENSUITE (§ 9 de la spec
+   * technique, finding advisor) — jamais __($chaineDejaConstruite), l'extraction i18n
+   * est un scan STATIQUE.
+   *
+   * @param array $_compteurs
+   * @return string
+   */
+  private static function resumeScan(array $_compteurs) {
+    if ($_compteurs['trouves'] === 0 && $_compteurs['disparus'] === 0) {
+      return __('Aucun climatiseur trouvé sur ce compte', __FILE__);
+    }
+
+    if ($_compteurs['trouves'] === 0) {
+      // Compte vide MAIS des équipements connus manquent à l'appel (AC6) : ne pas
+      // court-circuiter le fragment "disparus" (minor de la revue croisée UC03, tour
+      // 1) — le tableau des disparus, juste en dessous dans l'écran de résultat,
+      // serait sinon en contradiction avec le résumé affiché au-dessus.
+      return __('Aucun climatiseur trouvé sur ce compte', __FILE__) . '. ' . sprintf(__('%d climatiseur(s) déjà connu(s) sont introuvables sur le compte', __FILE__), $_compteurs['disparus']);
+    }
+
+    $fragments = array();
+    $fragments[] = sprintf(__('%d climatiseur(s) trouvé(s) sur le compte', __FILE__), $_compteurs['trouves']);
+    if ($_compteurs['crees'] > 0) {
+      $fragments[] = sprintf(__('%d créé(s)', __FILE__), $_compteurs['crees']);
+    }
+    if ($_compteurs['existants'] > 0) {
+      $fragments[] = sprintf(__('%d déjà connu(s)', __FILE__), $_compteurs['existants']);
+    }
+    if ($_compteurs['ignores'] > 0) {
+      $fragments[] = sprintf(__('%d ignoré(s)', __FILE__), $_compteurs['ignores']);
+    }
+    if ($_compteurs['erreurs'] > 0) {
+      $fragments[] = sprintf(__('%d en erreur', __FILE__), $_compteurs['erreurs']);
+    }
+    $resume = implode(', ', $fragments);
+    if ($_compteurs['disparus'] > 0) {
+      $resume .= '. ' . sprintf(__('%d climatiseur(s) déjà connu(s) sont introuvables sur le compte', __FILE__), $_compteurs['disparus']);
+    }
+    return $resume;
   }
 
   /**

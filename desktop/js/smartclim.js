@@ -85,3 +85,79 @@ function addCmdToTable(_cmd) {
     }
   })
 }
+
+/* Découverte des climatiseurs AUX Home (UC03). Toute la logique (rapprochement,
+   création/mise à jour, libellés traduits) vit côté serveur
+   (core/ajax/smartclim.ajax.php -> smartclim::scannerAuxHome()) : ce JS n'envoie
+   aucun paramètre, il affiche uniquement le résultat déjà curaté. */
+function ajouterLigneScan($table, valeurs) {
+  var tr = $('<tr></tr>')
+  $.each(valeurs, function (index, valeur) {
+    tr.append($('<td></td>').text(valeur))
+  })
+  $table.find('tbody').append(tr)
+}
+
+$('#bt_scannerClimatiseurs').off('click').on('click', function () {
+  var $bouton = $(this)
+  var libelleInitial = $bouton.find('span').text()
+  $bouton.addClass('disableCard')
+  $bouton.find('span').text("{{Scan en cours…}}")
+  $('#table_scanTrouves tbody').empty()
+  $('#table_scanDisparus tbody').empty()
+  $('#bt_scanRecharger').addClass('hidden')
+  $('#div_scanResultat').hide()
+  $.ajax({
+    type: 'POST',
+    url: 'plugins/smartclim/core/ajax/smartclim.ajax.php',
+    data: { action: 'scannerClimatiseurs' },
+    dataType: 'json',
+    timeout: 30000,
+    global: false,
+    error: function (jqXHR, textStatus) {
+      if (textStatus === 'timeout') {
+        $('#div_alert').showAlert({ message: "{{Le scan n'a pas répondu à temps}}", level: 'danger' })
+      } else {
+        $('#div_alert').showAlert({ message: "{{Erreur de communication avec le serveur Jeedom}}", level: 'danger' })
+      }
+    },
+    success: function (data) {
+      if (data.state != 'ok') {
+        $('#div_alert').showAlert({ message: data.result, level: 'danger' })
+        return
+      }
+      var resultat = data.result
+      $('#span_scanResume').text(resultat.resume)
+      $.each(resultat.appareils, function (index, appareil) {
+        ajouterLigneScan($('#table_scanTrouves'), [
+          appareil.nom,
+          appareil.modele,
+          appareil.mac,
+          appareil.identifiant,
+          appareil.enLigneLibelle,
+          appareil.statutLibelle
+        ])
+      })
+      $.each(resultat.disparus, function (index, appareil) {
+        ajouterLigneScan($('#table_scanDisparus'), [
+          appareil.nom,
+          appareil.mac,
+          appareil.identifiant,
+          appareil.statutLibelle
+        ])
+      })
+      if (resultat.compteurs.crees > 0) {
+        $('#bt_scanRecharger').find('span').text("{{Afficher les nouveaux équipements}}")
+        $('#bt_scanRecharger').removeClass('hidden')
+      }
+      $('#div_scanResultat').show()
+    }
+  }).always(function () {
+    $bouton.removeClass('disableCard')
+    $bouton.find('span').text(libelleInitial)
+  })
+})
+
+$('#bt_scanRecharger').off('click').on('click', function () {
+  location.reload()
+})

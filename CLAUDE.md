@@ -43,9 +43,12 @@ enrichissant une **table de données**, pas en modifiant la logique.
 
 Ce dépôt embarque, en plus du code du plugin, un **outillage Claude Code** pour développer les features de
 manière structurée :
-- **`.claude/`** — commandes `/init-plugin` (cadrage, déjà joué) et `/feature` (implémentation d'une UC),
-  sous-agents (`jeedom-plugin-architect`, `jeedom-tech-planner`, `spec-writer`, `php-jeedom-dev`,
-  `code-reviewer`, `security-reviewer`, `translator`), skills `spec` et `dev`, mémoire d'agent.
+- **`.claude/`** — commandes `/init-plugin` (cadrage, déjà joué), `/feature` (implémentation d'une UC),
+  `/auto-dev` (enchaînement autonome de plusieurs UC) et `/change` (revenir sur une décision de
+  `/auto-dev`), sous-agents (`jeedom-plugin-architect`, `jeedom-tech-planner`, `spec-writer`,
+  `php-jeedom-dev`, `auto-dev-runner`, `code-reviewer`, `security-reviewer`, `translator`), skills
+  `spec` et `dev`, templates partagés (`.claude/templates/`), scripts (`.claude/scripts/`), mémoire
+  d'agent.
   ⚠️ **Chaque sous-agent épingle son `effort` dans son frontmatter** : sans cette ligne il **hérite de
   l'effort de la session**, et la boucle d'édition mécanique tourne au niveau de réflexion de
   l'orchestrateur — c'est là que partent les tokens, pas dans le raisonnement de l'orchestrateur lui-même.
@@ -478,7 +481,7 @@ traduction : la clé EST le texte français). Langues cibles : **`en_US`**, **`d
 - **`.memory/external/doc/jeedom/INDEX.md`** — index de la doc développeur Jeedom (pour un `WebFetch`
   ciblé sans re-parcourir le sommaire).
 
-L'outillage `/` fonctionne en **deux temps** :
+L'outillage `/` fonctionne en **trois temps** :
 
 - **Bootstrap — `/init-plugin`** : ✅ **déjà joué** (cadrage, analyses, renommage du squelette, specs
   fonctionnelles). Ne pas le relancer : il refuserait d'écraser un cadrage existant.
@@ -487,6 +490,36 @@ L'outillage `/` fonctionne en **deux temps** :
   la spec technique, délègue l'implémentation à l'agent `php-jeedom-dev` (skill `dev`), lance les reviews
   croisées (`code-reviewer`, `security-reviewer`), puis la traduction (`translator`) et la capitalisation
   mémoire.
+- **Enchaînement autonome — `/auto-dev "<liste d'UC>"`** puis **`/change <explication>`** : le mode
+  « sans humain dans la boucle », détaillé ci-dessous.
+
+### Mode autonome — `/auto-dev` et `/change`
+
+`/auto-dev "MVP 04 .. MVP 08"` (intervalle) ou `/auto-dev "MVP 04, MVP 06, MVP 08"` (liste) enchaîne des
+cycles `/feature` complets **sans poser de question** : à chaque gate humaine, il **tranche** selon la
+grille `.claude/templates/principes-arbitrage.md` puis **journalise** l'arbitrage. Une UC = **un
+sous-agent `auto-dev-runner`** en contexte neuf (l'orchestrateur ne lit jamais un fichier de code ou de
+spec : c'est ce qui garde son contexte plat sur tout un run), et **un commit sur `master`** — jamais de
+`push`.
+
+- **Reprise après coupure** (crédit épuisé, réseau, session fermée) : relancer la **même** demande
+  reprend le run existant et saute les UC déjà terminées ; `/auto-dev` **sans argument** reprend le
+  dernier run interrompu. L'état vit dans `.memory/auto-dev/<run>/etat.json` + `journal.jsonl`, écrits
+  **au fil de l'eau** par les runners — et une reprise se fie d'abord au **constat sur le disque**
+  (spec technique présente ? arbre sale ? commit existant ?), pas à la phase journalisée.
+- **`recap.md` à la racine** — ⚠️ **fichier GÉNÉRÉ**, jamais édité à la main : il est réassemblé par
+  `python .claude/scripts/auto-dev.py recap` depuis les `decisions.md` des runners et les révisions.
+  Chaque entrée est autoportante (question, décision, alternatives écartées, portée dans le code, coût
+  d'un revirement, migration) parce que son lecteur cible — `/change` — démarre en **contexte vide**.
+- **`/change <explication>`** (ou `/change D-MVP04-02 <explication>`, `/change --liste`) : retrouve la
+  décision dans `recap.md`, charge **uniquement** ce qu'elle cite, applique l'autre option (code, spec
+  technique, **migration de l'existant** : clé de config renommée, `logicalId` déjà posé, cache au
+  format précédent), puis ajoute une **révision** — l'ancienne décision reste visible, marquée révisée.
+- **`.claude/scripts/auto-dev.py`** porte tout le mécanique (résolution de la demande en specs, journal,
+  assemblage du récap) : `resolve`, `init`, `status`, `event`, `recap`. Le format des entrées de décision
+  est figé dans `.claude/templates/recap-section.md` — **ses marqueurs sont lus à la lettre** par le
+  script (`### D-<UC><NN> — …`, `- **Statut** : …`, `- **Révise** : D-…`) : les changer sans toucher au
+  script casse silencieusement l'index et le lien de révision.
 
 > **Maintenance de ce fichier** : `CLAUDE.md` est lu par **toute** future session. Le tenir à jour quand
 > l'architecture, les conventions ou l'outillage changent. En revanche, l'**avancement détaillé** (quelle

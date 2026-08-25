@@ -113,6 +113,94 @@ class smartclim extends eqLogic {
       && self::paysAuxHome() != '');
   }
 
+  /**
+   * Teste une connexion complète au cloud AUX Home avec les identifiants actuellement
+   * enregistrés. Appelle TOUJOURS smartclimAuxHomeApi::login() (jamais ::session()) :
+   * aucune session ou clé mise en cache d'une tentative précédente n'est réutilisée
+   * (AC6). Les deux gardes ci-dessous sont testées séparément — et non via
+   * compteConfigure(), qui renvoie un simple booléen — car elles produisent chacune un
+   * message distinct : un utilisateur hors table Europe doit savoir que c'est le pays
+   * qui bloque, sans le confondre avec un compte non configuré (§ 4 de la spec
+   * technique).
+   *
+   * @return string Message de succès en français, déjà traduit.
+   * @throws smartclimException Message d'échec curaté en français (jamais de code brut).
+   */
+  public static function testerConnexionAuxHome() {
+    if (self::emailAuxHome() == '' || config::byKey('auxhome_password', 'smartclim') == '') {
+      throw new smartclimException(__('Compte AUX Home non configuré : renseignez l\'e-mail et le mot de passe', __FILE__), smartclimException::TYPE_AUTH);
+    }
+    if (self::paysAuxHome() == '') {
+      throw new smartclimException(__('Pays du compte AUX Home introuvable : saisissez le code ISO à 3 lettres (FRA, BEL…) dans le champ Pays', __FILE__), smartclimException::TYPE_AUTH);
+    }
+    try {
+      smartclimAuxHomeApi::login();
+    } catch (smartclimException $e) {
+      // Le message technique ($e->getMessage()) est contractuellement exempt de secret
+      // (docblock de smartclimException) : le journaliser en 'error' est indispensable
+      // au diagnostic, faute de quoi 5 des 9 messages utilisateur affichés ci-dessous
+      // disent « consultez les logs du plugin » alors que le log serait vide (finding
+      // MAJOR de la revue croisée). AC4 reste respecté : ni secret ni trace de pile.
+      log::add('smartclim', 'error', 'Test de connexion AUX Home échoué (type ' . $e->getType() . ') : ' . $e->getMessage());
+      throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
+    }
+    return __('Connexion réussie au compte AUX Home', __FILE__);
+  }
+
+  /**
+   * Efface l'e-mail et le mot de passe du compte AUX Home enregistrés, puis purge la
+   * session en cache. Action VOLONTAIRE de l'utilisateur (bouton dédié de la page de
+   * configuration) : ce nettoyage ne vit jamais dans smartclim_remove(), appelée à
+   * chaque désactivation du plugin, pas seulement à la désinstallation (cf.
+   * .memory/specs/MVP/01-configuration-plugin-tech.md § 1.6 — une purge y détruirait
+   * silencieusement les identifiants lors d'un simple cycle désactiver/réactiver). Le
+   * pays et l'intervalle de rafraîchissement, qui ne sont pas des identifiants,
+   * restent inchangés.
+   *
+   * @return string Message de confirmation en français, déjà traduit.
+   */
+  public static function effacerIdentifiantsAuxHome() {
+    config::remove('auxhome_email', 'smartclim');
+    config::remove('auxhome_password', 'smartclim');
+    // config::remove() ne déclenche PAS postConfig_* (cf. spec technique § 0.4) : la
+    // purge de session doit donc être explicite ici, pas déléguée au hook.
+    smartclimAuxHomeApi::purgerSession();
+    return __('Identifiants effacés', __FILE__);
+  }
+
+  /**
+   * Traduit le (type, contexte) d'une smartclimException levée par la brique de
+   * transport en un message français curaté, sans jamais exposer de code métier AUX ni
+   * de statut HTTP brut (AC4). Seul endroit du plugin où vivent ces __() : la brique de
+   * transport (smartclimAuxHomeApi) ne porte qu'un type et un contexte technique (§ 5
+   * de la spec technique — une clé i18n est indexée sous le fichier où vit l'appel
+   * __(), les éparpiller produirait plusieurs entrées pour une même intention).
+   *
+   * @param int $_type Une des constantes smartclimException::TYPE_*.
+   * @param string $_contexte '' ou smartclimException::CONTEXTE_REQUETE_INITIALE (seul
+   *   cas où le message dépend du contexte).
+   * @return string
+   */
+  private static function messageErreurAuxHome($_type, $_contexte) {
+    if ($_type == smartclimException::TYPE_RESEAU) {
+      return __('Service AUX Home injoignable, réessayez plus tard', __FILE__);
+    }
+    if ($_type == smartclimException::TYPE_PROTOCOLE) {
+      // Constante neutre côté transport (jamais le littéral 'getPubkey', un nom
+      // d'endpoint du protocole qui n'a rien à faire hors de smartclimAuxHomeApi,
+      // cf. CLAUDE.md § Conventions — finding minor de la revue croisée).
+      if ($_contexte == smartclimException::CONTEXTE_REQUETE_INITIALE) {
+        return __('Le service AUX Home a refusé la requête initiale — vérifiez le code pays (FRA, BEL…)', __FILE__);
+      }
+      return __('Réponse inattendue du service AUX Home — consultez les logs du plugin', __FILE__);
+    }
+    if ($_type == smartclimException::TYPE_INTERNE) {
+      return __('Erreur interne lors de la préparation de la connexion — consultez les logs du plugin', __FILE__);
+    }
+    // smartclimException::TYPE_AUTH, et repli par défaut pour tout type inattendu.
+    return __('Échec de la connexion — vérifiez vos identifiants et le pays sélectionné', __FILE__);
+  }
+
   /*
   * Fonction exécutée automatiquement toutes les minutes par Jeedom
   public static function cron() {}
@@ -182,6 +270,35 @@ class smartclim extends eqLogic {
    */
   public static function preConfig_refresh_interval($value) {
     return self::normaliserIntervalle($value);
+  }
+
+  /**
+   * Purge la session AUX Home en cache dès que le mot de passe change. Ce hook ne
+   * reçoit que le CHIFFRÉ ($value inutilisé, cf. spec technique § 0.4 : postConfig_*
+   * d'une clé chiffrée ne voit jamais le clair) — mais la seule NOTIFICATION du
+   * changement suffit à invalider une session obtenue avec l'ancien mot de passe
+   * (AC6) : cache::delete() n'a besoin que de la clé de cache, jamais du secret.
+   * Explicitement autorisé par UC01 § 4 : « le hook ne lit rien, il purge ».
+   */
+  public static function postConfig_auxhome_password($value) {
+    smartclimAuxHomeApi::purgerSession();
+  }
+
+  /**
+   * Purge la session AUX Home en cache dès que l'e-mail change (même motif que
+   * postConfig_auxhome_password() ci-dessus).
+   */
+  public static function postConfig_auxhome_email($value) {
+    smartclimAuxHomeApi::purgerSession();
+  }
+
+  /**
+   * Purge la session AUX Home en cache dès que le pays change (même motif que
+   * postConfig_auxhome_password() ci-dessus) : le cloud AUX Home route potentiellement
+   * vers un jeu de clés différent par pays.
+   */
+  public static function postConfig_auxhome_country($value) {
+    smartclimAuxHomeApi::purgerSession();
   }
 
   /**

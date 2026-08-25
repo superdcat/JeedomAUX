@@ -11,6 +11,30 @@
         "Rafraîchissement": "Refresh",
         "Intervalle de rafraîchissement (minutes)": "Refresh interval (minutes)",
         "Entre 1 et 1440 minutes, 5 minutes par défaut.": "Between 1 and 1440 minutes, 5 minutes by default.",
-        "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "The room temperature reported by AUX Home refreshes slowly (up to about 30 minutes); reducing this interval does not speed up the data."
+        "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "The room temperature reported by AUX Home refreshes slowly (up to about 30 minutes); reducing this interval does not speed up the data.",
+        "Tester la connexion": "Test connection",
+        "Effacer les identifiants": "Clear credentials",
+        "Test de connexion en cours…": "Testing connection…",
+        "Le test utilise les identifiants enregistrés : enregistrez vos modifications avant de tester.": "The test uses the saved credentials: save your changes before testing.",
+        "Le test n'a pas répondu à temps": "The test did not respond in time",
+        "Effacer l'e-mail et le mot de passe du compte AUX Home ?": "Clear the email and password of the AUX Home account?",
+        "L'effacement des identifiants a échoué": "Clearing the credentials failed",
+        "Erreur de communication avec le serveur Jeedom": "Error communicating with the Jeedom server"
+    },
+    "plugins/smartclim/core/ajax/smartclim.ajax.php": {
+        "Erreur interne du plugin — consultez les logs": "Internal plugin error — check the logs",
+        "401 - Accès non autorisé": "401 - Unauthorized access",
+        "Aucune méthode correspondante à": "No matching method for"
+    },
+    "plugins/smartclim/core/class/smartclim.class.php": {
+        "Connexion réussie au compte AUX Home": "Successfully connected to the AUX Home account",
+        "Échec de la connexion — vérifiez vos identifiants et le pays sélectionné": "Connection failed — check your credentials and the selected country",
+        "Service AUX Home injoignable, réessayez plus tard": "AUX Home service unreachable, please try again later",
+        "Réponse inattendue du service AUX Home — consultez les logs du plugin": "Unexpected response from the AUX Home service — check the plugin logs",
+        "Le service AUX Home a refusé la requête initiale — vérifiez le code pays (FRA, BEL…)": "The AUX Home service rejected the initial request — check the country code (FRA, BEL…)",
+        "Erreur interne lors de la préparation de la connexion — consultez les logs du plugin": "Internal error while preparing the connection — check the plugin logs",
+        "Compte AUX Home non configuré : renseignez l'e-mail et le mot de passe": "AUX Home account not configured: enter the email and password",
+        "Pays du compte AUX Home introuvable : saisissez le code ISO à 3 lettres (FRA, BEL…) dans le champ Pays": "AUX Home account country not found: enter the 3-letter ISO code (FRA, BEL…) in the Country field",
+        "Identifiants effacés": "Credentials cleared"
     }
 }

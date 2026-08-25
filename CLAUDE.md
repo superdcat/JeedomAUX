@@ -63,19 +63,36 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
     chiffre automatiquement les champs de config **plugin** sensibles.
   - `smartclimCmd extends cmd` — commande (info ou action). `execute($_options)` exécute une action
     (typiquement un `switch` sur `logicalId`).
-- **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**. **Existe** depuis
-  l'UC01 du MVP, où elle ne porte encore que la connaissance de protocole liée au **pays** : table de
-  correspondance fuseau IANA → ISO-3 (Europe) et `paysParDefaut()`. L'UC02 y ajoutera `getPubkey`,
-  `login/pwd`, l'en-tête `country` et la correspondance `auxhome_email` → champ `account`.
+- **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
+  plugin. Porte la table fuseau IANA → ISO-3 et `paysParDefaut()` (UC01), puis l'authentification
+  complète (UC02) : `login()` (toujours frais — `getPubkey` + `login/pwd` — **et écrit** la session en
+  cache), `session()` (**lit** le cache, sinon `login()`), `purgerSession()`, la crypto RSA/AES et les
+  constantes de protocole embarquées (source + licence MIT citées en commentaire).
+  ⚠️ **Budget de temps global** : un login enchaîne **deux** requêtes, donc les timeouts par requête ne
+  suffisent pas à tenir une exigence exprimée en budget total — cf.
+  `.memory/analyse/smartclim-transport-aux-home.md` § 8.3.
+- **`core/class/smartclimException.class.php`** — **existe** depuis l'UC02 du MVP. Exception **typée** à
+  4 types (`TYPE_RESEAU`, `TYPE_AUTH`, `TYPE_PROTOCOLE`, `TYPE_INTERNE`) + un `contexte` optionnel.
+  ⚠️ **Deux usages distincts du message** : levée par une brique de transport, il est **technique** et
+  n'est jamais affiché ; levée par `smartclim::`, il est **déjà curaté en français** et affiché tel quel.
+  Le passage de l'un à l'autre se fait **exclusivement** par `smartclim::messageErreurAuxHome()`.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, cf.
-  Autoload) : `smartclimException` (erreurs typées auth/réseau/protocole), `smartclimCapabilities`
-  (énumérations génériques + tables de correspondance), `smartclimFrame` (décodage/encodage de la trame
-  HVAC), `smartclimTransport` (sélection du transport actif), et les deux autres briques de transport :
-  `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
+  Autoload) : `smartclimCapabilities` (énumérations génériques + tables de correspondance),
+  `smartclimFrame` (décodage/encodage de la trame HVAC), `smartclimTransport` (sélection du transport
+  actif), et les deux autres briques de transport : `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
   `isConnect('admin')`, `ajax::init()`, puis aiguille sur `init('action')` en branches
   `if (init('action') == '...')`. Pour un endpoint **non-admin** (widget de dashboard, page-panneau), créer
   un fichier AJAX **distinct** avec `isConnect()` + contrôle fin `hasRight('r')` par équipement.
+  ⚠️ **Ce fichier est indenté en 4 espaces** (héritage du squelette, contrairement à la règle générale de
+  2 espaces ci-dessous) — respecter l'existant.
+  ⚠️ **`session_write_close()` juste après `ajax::init()`, avant tout appel réseau** : `ajax::init()` ne
+  ferme pas la session, et Jeedom utilise des sessions **fichier** — un handler qui tient plusieurs
+  secondes **fige toute l'interface**. Détail : `.memory/analyse/jeedom-config-plugin-et-cycle-de-vie.md`
+  § 9.
+  ⚠️ **Rattraper `Throwable` en dernier bloc** (après `smartclimException` puis `Exception`) : une `Error`
+  PHP 8 traverse sinon `catch (Exception)` et la réponse cesse d'être du JSON. Message curaté, code
+  **figé**, **jamais** `displayException()` sur une `smartclimException`. Idem § 10.
 - **`core/php/smartclim.inc.php`** — includes/constantes internes du plugin.
 - **`core/template/{dashboard,mobile}/cmd.<type>.<subType>.<nom>.html`** — widgets de commande
   personnalisés (dashboard + mobile = **deux fichiers synchronisés**). ⚠️ Le dossier s'appelle bien
@@ -175,7 +192,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   bornes de température. Les champs sensibles d'un **équipement** (ex. un passcode d'appairage local) se
   chiffrent via les méthodes d'instance `encrypt()`/`decrypt()`.
 - **Jetons de session** : cache **chiffré** via la classe `cache` (`cache::set/byKey/delete`), purgé au
-  changement d'identifiants. ⚠️ Le cloud AUX Home n'expose **aucun refresh token** : la stratégie est
+  changement d'identifiants. **En place depuis l'UC02** : clé `smartclim::session_auxhome`, **30 min**
+  (durée de vie réelle du jeton inconnue jusqu'à UC08), contenu `utils::encrypt(json_encode(...))` avec
+  `jeton`, `uid` et une **empreinte `sha1(email|pays)`** — invalidée si l'empreinte diverge, ce qui
+  rattrape les changements d'identifiants qui ne passent pas par `config::save` (restauration, SQL
+  direct). 🚫 **Jamais le mot de passe dans l'empreinte** : cela le remettrait sur la pile d'appel.
+  La purge est câblée sur `postConfig_auxhome_password/email/country` **et** explicitement dans l'action
+  d'effacement (`config::remove()` ne déclenche **pas** les hooks). ⚠️ Le cloud AUX Home n'expose **aucun refresh token** : la stratégie est
   re-login réactif, avec anti-boucle (une seule tentative par cycle).
 - ⚠️ **Jamais** de secret/token/mot de passe en clair dans les logs (y compris dans une trace
   d'exception), le DOM, les réponses AJAX ou les commentaires. Au plus un préfixe tronqué.
@@ -254,8 +277,13 @@ d'acceptation** des specs (`.memory/specs/`) qui en tiennent lieu.
 - **Aucun code propriétaire hors des adaptateurs de transport** : offsets d'octets, noms de champs d'API et
   numérotations de modes restent confinés dans la brique du transport (ou dans les tables de
   `smartclimCapabilities`).
-- Indentation **2 espaces** en PHP/JS pour `core/class`, `core/ajax`, `desktop/js`… ; ⚠️ **exception** :
-  `desktop/php/*.php` (pages) sont en **tabulations + CRLF** — respecter l'existant fichier par fichier.
+- Indentation **2 espaces** en PHP/JS pour `core/class`, `desktop/js`, `plugin_info/configuration.txt`… ;
+  ⚠️ **deux exceptions héritées du squelette, à respecter telles quelles** : `desktop/php/*.php` (pages)
+  sont en **tabulations**, et `core/ajax/smartclim.ajax.php` est en **4 espaces**.
+  **Fins de ligne CRLF partout** — et pour le vérifier, **compter les octets**
+  (`tr -cd '\r' | wc -c` vs `'\n'`), **jamais** `grep -c $'\r'`, qui peut retourner le nombre total de
+  lignes et donner l'illusion d'un fichier CRLF.
+  Règle générale : **respecter l'existant fichier par fichier**.
 - Logs via `log::add('smartclim', 'debug'|'info'|'warning'|'error', $msg)` ; **jamais** de secret exposé.
 - **Robustesse cron** : un équipement en erreur ne doit **pas** interrompre la boucle → `try/catch` **par
   équipement**. Un seul appel réseau global par cycle quand l'API le permet, puis distribution.

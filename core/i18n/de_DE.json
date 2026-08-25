@@ -11,6 +11,30 @@
         "Rafraîchissement": "Aktualisierung",
         "Intervalle de rafraîchissement (minutes)": "Aktualisierungsintervall (Minuten)",
         "Entre 1 et 1440 minutes, 5 minutes par défaut.": "Zwischen 1 und 1440 Minuten, standardmäßig 5 Minuten.",
-        "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "Die von AUX Home gemeldete Raumtemperatur aktualisiert sich nur langsam (bis zu etwa 30 Minuten); eine Verkürzung dieses Intervalls beschleunigt die Daten nicht."
+        "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "Die von AUX Home gemeldete Raumtemperatur aktualisiert sich nur langsam (bis zu etwa 30 Minuten); eine Verkürzung dieses Intervalls beschleunigt die Daten nicht.",
+        "Tester la connexion": "Verbindung testen",
+        "Effacer les identifiants": "Zugangsdaten löschen",
+        "Test de connexion en cours…": "Verbindungstest läuft…",
+        "Le test utilise les identifiants enregistrés : enregistrez vos modifications avant de tester.": "Der Test verwendet die gespeicherten Zugangsdaten: speichern Sie Ihre Änderungen, bevor Sie testen.",
+        "Le test n'a pas répondu à temps": "Der Test hat nicht rechtzeitig geantwortet",
+        "Effacer l'e-mail et le mot de passe du compte AUX Home ?": "E-Mail-Adresse und Passwort des AUX Home-Kontos löschen?",
+        "L'effacement des identifiants a échoué": "Das Löschen der Zugangsdaten ist fehlgeschlagen",
+        "Erreur de communication avec le serveur Jeedom": "Fehler bei der Kommunikation mit dem Jeedom-Server"
+    },
+    "plugins/smartclim/core/ajax/smartclim.ajax.php": {
+        "Erreur interne du plugin — consultez les logs": "Interner Plugin-Fehler — siehe Logs",
+        "401 - Accès non autorisé": "401 - Nicht autorisierter Zugriff",
+        "Aucune méthode correspondante à": "Keine passende Methode für"
+    },
+    "plugins/smartclim/core/class/smartclim.class.php": {
+        "Connexion réussie au compte AUX Home": "Erfolgreiche Verbindung mit dem AUX Home-Konto",
+        "Échec de la connexion — vérifiez vos identifiants et le pays sélectionné": "Verbindung fehlgeschlagen — überprüfen Sie Ihre Zugangsdaten und das ausgewählte Land",
+        "Service AUX Home injoignable, réessayez plus tard": "AUX Home-Dienst nicht erreichbar, bitte versuchen Sie es später erneut",
+        "Réponse inattendue du service AUX Home — consultez les logs du plugin": "Unerwartete Antwort vom AUX Home-Dienst — siehe Plugin-Logs",
+        "Le service AUX Home a refusé la requête initiale — vérifiez le code pays (FRA, BEL…)": "Der AUX Home-Dienst hat die erste Anfrage abgelehnt — überprüfen Sie den Ländercode (FRA, BEL…)",
+        "Erreur interne lors de la préparation de la connexion — consultez les logs du plugin": "Interner Fehler bei der Vorbereitung der Verbindung — siehe Plugin-Logs",
+        "Compte AUX Home non configuré : renseignez l'e-mail et le mot de passe": "AUX Home-Konto nicht konfiguriert: geben Sie E-Mail-Adresse und Passwort ein",
+        "Pays du compte AUX Home introuvable : saisissez le code ISO à 3 lettres (FRA, BEL…) dans le champ Pays": "Land des AUX Home-Kontos nicht gefunden: geben Sie den dreistelligen ISO-Code (FRA, BEL…) im Feld Land ein",
+        "Identifiants effacés": "Zugangsdaten gelöscht"
     }
 }

@@ -11,6 +11,30 @@
         "Rafraîchissement": "Actualización",
         "Intervalle de rafraîchissement (minutes)": "Intervalo de actualización (minutos)",
         "Entre 1 et 1440 minutes, 5 minutes par défaut.": "Entre 1 y 1440 minutos, 5 minutos de forma predeterminada.",
-        "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "La temperatura ambiente proporcionada por AUX Home se actualiza lentamente (hasta unos 30 minutos); reducir este intervalo no acelera el dato."
+        "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "La temperatura ambiente proporcionada por AUX Home se actualiza lentamente (hasta unos 30 minutos); reducir este intervalo no acelera el dato.",
+        "Tester la connexion": "Probar la conexión",
+        "Effacer les identifiants": "Borrar las credenciales",
+        "Test de connexion en cours…": "Prueba de conexión en curso…",
+        "Le test utilise les identifiants enregistrés : enregistrez vos modifications avant de tester.": "La prueba utiliza las credenciales guardadas: guarde sus cambios antes de realizar la prueba.",
+        "Le test n'a pas répondu à temps": "La prueba no respondió a tiempo",
+        "Effacer l'e-mail et le mot de passe du compte AUX Home ?": "¿Borrar el correo electrónico y la contraseña de la cuenta AUX Home?",
+        "L'effacement des identifiants a échoué": "El borrado de las credenciales ha fallado",
+        "Erreur de communication avec le serveur Jeedom": "Error de comunicación con el servidor Jeedom"
+    },
+    "plugins/smartclim/core/ajax/smartclim.ajax.php": {
+        "Erreur interne du plugin — consultez les logs": "Error interno del plugin — consulte los registros",
+        "401 - Accès non autorisé": "401 - Acceso no autorizado",
+        "Aucune méthode correspondante à": "Ningún método correspondiente a"
+    },
+    "plugins/smartclim/core/class/smartclim.class.php": {
+        "Connexion réussie au compte AUX Home": "Conexión correcta con la cuenta AUX Home",
+        "Échec de la connexion — vérifiez vos identifiants et le pays sélectionné": "Error de conexión — compruebe sus credenciales y el país seleccionado",
+        "Service AUX Home injoignable, réessayez plus tard": "Servicio AUX Home no disponible, inténtelo de nuevo más tarde",
+        "Réponse inattendue du service AUX Home — consultez les logs du plugin": "Respuesta inesperada del servicio AUX Home — consulte los registros del plugin",
+        "Le service AUX Home a refusé la requête initiale — vérifiez le code pays (FRA, BEL…)": "El servicio AUX Home ha rechazado la solicitud inicial — compruebe el código de país (FRA, BEL…)",
+        "Erreur interne lors de la préparation de la connexion — consultez les logs du plugin": "Error interno al preparar la conexión — consulte los registros del plugin",
+        "Compte AUX Home non configuré : renseignez l'e-mail et le mot de passe": "Cuenta AUX Home no configurada: introduzca el correo electrónico y la contraseña",
+        "Pays du compte AUX Home introuvable : saisissez le code ISO à 3 lettres (FRA, BEL…) dans le champ Pays": "País de la cuenta AUX Home no encontrado: introduzca el código ISO de 3 letras (FRA, BEL…) en el campo País",
+        "Identifiants effacés": "Credenciales borradas"
     }
 }

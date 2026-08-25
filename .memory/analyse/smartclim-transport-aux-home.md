@@ -35,6 +35,18 @@
   | `Authorization` | `bearer <token>` (minuscule `bearer`) | avant login : **jeton applicatif statique** |
   | `Content-Type` | `application/json` | uniquement si corps |
 
+- **Formats des constantes de protocole — confirmés le 2026-08-25** (lecture de
+  `com.zwegersit.auxairco/lib/auxcloud/constants.ts`, MIT). Les **valeurs** restent volontairement hors
+  de ce fichier (leur place est le code de `smartclimAuxHomeApi`), mais leurs **formats** évitent une
+  erreur d'implémentation coûteuse :
+  - `ACCOUNT_AES_KEY` est un **texte ASCII brut de 16 caractères** (`Buffer` UTF-8) → **utilisable
+    directement** comme clé AES-128 en PHP, **sans** décodage hexadécimal ni base64. C'est exactement le
+    genre de détail qui coûte un cycle complet s'il est deviné de travers.
+  - `AUX_USER_AGENT` = `AUXAC/2.3.2 (iPhone; iOS 18.6.2; Scale/3.00)` — chaîne exacte.
+  - `STATIC_APP_TOKEN` : base64, ~88 caractères.
+  - La table `TIMEZONE_TO_COUNTRY` de la référence ne compte que **30 entrées** et retombe sur `NLD`
+    quand le fuseau est inconnu ; SmartClim en a **66** (Europe) et retombe sur **vide** — écart
+    délibéré, cf. UC01 (un pays faux mais plausible produit un échec de login au message trompeur).
 - **Jeton applicatif pré-login** : constante `STATIC_APP_TOKEN` de
   `com.zwegersit.auxairco/lib/auxcloud/constants.ts` (base64, ~88 caractères). Ce n'est **pas un secret
   utilisateur** — il identifie l'application elle-même et est utilisé pour `getPubkey`/`login`.
@@ -275,8 +287,21 @@ l'application officielle. Conséquences pour SmartClim :
    `bearer <6 premiers caractères>…` (`.memory/brief.md` § 16).
 2. Le mot de passe est stocké via `$_encryptConfigKey` (config plugin) ; le jeton via le cache Jeedom
    **chiffré** (`utils::encrypt` avant `cache::set`).
-3. Timeouts cURL courts (connexion 5 s, total 15 s) : une commande Jeedom ne doit jamais bloquer
-   (`.memory/brief.md` § 15).
+3. **Timeouts — valeur révisée le 2026-08-25 (UC02 du MVP).** ⚠️ La recommandation initiale
+   « connexion 5 s, total 15 s **par requête** » est **inapplicable telle quelle au login**, qui enchaîne
+   **deux** requêtes (`getPubkey` puis `login/pwd`) : 2 × 15 s = 30 s, au-delà du plafond de 20 s exigé
+   pour un échec réseau. → Valeurs retenues : `TIMEOUT_CONNEXION = 5`, `TIMEOUT_REQUETE = 10`, et surtout
+   un **budget GLOBAL `BUDGET_LOGIN = 18`** dont la 2ᵉ requête reçoit le **reste** (`max(3, budget −
+   écoulé)`).
+   ⚠️ **Ne jamais se reposer sur le timeout par requête pour tenir une exigence exprimée en budget
+   global** : `CURLOPT_TIMEOUT` peut être inopérant pendant `getaddrinfo()` selon le build de libcurl
+   (absence de `AsynchDNS` combinée à `CURLOPT_NOSIGNAL`, que le plugin pose).
+   ⚠️ **`CURLOPT_DNS_CACHE_TIMEOUT` est sans effet** si le handle cURL est créé et détruit à chaque
+   appel : le cache DNS est porté **par le handle**. Il faudrait un `curl_share_init()`
+   (`CURL_LOCK_DATA_DNS`) partagé — non fait au MVP, gain marginal.
+   ⚠️ **Verrou de session PHP** : un handler AJAX qui tient 18 s **sérialise toute l'interface Jeedom**
+   derrière lui (sessions fichier). `session_write_close()` est obligatoire avant tout appel réseau —
+   cf. `jeedom-config-plugin-et-cycle-de-vie.md` § 9.
 4. Sur `code != 200` d'un appel authentifié : **un** re-login + **un** rejeu, puis échec propre.
 5. **Protection anti-état-périmé** : après une commande, mémoriser l'état optimiste pendant une période de
    grâce (≈ 60 s, à calibrer) pendant laquelle un état scruté plus ancien ne doit pas écraser la valeur

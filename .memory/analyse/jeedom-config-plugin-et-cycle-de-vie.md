@@ -3,12 +3,14 @@
 > **Analyse générique Jeedom** (réutilisable par tout plugin, pas propre à SmartClim).
 >
 > **Statut des informations** : ✅ = **lu dans la source du core** (`jeedom/core@master`,
-> `core/class/config.class.php`, `core/ajax/config.ajax.php`, `core/class/plugin.class.php`, lus le
-> 2026-08-24/25). Tout ce fichier est en ✅ — rien n'y est supposé.
+> `core/class/config.class.php`, `core/ajax/config.ajax.php`, `core/class/plugin.class.php`,
+> `core/class/cache.class.php`, `core/class/ajax.class.php`, lus les 2026-08-24 et 2026-08-25).
+> Tout ce fichier est en ✅ — rien n'y est supposé.
 >
-> **Pourquoi ce fichier existe** : ces six contrats sont **invisibles à `php -l`**, ne se devinent pas à
-> la lecture d'un plugin existant, et chacun a un mode de défaillance silencieux (perte de clés, perte
-> d'identifiants, validation court-circuitée, secret exposé). Établis au cycle UC01 du MVP.
+> **Pourquoi ce fichier existe** : ces onze contrats sont **invisibles à `php -l`**, ne se devinent pas à
+> la lecture d'un plugin existant, et chacun a un mode de défaillance **silencieux** (perte de clés, perte
+> d'identifiants, validation court-circuitée, secret exposé, interface figée, log muet ou forgé).
+> §§ 1-7 établis au cycle UC01 du MVP, §§ 8-11 au cycle UC02.
 >
 > **Date** : 2026-08-25.
 
@@ -143,3 +145,90 @@ point** (`.memory/`, `.claude/`, `.github/`, **`.git/`**) sont servis s'ils sont
 expose l'URL du dépôt distant — et un **jeton** si le clone utilisait `https://user:token@…`. Aucun
 `.htaccess` interne ne peut fermer `.git/` : seule une règle à la racine le pourrait, ou une installation
 **par archive** plutôt que par `git clone`.
+
+## 8. `cache::byKey()` et les entrées expirées — pas de piège
+
+Vérifié sur la source (`core/class/cache.class.php`, `FileCache::fetch()`, `MariadbCache::fetch()`) :
+**chaque moteur de cache purge lui-même l'entrée expirée et renvoie `null`** avant que `cache::byKey()`
+ne la voie ; celle-ci construit alors un objet `cache` **frais** (valeur `null`, horodatage courant),
+jamais l'ancien objet avec sa valeur périmée.
+
+→ `cache::byKey($cle)->getValue(null) !== null` suffit à distinguer « présent et valide » de
+« absent **ou** expiré ». **Aucun test de fraîcheur supplémentaire n'est nécessaire.**
+
+⚠️ Ce qui reste à la charge du plugin, en revanche, c'est l'**invalidation métier** : une entrée non
+expirée mais devenue **fausse** (identifiants changés hors `config::save`, donc sans passer par les hooks
+`postConfig_*` — restauration de sauvegarde, écriture SQL, migration). Motif retenu : stocker dans
+l'entrée une **empreinte** des identifiants (`sha1(email . '|' . pays)`) et la comparer à la relecture.
+🚫 **Ne jamais inclure un mot de passe dans une telle empreinte** — cela le remettrait sur la pile
+d'appel (cf. § 10).
+
+## 9. ⚠️ `ajax::init()` NE ferme PAS la session PHP — et Jeedom utilise des sessions fichier
+
+Vérifié sur la source (`core/class/ajax.class.php`) : `ajax::init()` ne fait que poser l'en-tête
+`Content-Type` et valider l'allow-list des actions autorisées en GET.
+
+Or Jeedom utilise des **sessions fichier** : tant que la session n'est pas fermée, **toute autre requête
+de la même session est sérialisée** derrière le handler en cours. Un endpoint AJAX qui fait un appel
+réseau de plusieurs secondes **fige donc toute l'interface** — menu, page courante, autres appels AJAX.
+Le symptôme est spectaculaire et ne ressemble pas à sa cause.
+
+→ **`session_write_close()` juste après le contrôle d'accès (`isConnect(...)`) et `ajax::init()`, et
+AVANT tout appel réseau.** L'appel est inoffensif s'il s'avérait redondant.
+⚠️ Corollaire : un `timeout` posé côté client (jQuery) **n'interrompt pas le PHP** — il évite seulement
+que l'interface attende. La seule borne réelle est **serveur**.
+
+## 10. ⚠️ Une trace d'exception PHP expose les ARGUMENTS de chaque frame
+
+Ce n'est pas propre à Jeedom, mais c'est le piège central de tout plugin qui manipule un secret : une
+exception née pendant qu'un secret est **argument** de la frame courante l'embarque dans sa trace — et
+`displayException()` peut faire remonter cette trace jusqu'à une réponse AJAX, donc jusqu'au DOM.
+
+Défense retenue, en couches, **toutes nécessaires** :
+
+1. **aucune fonction ne prend le secret en paramètre** : elle lit `config::byKey(...)` elle-même, au plus
+   près de l'usage ;
+2. la crypto est enveloppée dans un `try { … } catch (Throwable $t) { return false; }` qui **capture et
+   jette sur place** — même si un `set_error_handler` du core convertissait un *warning* `openssl_*` en
+   `ErrorException` avec un fragment du secret en argument.
+   ⚠️ **`openssl_public_encrypt()` sur une clé inexploitable renvoie `false` en émettant un WARNING, il
+   ne lève PAS d'exception** : ce `catch` ne couvre donc pas le chemin le plus probable → journaliser
+   **aussi** sur chaque `return false`, avec un message **fixe** + `openssl_error_string()`.
+   ⚠️ `openssl_error_string()` ne dépile qu'**une** erreur : boucler pour vider la file, **et la vider
+   aussi en entrée** (elle est globale au processus — sinon on attribue à son propre code une erreur
+   laissée par `utils::decrypt`, par la poignée TLS de cURL ou par un autre plugin) ;
+3. les méthodes **publiques** d'une brique qui lève depuis une frame porteuse de données sensibles
+   **recréent l'exception** avant de la propager : la trace d'origine meurt dans la brique, et la
+   garantie vaut pour tout appelant futur sans discipline à maintenir ;
+4. le point d'entrée AJAX rattrape **`Throwable`** en dernier bloc (une `Error` PHP 8 traverse sinon
+   `catch (Exception)`), avec un message curaté et un code **figé** — **jamais** `displayException()`.
+   Journaliser `get_class($t)` et `basename($t->getFile()) . ':' . $t->getLine()` est **sûr** ; jamais
+   `getTraceAsString()`. `$t->getMessage()` d'une `TypeError` cite le **type** de l'argument, pas sa
+   valeur ; les `ValueError` qui écho la valeur ne concernent que des arguments d'algorithme/encodage.
+
+*(`zend.exception_ignore_args=On` est le défaut depuis PHP 7.4, mais dépend du `php.ini` de l'hôte : ne
+pas s'y fier.)*
+
+## 11. Journaliser une donnée d'origine externe — trois problèmes distincts
+
+Vaut pour une valeur venue d'une API tierce **comme** d'une requête client (`init('...')`) :
+
+1. **filtrer les caractères de CONTRÔLE** (`[\x00-\x1F\x7F]`) → ferme l'**injection de log** (un `\n`
+   forge des lignes ressemblant à des entrées Jeedom légitimes) ;
+2. **garantir la validité UTF-8** — sinon le `json_encode` de la visionneuse de logs de Jeedom échoue,
+   et on perd l'accès au diagnostic. Ne retomber sur un filtre « imprimables » **que** dans ce cas ;
+3. **neutraliser les suites base64** (`/[A-Za-z0-9+\/]{16,}={0,2}/`) puis **tronquer**.
+
+⚠️ **Deux erreurs de raisonnement à ne pas refaire** :
+- un filtre « imprimables » **ne bloque pas** le base64 — le base64 *est* imprimable ;
+- **aucune troncature ne protège** d'un écho de champ chiffré en **ECB** : le mode chiffre bloc par bloc,
+  24 caractères de base64 livrent déjà 16 caractères du clair. Et si la clé est une constante de
+  protocole publique, quiconque lit le log déchiffre.
+- ⚠️ Coût caché d'un filtre « imprimables » appliqué **seul** : tout message non-ASCII (accentué, ou
+  chinois — fréquent sur les backends asiatiques) devient une suite d'espaces, et l'on perd
+  l'information exactement dans le cas d'échec qu'on cherchait à diagnostiquer.
+
+⚠️ **Caster ce qui doit être numérique** : `is_scalar()` accepte n'importe quelle **chaîne**.
+⚠️ **Une regex validant une valeur destinée à un en-tête HTTP doit finir par `\z`, pas par `$`** : en
+PCRE, sans modificateur `D`, `$` matche **aussi juste avant un `\n` final** — et ce `\n`, suivi du `\r\n`
+de cURL, **clôt le bloc d'en-têtes**, faisant basculer les en-têtes suivants dans le corps.

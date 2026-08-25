@@ -55,6 +55,16 @@ smartclim::amorcerPaysAuxHome();
         <span class="help-block">{{Sans pays valide — ni saisi, ni déduit du fuseau horaire de Jeedom — aucune connexion au cloud n'est tentée.}}</span>
       </div>
     </div>
+    <div class="form-group">
+      <label class="col-md-4 control-label"></label>
+      <div class="col-md-6">
+        <button type="button" class="btn btn-default" id="sc_btnTesterConnexion">{{Tester la connexion}}</button>
+        <button type="button" class="btn btn-danger" id="sc_btnEffacerIdentifiants">{{Effacer les identifiants}}</button>
+        <span id="sc_resultatConnexion"></span>
+        <br/>
+        <span class="help-block">{{Le test utilise les identifiants enregistrés : enregistrez vos modifications avant de tester.}}</span>
+      </div>
+    </div>
   </fieldset>
   <fieldset>
     <legend>{{Rafraîchissement}}</legend>
@@ -71,3 +81,129 @@ smartclim::amorcerPaysAuxHome();
     </div>
   </fieldset>
 </form>
+<script>
+  // Toute la logique (protocole, chiffrement, classement des erreurs) vit côté serveur
+  // (core/ajax/smartclim.ajax.php -> smartclim::testerConnexionAuxHome() /
+  // ::effacerIdentifiantsAuxHome()) : ce JS ne fait qu'appeler l'action et afficher un
+  // message déjà traduit — il n'envoie et ne lit AUCUN secret, et NE TOUCHE JAMAIS à un
+  // champ .configKey (un champ vidé côté client écraserait le secret stocké à
+  // l'enregistrement suivant de la modale).
+  // ⚠️ Les 5 chaînes JS de ce bloc (lignes 101, 112, 114, 132, 154) sont toutes en
+  // guillemets DOUBLES (jamais simples) : le français comme plusieurs traductions
+  // cibles contiennent des apostrophes, qui casseraient une chaîne délimitée par des
+  // guillemets simples — panne invisible à php -l comme à la CI. Numéros de ligne
+  // recalculés à chaque édition de ce bloc (déjà décalés deux fois) : le sous-agent
+  // traducteur doit vérifier les 5, pas s'arrêter à 4.
+  $('#sc_btnTesterConnexion').off('click').on('click', function () {
+    var $bouton = $(this);
+    var libelleInitial = $bouton.text();
+    var $resultat = $('#sc_resultatConnexion');
+    $bouton.prop('disabled', true).text("{{Test de connexion en cours…}}");
+    $resultat.removeClass('label label-success label-danger').text('');
+    $.ajax({
+      type: 'POST',
+      url: 'plugins/smartclim/core/ajax/smartclim.ajax.php',
+      data: {action: 'testerConnexion'},
+      dataType: 'json',
+      timeout: 22000,
+      global: false,
+      error: function (jqXHR, textStatus) {
+        if (textStatus === 'timeout') {
+          $resultat.addClass('label label-danger').text("{{Le test n'a pas répondu à temps}}");
+        } else {
+          $resultat.addClass('label label-danger').text("{{Erreur de communication avec le serveur Jeedom}}");
+        }
+      },
+      success: function (data) {
+        if (data.state != 'ok') {
+          $resultat.addClass('label label-danger').text(data.result);
+          return;
+        }
+        $resultat.addClass('label label-success').text(data.result.message);
+      }
+    }).always(function () {
+      $bouton.prop('disabled', false).text(libelleInitial);
+    });
+  });
+
+  $('#sc_btnEffacerIdentifiants').off('click').on('click', function () {
+    var $bouton = $(this);
+    var $resultat = $('#sc_resultatConnexion');
+    bootbox.confirm("{{Effacer l'e-mail et le mot de passe du compte AUX Home ?}}", function (confirme) {
+      if (!confirme) {
+        return;
+      }
+      $bouton.prop('disabled', true);
+      $resultat.removeClass('label label-success label-danger').text('');
+      $.ajax({
+        type: 'POST',
+        url: 'plugins/smartclim/core/ajax/smartclim.ajax.php',
+        data: {action: 'effacerIdentifiants'},
+        dataType: 'json',
+        // Sans timeout, une réponse perdue (proxy qui pend, worker Apache recyclé sans
+        // RST) ne déclenche NI error: NI success: — aucun rechargement, aucune
+        // désactivation, pendant de longues minutes (finding LOW, 2e tour : c'était le
+        // 4e trou du finding sécurité MEDIUM d'origine, non couvert par les 3 premiers).
+        timeout: 15000,
+        global: false,
+        error: function () {
+          // L'état serveur est INDÉTERMINÉ ici (coupure réseau après traitement,
+          // redémarrage d'Apache, ou désormais le timeout ci-dessus) : recharger reste
+          // la SEULE resynchronisation fiable, cf. reinitialiserApresEffacement()
+          // plus bas.
+          $resultat.addClass('label label-danger').text("{{L'effacement des identifiants a échoué}}");
+          reinitialiserApresEffacement(3000);
+        },
+        success: function (data) {
+          if (data.state != 'ok') {
+            // Échec métier PARTIEL (ex. le 2e config::remove() ou purgerSession() a
+            // levé après que le 1er ait réussi) : même traitement — la session peut ne
+            // pas avoir été purgée, l'état serveur reste incertain.
+            $resultat.addClass('label label-danger').text(data.result);
+            reinitialiserApresEffacement(3000);
+            return;
+          }
+          $resultat.addClass('label label-success').text(data.result.message);
+          reinitialiserApresEffacement(1200);
+        }
+      });
+    });
+  });
+
+  // Recharge la page entière plutôt que de "refléter" l'effacement en modifiant un
+  // champ .configKey en JS (interdit, cf. commentaire en tête de fichier) : sur les 3
+  // issues possibles de l'appel ci-dessus (succès, échec métier, échec réseau/serveur),
+  // l'état serveur est incertain ou modifié, et le rechargement est la SEULE
+  // resynchronisation fiable — sans lui, les champs e-mail/mot de passe resteraient
+  // peuplés EN CLAIR dans le DOM (le core les y a mis au chargement), et un
+  // "Sauvegarder" ultérieur les réécrirait en base, ressuscitant silencieusement les
+  // secrets qu'on pensait effacés (finding sécurité MEDIUM de la revue croisée).
+  // Délai PARAMÉTRÉ (finding LOW, 2e tour) : 1200 ms sur le succès, ~3000 ms sur les
+  // deux chemins d'échec — sans ce délai plus long, le rechargement effacerait le
+  // message d'échec avant que l'admin ait pu le lire, et emporterait sans avertissement
+  // ses éventuelles saisies non enregistrées ailleurs sur la page.
+  // Sélecteur de désactivation RESTREINT (finding LOW, 2e tour) : #div_plugin_configuration
+  // — conteneur confirmé dans lequel Jeedom injecte le contenu de
+  // plugin_info/configuration.php (cf. desktop/php/plugin.php du core, panneau
+  // "Configuration") — plutôt que TOUS les boutons/submit de la page : un rechargement
+  // qui n'aboutirait pas (script tiers en erreur, unload annulé par le navigateur) ne
+  // doit pas rendre TOUTE la page Jeedom durablement inutilisable. #bt_savePluginConfig
+  // (bouton "Sauvegarder" de ce panneau, dans le chrome du core donc SIBLING de ce
+  // conteneur, hors du <form> injecté par ce fichier) est rendu en <a>, sur lequel
+  // .prop('disabled') est sans effet natif : désactivé via .addClass('disabled') +
+  // pointer-events:none (idiome Bootstrap pour un faux bouton en ancre).
+  // Filet de sécurité : un 2e minuteur, 5 s après le rechargement prévu, réactive tout
+  // si le rechargement n'a pas eu lieu (sans effet si la page a bien déchargé : ce
+  // minuteur meurt alors avec le document).
+  function reinitialiserApresEffacement(delai) {
+    $('#div_plugin_configuration button, #div_plugin_configuration input[type="submit"], #div_plugin_configuration input[type="button"]').prop('disabled', true);
+    $('#bt_savePluginConfig').addClass('disabled').css('pointer-events', 'none');
+    setTimeout(function () {
+      window.location.reload();
+    }, delai);
+    setTimeout(function () {
+      $('#div_plugin_configuration button, #div_plugin_configuration input[type="submit"], #div_plugin_configuration input[type="button"]').prop('disabled', false);
+      $('#bt_savePluginConfig').removeClass('disabled').css('pointer-events', '');
+    }, delai + 5000);
+  }
+</script>

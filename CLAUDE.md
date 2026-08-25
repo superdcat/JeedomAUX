@@ -138,7 +138,8 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
 >   `git status --short plugin_info/configuration.php`. Cf. mémoire
 >   `feedback-configuration-php-permission-scope`.
 
-- **`plugin_info/info.json`** — manifeste (id, `name`, version, `require`, OS min/max, `category`,
+- **`plugin_info/info.json`** — manifeste (id, `name`, version — ⚠️ `pluginVersion` est bumpée
+  automatiquement au commit, cf. « Workflows / CI » —, `require`, OS min/max, `category`,
   `hasDependency`, `hasOwnDeamon`, langues, `compatibility`, liens doc/forum). La `description` multilingue
   se met **dans `info.json`** (objet à clés de langue), pas dans les fichiers i18n (cf. i18n).
 - **`plugin_info/install.php`** — `smartclim_install/update/remove()` ; `pre_install.php` →
@@ -258,6 +259,33 @@ CI déléguée aux workflows réutilisables de Jeedom (`jeedom/workflows`) :
 Pas de commande de lint/test locale ; la validation tourne dans ces workflows contre un Jeedom réel. La
 recette fonctionnelle est **manuelle**, sur le matériel de l'utilisateur : ce sont les **critères
 d'acceptation** des specs (`.memory/specs/`) qui en tiennent lieu.
+
+### Version du plugin — incrémentée automatiquement (ne jamais le faire à la main)
+
+`plugin_info/info.json` → `pluginVersion` est bumpée **par un hook git `pre-commit`**, pas par une
+consigne à ne pas oublier. Motif : le plugin se déploie via le **Market GitHub** de Jeedom, qui ne
+propose pas de mise à jour (et ne rejoue pas `smartclim_update()`) si la version n'a pas changé — le
+code poussé n'atteint alors jamais l'installation. La version est restée `0.1` de l'init à la fin
+d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche encore l'ancienne page.
+
+- **`.githooks/pre-commit`** → délègue tout à **`.claude/scripts/bump-version.py`**.
+- **Activation, à refaire dans chaque clone** (la config git n'est pas versionnée) :
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+- Le hook n'incrémente **que** si le commit touche `core/`, `desktop/`, `plugin_info/` ou
+  `resources/` : un commit qui ne modifie que `.memory/`, `.claude/`, `.github/` ou `docs/` ne
+  consomme pas de version. Il ajoute lui-même `info.json` au commit, et **s'abstient** si `info.json`
+  porte des modifications non indexées (il n'embarque jamais un changement non choisi). Il ne bloque
+  jamais un commit.
+- Il incrémente la **dernière composante numérique** du format en place (`0.1` → `0.2`,
+  `1.4.2` → `1.4.3`) : monter le major/minor reste une décision **humaine** — l'écrire à la main dans
+  `info.json`, le hook repart de cette valeur.
+- ⚠️ **Ne pas bumper `pluginVersion` manuellement** dans un commit de code : le hook incrémenterait
+  par-dessus (double saut de version).
+- ⚠️ **`.gitattributes`** force `.githooks/** text eol=lf`. C'est la seule règle du fichier —
+  volontairement **pas** de `* text=auto`, qui réécrirait en masse les fichiers du plugin. En CRLF,
+  `/bin/sh` refuse le shebang du hook, qui devient inopérant **sans aucun message**.
 
 ## Conventions
 

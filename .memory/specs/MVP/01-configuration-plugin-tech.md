@@ -3,6 +3,34 @@
 > **Domaine** : MVP · **Spec fonctionnelle** : `01-configuration-plugin.md` (AC1→AC7) · **Dépend de** : —
 > **Date** : 2026-08-24 · Plan validé par l'utilisateur après revue advisor (1 blocker + 4 majors traités).
 
+> ## ⚠️ Amendement de recette — 2026-08-25 : le pays n'est plus déduit du fuseau horaire
+>
+> Tout ce que ce document dit de la **déduction automatique du pays** est **périmé** ; le reste (clés de
+> configuration, normalisation, bornage de l'intervalle, gardes, sécurité) est inchangé. Décision prise
+> après recette : le fuseau horaire de Jeedom ne dit rien du pays d'un **compte cloud** (une installation
+> française réglée sur `Europe/Brussels` se voyait proposer `BEL`), et un pays faux échoue au login sur un
+> message trompeur. Point par point :
+>
+> - **Supprimés** : `smartclimAuxHomeApi::$_fuseauVersPays` (table fuseau IANA → ISO-3),
+>   `paysParDefaut()`, `smartclim::amorcerPaysAuxHome()` et ses deux appels
+>   (`plugin_info/configuration.php`, `plugin_info/install.php` — `smartclim_install()` et
+>   `smartclim_update()` sont redevenues **vides**). Plus aucune écriture en configuration au chargement
+>   de la page.
+> - **Nouveau défaut** : constante `smartclim::PAYS_DEFAUT = 'FRA'`, **dupliquée en littéral** dans
+>   `core/config/smartclim.config.ini` (`auxhome_country = FRA`) — seul défaut vu par `config::byKeys()`,
+>   donc par le chargement AJAX du formulaire. `paysAuxHome()` et `preConfig_auxhome_country()` retombent
+>   sur cette constante au lieu de `paysParDefaut()`. Corollaire : `paysAuxHome()` **ne renvoie plus
+>   jamais de chaîne vide**, et le § 4 sur le pays vide « état légitime » ne décrit plus le code (la garde
+>   correspondante de `testerConnexionAuxHome()` est conservée à dessein, mais devenue théorique).
+> - **Nouveau champ** : le pays se choisit dans une **liste déroulante**
+>   (`smartclimAuxHomeApi::paysDisponibles()` → `smartclim::paysDisponiblesAuxHome()`, codes ISO-3
+>   européens + libellés traduits, triés par libellé désaccentué). C'est le `<select>` qui porte
+>   `configKey` ; un champ texte annexe **sans** `configKey`, masqué par défaut, alimente la `value` de
+>   l'option « Autre pays » pour un code hors liste. Une option porte **toujours** la valeur enregistrée,
+>   sans quoi le chargement AJAX du core l'écraserait au premier enregistrement.
+> - **i18n** : 48 libellés de pays ajoutés en `en_US`/`de_DE`/`es_ES` sous la section
+>   `plugins/smartclim/core/class/smartclimAuxHomeApi.class.php`.
+
 ## 0. Contrats externes
 
 **Aucun appel réseau dans cette UC.** Le seul contrat externe touché *indirectement* est l'en-tête HTTP

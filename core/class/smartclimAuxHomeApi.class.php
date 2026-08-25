@@ -28,88 +28,13 @@ require_once __DIR__ . '/smartclimException.class.php';
  *
  * Conformément à CLAUDE.md (« les noms de champs d'API… restent confinés dans la
  * brique du transport »), c'est ici et nulle part ailleurs que vit la connaissance de
- * protocole liée au pays. UC01 n'en a besoin que pour déduire un code pays ISO-3 par
- * défaut ; UC02 enrichira cette même classe (getPubkey(), login/pwd, en-tête "country",
- * correspondance auxhome_email -> champ "account").
+ * protocole liée au pays : la liste des pays proposables (paysDisponibles(), servie à la
+ * page de configuration via smartclim::paysDisponiblesAuxHome()) et l'authentification
+ * complète (getPubkey(), login/pwd, en-tête "country", correspondance auxhome_email ->
+ * champ "account").
  */
 class smartclimAuxHomeApi {
   /*     * *************************Attributs****************************** */
-
-  // Table de correspondance fuseau horaire IANA -> code pays ISO-3166 alpha-3.
-  // Couverture Europe uniquement (cf. .memory/specs/MVP/01-configuration-plugin-tech.md § 1.3).
-  // Ne pas étendre hors Europe sans code ISO-3 confirmé : un pays faux mais plausible
-  // provoquerait un échec de login au message trompeur côté cloud AUX Home.
-  private static $_fuseauVersPays = array(
-    'Europe/Paris' => 'FRA',
-    'Europe/Brussels' => 'BEL',
-    'Europe/Luxembourg' => 'LUX',
-    'Europe/Zurich' => 'CHE',
-    'Europe/Vaduz' => 'LIE',
-    'Europe/Amsterdam' => 'NLD',
-    'Europe/Berlin' => 'DEU',
-    'Europe/Busingen' => 'DEU',
-    'Europe/Vienna' => 'AUT',
-    'Europe/Madrid' => 'ESP',
-    'Atlantic/Canary' => 'ESP',
-    'Africa/Ceuta' => 'ESP',
-    'Europe/Lisbon' => 'PRT',
-    'Atlantic/Madeira' => 'PRT',
-    'Atlantic/Azores' => 'PRT',
-    'Europe/Rome' => 'ITA',
-    'Europe/Vatican' => 'VAT',
-    'Europe/San_Marino' => 'SMR',
-    'Europe/Malta' => 'MLT',
-    'Europe/London' => 'GBR',
-    'Europe/Belfast' => 'GBR',
-    'Europe/Dublin' => 'IRL',
-    'Europe/Copenhagen' => 'DNK',
-    'Europe/Oslo' => 'NOR',
-    'Europe/Stockholm' => 'SWE',
-    'Europe/Helsinki' => 'FIN',
-    'Europe/Mariehamn' => 'FIN',
-    'Europe/Tallinn' => 'EST',
-    'Europe/Riga' => 'LVA',
-    'Europe/Vilnius' => 'LTU',
-    'Europe/Warsaw' => 'POL',
-    'Europe/Prague' => 'CZE',
-    'Europe/Bratislava' => 'SVK',
-    'Europe/Budapest' => 'HUN',
-    'Europe/Ljubljana' => 'SVN',
-    'Europe/Zagreb' => 'HRV',
-    'Europe/Sarajevo' => 'BIH',
-    'Europe/Belgrade' => 'SRB',
-    'Europe/Podgorica' => 'MNE',
-    'Europe/Skopje' => 'MKD',
-    'Europe/Tirane' => 'ALB',
-    'Europe/Athens' => 'GRC',
-    'Europe/Bucharest' => 'ROU',
-    'Europe/Sofia' => 'BGR',
-    'Europe/Chisinau' => 'MDA',
-    'Europe/Tiraspol' => 'MDA',
-    'Europe/Kyiv' => 'UKR',
-    'Europe/Kiev' => 'UKR', // alias historique de Europe/Kyiv
-    'Europe/Simferopol' => 'UKR',
-    'Europe/Uzhgorod' => 'UKR',
-    'Europe/Zaporozhye' => 'UKR',
-    'Europe/Minsk' => 'BLR',
-    'Europe/Moscow' => 'RUS',
-    'Europe/Kaliningrad' => 'RUS',
-    'Europe/Volgograd' => 'RUS',
-    'Europe/Samara' => 'RUS',
-    'Europe/Saratov' => 'RUS',
-    'Europe/Astrakhan' => 'RUS',
-    'Europe/Ulyanovsk' => 'RUS',
-    'Europe/Kirov' => 'RUS',
-    'Europe/Istanbul' => 'TUR',
-    'Europe/Nicosia' => 'CYP',
-    'Asia/Nicosia' => 'CYP',
-    'Asia/Famagusta' => 'CYP',
-    'Atlantic/Reykjavik' => 'ISL',
-    'Europe/Andorra' => 'AND',
-    'Europe/Monaco' => 'MCO',
-    'Europe/Gibraltar' => 'GIB',
-    'Atlantic/Faroe' => 'FRO',
-  );
 
   // Hôte du cloud AUX Home (transport "AUX Home", cf. CLAUDE.md § Architecture / Transports).
   const HOST = 'https://eu-smthome-api.aux-global.com';
@@ -153,22 +78,110 @@ class smartclimAuxHomeApi {
   /*     * ***********************Methode static*************************** */
 
   /**
-   * Déduit le code pays ISO-3 par défaut à partir du fuseau horaire configuré dans
-   * Jeedom (repli sur le fuseau horaire PHP si Jeedom n'en a pas). Aucune tentative de
-   * deviner un pays hors de la table Europe : un champ vide est plus honnête qu'un pays
-   * faux mais plausible, qui provoquerait un échec de login trompeur.
+   * Pays proposables pour le compte AUX Home : code ISO-3166 alpha-3 => libellé traduit,
+   * TRIÉ par libellé dans la langue affichée. Sert à peupler la liste déroulante de la
+   * page de configuration — un code à 3 lettres saisi à la main est à la fois pénible et
+   * facile à rater (« FR » pour « FRA »), et rien dans l'interface ne signalait l'erreur
+   * avant l'échec du login.
    *
-   * @return string Code pays ISO-3166 alpha-3 en majuscules, ou '' si indéductible.
+   * Couverture volontairement limitée à l'Europe : le transport AUX Home n'a qu'un point
+   * d'entrée régional (self::HOST = eu-…), et proposer un code plausible mais non
+   * confirmé ferait échouer le login sur un message backend trompeur. Les comptes hors de
+   * cette liste restent servis par la saisie libre de la page de configuration ; ici, on
+   * ne propose que ce dont le code est certain.
+   *
+   * ⚠️ Libellés en chaînes LITTÉRALES dans __() — jamais __($variable) : l'extraction
+   * i18n est un scan statique (cf. CLAUDE.md § Internationalisation).
+   *
+   * @return array<string,string>
    */
-  public static function paysParDefaut() {
-    $fuseau = config::byKey('timezone');
-    if ($fuseau == '') {
-      $fuseau = date_default_timezone_get();
-    }
-    if (isset(self::$_fuseauVersPays[$fuseau])) {
-      return self::$_fuseauVersPays[$fuseau];
-    }
-    return '';
+  public static function paysDisponibles() {
+    $pays = array(
+      'ALB' => __('Albanie', __FILE__),
+      'AND' => __('Andorre', __FILE__),
+      'AUT' => __('Autriche', __FILE__),
+      'BEL' => __('Belgique', __FILE__),
+      'BGR' => __('Bulgarie', __FILE__),
+      'BIH' => __('Bosnie-Herzégovine', __FILE__),
+      'BLR' => __('Biélorussie', __FILE__),
+      'CHE' => __('Suisse', __FILE__),
+      'CYP' => __('Chypre', __FILE__),
+      'CZE' => __('Tchéquie', __FILE__),
+      'DEU' => __('Allemagne', __FILE__),
+      'DNK' => __('Danemark', __FILE__),
+      'ESP' => __('Espagne', __FILE__),
+      'EST' => __('Estonie', __FILE__),
+      'FIN' => __('Finlande', __FILE__),
+      'FRA' => __('France', __FILE__),
+      'FRO' => __('Îles Féroé', __FILE__),
+      'GBR' => __('Royaume-Uni', __FILE__),
+      'GIB' => __('Gibraltar', __FILE__),
+      'GRC' => __('Grèce', __FILE__),
+      'HRV' => __('Croatie', __FILE__),
+      'HUN' => __('Hongrie', __FILE__),
+      'IRL' => __('Irlande', __FILE__),
+      'ISL' => __('Islande', __FILE__),
+      'ITA' => __('Italie', __FILE__),
+      'LIE' => __('Liechtenstein', __FILE__),
+      'LTU' => __('Lituanie', __FILE__),
+      'LUX' => __('Luxembourg', __FILE__),
+      'LVA' => __('Lettonie', __FILE__),
+      'MCO' => __('Monaco', __FILE__),
+      'MDA' => __('Moldavie', __FILE__),
+      'MKD' => __('Macédoine du Nord', __FILE__),
+      'MLT' => __('Malte', __FILE__),
+      'MNE' => __('Monténégro', __FILE__),
+      'NLD' => __('Pays-Bas', __FILE__),
+      'NOR' => __('Norvège', __FILE__),
+      'POL' => __('Pologne', __FILE__),
+      'PRT' => __('Portugal', __FILE__),
+      'ROU' => __('Roumanie', __FILE__),
+      'RUS' => __('Russie', __FILE__),
+      'SMR' => __('Saint-Marin', __FILE__),
+      'SRB' => __('Serbie', __FILE__),
+      'SVK' => __('Slovaquie', __FILE__),
+      'SVN' => __('Slovénie', __FILE__),
+      'SWE' => __('Suède', __FILE__),
+      'TUR' => __('Turquie', __FILE__),
+      'UKR' => __('Ukraine', __FILE__),
+      'VAT' => __('Vatican', __FILE__),
+    );
+    // Tri sur une clé désaccentuée : en comparaison octet à octet, les caractères
+    // accentués UTF-8 sont > « z » et enverraient « Îles Féroé » (ou « Österreich » en
+    // allemand) en fin de liste. Volontairement ni intl/Collator (extension non garantie
+    // sur un Jeedom minimal), ni strcoll() (dépend d'un setlocale global qu'un plugin
+    // n'a pas à modifier).
+    uasort($pays, function ($a, $b) {
+      return strcmp(smartclimAuxHomeApi::cleDeTri($a), smartclimAuxHomeApi::cleDeTri($b));
+    });
+    return $pays;
+  }
+
+  /**
+   * Clé de tri ASCII d'un libellé de pays : diacritiques ramenés à leur lettre de base,
+   * puis majuscules. Table explicite plutôt qu'iconv('//TRANSLIT'), dont le rendu varie
+   * selon la libc (jusqu'à rendre un simple point d'interrogation), et plutôt que
+   * mb_*/intl, non garantis sur un Jeedom minimal : elle
+   * couvre les diacritiques effectivement présents dans les quatre langues du plugin.
+   *
+   * @return string
+   */
+  private static function cleDeTri($_libelle) {
+    $table = array(
+      'á' => 'a', 'à' => 'a', 'â' => 'a', 'ä' => 'a', 'ã' => 'a', 'å' => 'a',
+      'ç' => 'c', 'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+      'í' => 'i', 'ì' => 'i', 'î' => 'i', 'ï' => 'i', 'ñ' => 'n',
+      'ó' => 'o', 'ò' => 'o', 'ô' => 'o', 'ö' => 'o', 'õ' => 'o', 'ø' => 'o',
+      'ú' => 'u', 'ù' => 'u', 'û' => 'u', 'ü' => 'u', 'ý' => 'y', 'ÿ' => 'y',
+      'æ' => 'ae', 'œ' => 'oe', 'ß' => 'ss',
+      'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ä' => 'A', 'Ã' => 'A', 'Å' => 'A',
+      'Ç' => 'C', 'É' => 'E', 'È' => 'E', 'Ê' => 'E', 'Ë' => 'E',
+      'Í' => 'I', 'Ì' => 'I', 'Î' => 'I', 'Ï' => 'I', 'Ñ' => 'N',
+      'Ó' => 'O', 'Ò' => 'O', 'Ô' => 'O', 'Ö' => 'O', 'Õ' => 'O', 'Ø' => 'O',
+      'Ú' => 'U', 'Ù' => 'U', 'Û' => 'U', 'Ü' => 'U', 'Ý' => 'Y',
+      'Æ' => 'AE', 'Œ' => 'OE',
+    );
+    return strtoupper(strtr($_libelle, $table));
   }
 
   /**

@@ -19,12 +19,15 @@ require_once dirname(__FILE__) . '/../../../core/php/core.inc.php';
 
 // Fonction exécutée automatiquement après l'installation du plugin
 function smartclim_install() {
-  smartclim::amorcerPaysAuxHome();
+  // Volontairement vide : le pays du compte AUX Home a un défaut constant
+  // (smartclim::PAYS_DEFAUT, repris dans core/config/smartclim.config.ini), plus aucune
+  // valeur n'est donc à amorcer en base à l'installation. Le core retombe seul sur ce
+  // défaut tant que l'utilisateur n'a rien choisi dans la liste déroulante.
 }
 
 // Fonction exécutée automatiquement après la mise à jour du plugin
 function smartclim_update() {
-  smartclim::amorcerPaysAuxHome();
+  // Volontairement vide, même motif que smartclim_install().
 }
 
 // Fonction exécutée automatiquement après la suppression du plugin

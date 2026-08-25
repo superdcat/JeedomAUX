@@ -64,7 +64,8 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   - `smartclimCmd extends cmd` — commande (info ou action). `execute($_options)` exécute une action
     (typiquement un `switch` sur `logicalId`).
 - **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
-  plugin. Porte la table fuseau IANA → ISO-3 et `paysParDefaut()` (UC01), puis l'authentification
+  plugin. Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
+  aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification
   complète (UC02) : `login()` (toujours frais — `getPubkey` + `login/pwd` — **et écrit** la session en
   cache), `session()` (**lit** le cache, sinon `login()`), `purgerSession()`, la crypto RSA/AES et les
   constantes de protocole embarquées (source + licence MIT citées en commentaire).
@@ -118,8 +119,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `.memory/analyse/jeedom-panel-page-menu.md`.
 - **`plugin_info/configuration.php`** — formulaire de la page de config **plugin** (`gotoPluginConf`).
   Champs liés en `class="configKey" data-l1key="<clé>"` (auto-load/save core via
-  `config::byKey/save(..., 'smartclim')`). ⚠️ Ce fichier **écrit** en configuration (amorçage du pays
-  déduit du fuseau) : il est donc gardé par **`isConnect('admin')`**, comme les autres points d'entrée.
+  `config::byKey/save(..., 'smartclim')`). Gardé par **`isConnect('admin')`**, comme les autres points
+  d'entrée. ⚠️ Le champ **Pays** est une **liste déroulante** (`<select class="configKey">`) construite
+  côté serveur : c'est **elle** qui porte `configKey`, jamais deux contrôles à la fois pour la même clé.
+  Un champ texte annexe (masqué, **sans** `configKey`) sert de saisie d'appoint pour un pays hors liste et
+  n'alimente que la `value` de l'option « Autre pays ». ⚠️ Une option doit **toujours** porter la valeur
+  enregistrée, sinon le chargement AJAX du core (`.val()` sur une valeur sans option) laisserait la liste
+  sur son premier item et **écraserait** le pays au premier enregistrement — même déclenché par un autre
+  champ. ⚠️ Et **jamais de double accolade ouvrante littérale** dans ce fichier, pas même en commentaire :
+  le core y voit un début de clé de traduction sur le HTML rendu et avale tout jusqu'à la fermeture
+  suivante — la chaîne d'après cesse silencieusement d'être traduite.
 - **`core/config/smartclim.config.ini`** — **valeurs par défaut** de la config plugin, section
   `[smartclim]`. Mécanisme natif du core : `config::byKey()` **et** `config::byKeys()` y retombent quand
   la clé est absente ou vide en base. ⚠️ Corollaire à connaître : `config::save()` d'une valeur **égale**
@@ -184,10 +193,20 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
 - **Config plugin** (`config::save/byKey(..., 'smartclim')`) : compte(s) cloud et options globales.
   **Clés figées pour tout le MVP** (UC01), en `snake_case` anglais, **sans tiret** (`preConfig_<clé>`
   dérive son nom de méthode de la clé) : `auxhome_email`, `auxhome_password` (**chiffrée**),
-  `auxhome_country` (ISO-3 majuscules, défaut déduit du fuseau Jeedom), `refresh_interval`
-  (1..1440 min, défaut 5 via l'INI). Plus tard s'y ajouteront le compte AUX Cloud legacy + sa région.
+  `auxhome_country` (ISO-3 majuscules, **défaut constant `smartclim::PAYS_DEFAUT` = `FRA`**),
+  `refresh_interval` (1..1440 min, défaut 5 via l'INI). Plus tard s'y ajouteront le compte AUX Cloud
+  legacy + sa région.
+  ⚠️ **Aucune déduction du pays depuis le fuseau horaire de Jeedom** — arbitré en recette d'UC01, contre
+  la conception d'origine : le fuseau ne dit rien du pays d'un **compte cloud** (une installation
+  française réglée sur `Europe/Brussels` se voyait proposer `BEL`), et un pays faux échoue au login sur un
+  message trompeur. Un défaut constant, corrigeable en un clic dans la **liste déroulante** du formulaire,
+  vaut mieux qu'une devinette : la table `fuseau IANA → ISO-3` et `paysParDefaut()` ont donc été
+  **supprimées** (avec l'amorçage en base : `smartclim_install/update()` sont redevenues vides).
+  ⚠️ `PAYS_DEFAUT` est **dupliqué en littéral** dans `core/config/smartclim.config.ini` — seul défaut vu
+  par `config::byKeys()`, donc par le chargement AJAX du formulaire ; les deux doivent rester identiques.
   Les accesseurs normalisés `smartclim::emailAuxHome()`, `paysAuxHome()`, `intervalleRafraichissement()`
-  sont le **seul** point de lecture — ne jamais relire ces clés via `config::byKey` ailleurs.
+  sont le **seul** point de lecture — ne jamais relire ces clés via `config::byKey` ailleurs. La liste des
+  pays du formulaire passe par `smartclim::paysDisponiblesAuxHome()` (délégation vers le transport).
   `smartclim::compteConfigure()` est le **garde-fou à appeler avant tout appel réseau**. Les clés **sensibles** se déclarent dans
   `public static $_encryptConfigKey = array('<clé_mot_de_passe>', …);` sur la classe principale → le core
   les **chiffre/déchiffre automatiquement**. Les hooks `preConfig_<clé>($value)` permettent de

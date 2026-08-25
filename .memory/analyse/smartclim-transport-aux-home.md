@@ -216,10 +216,20 @@ l'argument principal en faveur d'une table de correspondance **donnée** et non 
 > utilisateurs régionale** à partir de cet en-tête. ⚠️ (`com.zwegersit.auxairco/lib/auxcloud/constants.ts`,
 > commentaire de `TIMEZONE_TO_COUNTRY`)
 
-**Décision SmartClim** : exposer le pays comme **clé de configuration plugin** (`auxhome_country`), avec
-une valeur par défaut déduite du fuseau horaire Jeedom (`config::byKey('timezone')`) via une table
-`fuseau → ISO-3` (la table de la référence couvre l'Europe et est directement portable). Un échec de login
-doit **explicitement suggérer de vérifier le pays** dans le message d'erreur.
+**Décision SmartClim** : exposer le pays comme **clé de configuration plugin** (`auxhome_country`),
+choisi dans une **liste déroulante** des pays d'Europe (portée par
+`smartclimAuxHomeApi::paysDisponibles()`), avec un **défaut constant** `FRA`
+(`smartclim::PAYS_DEFAUT`). Un échec de login doit **explicitement suggérer de vérifier le pays** dans le
+message d'erreur.
+
+> ⚠️ **Amendé en recette, 2026-08-25** : la conception d'origine déduisait ce défaut du fuseau horaire de
+> Jeedom (`config::byKey('timezone')`) via la table `TIMEZONE_TO_COUNTRY` de la référence, portée telle
+> quelle. **Abandonné** : le fuseau d'une installation domotique ne dit rien du pays d'un **compte cloud**
+> — une installation française réglée sur `Europe/Brussels` se voyait proposer `BEL`, et l'échec de login
+> qui s'ensuit porte justement le message trompeur décrit ci-dessus. La table et `paysParDefaut()` ont été
+> supprimées du plugin (la correspondance fuseau → pays reste un fait exact, elle n'est simplement pas un
+> indice fiable du pays d'un compte). Cf. `.memory/specs/MVP/01-configuration-plugin.md`
+> § « Décisions actées ».
 
 ## 6. Lecture de l'état : décodage des trames `status.*`
 

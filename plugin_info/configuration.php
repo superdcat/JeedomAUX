@@ -28,20 +28,29 @@ if (!isConnect('admin')) {
   die();
 }
 
-// Amorçage paresseux du pays AUX Home depuis le fuseau horaire de Jeedom : couvre le cas
-// d'un plugin posé à la main ou cloné en git, où smartclim_install() n'est pas garanti
-// d'avoir été exécuté (ceinture + bretelles avec plugin_info/install.php).
-// ⚠ Enveloppé dans un try/catch(Throwable) : cet amorçage n'est qu'un CONFORT (pré-remplir
-// le pays). S'il échoue — classe annexe absente d'une mise à jour partielle (l'autoload lève
-// une Error PHP 7+ "Class not found", donc rattrapable ici), cache indisponible, hook
-// postConfig_auxhome_country en erreur — le formulaire doit MALGRÉ TOUT s'afficher : sans
-// cela l'admin perd l'accès à toute la configuration du plugin (HTTP 500 = panneau vide) et
-// n'a plus aucun moyen de saisir ses identifiants. L'échec part au log, jamais à l'écran.
+// Données de rendu du champ Pays (liste déroulante). Replis posés AVANT le try : si une
+// classe annexe manquait (mise à jour partielle -> Error « Class not found » que l'on
+// rattrape ici), le formulaire doit rester UTILISABLE — liste vide et saisie libre
+// affichée — plutôt que de renvoyer un HTTP 500, c'est-à-dire un panneau de configuration
+// blanc : sans lui, l'admin perd l'accès à toute la configuration du plugin, y compris la
+// saisie de ses identifiants. L'échec part au log, jamais à l'écran.
+$sc_paysDisponibles = array();
+$sc_paysActuel = '';
 try {
-  smartclim::amorcerPaysAuxHome();
+  $sc_paysDisponibles = smartclim::paysDisponiblesAuxHome();
+  $sc_paysActuel = smartclim::paysAuxHome();
 } catch (Throwable $t) {
-  log::add('smartclim', 'error', 'Amorçage du pays AUX Home impossible : ' . get_class($t) . ' : ' . $t->getMessage() . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
+  log::add('smartclim', 'error', 'Préparation de la liste des pays impossible : ' . get_class($t) . ' : ' . $t->getMessage() . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
 }
+
+// Mode « saisie libre » : le pays enregistré sort de la liste proposée (compte hors de la
+// couverture européenne, valeur posée par script ou par l'API JSON-RPC), ou la liste est
+// indisponible. La liste déroulante doit alors porter une option DE CETTE VALEUR, sans
+// quoi le chargement AJAX du core (.val() sur une valeur qui n'a pas d'option) la
+// laisserait sur « Sélectionnez un pays » et le pays serait ÉCRASÉ au premier
+// enregistrement du formulaire — y compris un enregistrement visant un tout autre champ.
+$sc_saisieLibre = (count($sc_paysDisponibles) == 0
+  || ($sc_paysActuel != '' && !isset($sc_paysDisponibles[$sc_paysActuel])));
 ?>
 <form class="form-horizontal">
   <fieldset>
@@ -64,11 +73,30 @@ try {
     </div>
     <div class="form-group">
       <label class="col-md-4 control-label">{{Pays}}
-        <sup><i class="fas fa-question-circle tooltips" title="{{Code pays ISO à 3 lettres (FRA, BEL, CHE, DEU…). Pré-rempli depuis le fuseau horaire de Jeedom ; hors Europe, saisissez-le manuellement. Un pays erroné fait échouer la connexion au cloud AUX Home.}}"></i></sup>
+        <sup><i class="fas fa-question-circle tooltips" title="{{Pays du compte AUX Home, tel que choisi à la création du compte dans l'application mobile : vérifiez-le, un pays erroné fait échouer la connexion au cloud AUX Home.}}"></i></sup>
       </label>
       <div class="col-md-4">
-        <input type="text" maxlength="3" style="text-transform:uppercase" class="configKey form-control" data-l1key="auxhome_country"/>
-        <span class="help-block">{{Sans pays valide — ni saisi, ni déduit du fuseau horaire de Jeedom — aucune connexion au cloud n'est tentée.}}</span>
+        <!-- ⚠️ C'est la LISTE qui porte configKey, jamais les deux contrôles à la fois :
+             avec deux éléments .configKey de même data-l1key, le core enregistrerait
+             celui des deux qu'il rencontre en dernier. Le champ texte plus bas n'est
+             qu'une saisie d'appoint pour un pays hors liste ; le JS recopie ce qu'on y
+             tape dans la value de l'option « Autre pays », donc dans la valeur que le
+             core enregistrera. -->
+        <select class="configKey form-control" data-l1key="auxhome_country" id="sc_selectPays">
+          <option value=""<?php echo (!$sc_saisieLibre && $sc_paysActuel == '') ? ' selected="selected"' : ''; ?>>{{Sélectionnez un pays}}</option>
+        <?php foreach ($sc_paysDisponibles as $sc_code => $sc_libelle) { ?>
+          <option value="<?php echo htmlspecialchars($sc_code, ENT_QUOTES, 'UTF-8'); ?>"<?php echo (!$sc_saisieLibre && $sc_code == $sc_paysActuel) ? ' selected="selected"' : ''; ?>><?php echo htmlspecialchars($sc_libelle . ' (' . $sc_code . ')', ENT_NOQUOTES, 'UTF-8'); ?></option>
+        <?php } ?>
+          <!-- Option porteuse d'un pays hors liste : sa value EST la valeur enregistrée
+               (cf. $sc_saisieLibre en tête de fichier), et ce même quand le pays figure
+               dans la liste — la choisir n'efface donc jamais le pays en place, elle
+               ouvre juste sa correction. Le doublon de value avec l'option de liste est
+               sans effet : .val() sélectionne la PREMIÈRE option qui correspond, donc
+               celle de la liste. -->
+          <option value="<?php echo htmlspecialchars($sc_paysActuel, ENT_QUOTES, 'UTF-8'); ?>" data-sc-libre="1"<?php echo $sc_saisieLibre ? ' selected="selected"' : ''; ?>>{{Autre pays (code ISO à 3 lettres)}}</option>
+        </select>
+        <input type="text" maxlength="3" id="sc_champPaysLibre" class="form-control" style="text-transform:uppercase;margin-top:6px;<?php echo $sc_saisieLibre ? '' : 'display:none;'; ?>" value="<?php echo htmlspecialchars($sc_paysActuel, ENT_QUOTES, 'UTF-8'); ?>"/>
+        <span class="help-block">{{Le pays attendu est celui du compte AUX Home — pas nécessairement celui de l'installation Jeedom.}}</span>
       </div>
     </div>
     <div class="form-group">
@@ -101,15 +129,49 @@ try {
   // Toute la logique (protocole, chiffrement, classement des erreurs) vit côté serveur
   // (core/ajax/smartclim.ajax.php -> smartclim::testerConnexionAuxHome() /
   // ::effacerIdentifiantsAuxHome()) : ce JS ne fait qu'appeler l'action et afficher un
-  // message déjà traduit — il n'envoie et ne lit AUCUN secret, et NE TOUCHE JAMAIS à un
-  // champ .configKey (un champ vidé côté client écraserait le secret stocké à
-  // l'enregistrement suivant de la modale).
-  // ⚠️ Les 5 chaînes JS de ce bloc (lignes 117, 128, 130, 148, 170) sont toutes en
-  // guillemets DOUBLES (jamais simples) : le français comme plusieurs traductions
-  // cibles contiennent des apostrophes, qui casseraient une chaîne délimitée par des
-  // guillemets simples — panne invisible à php -l comme à la CI. Numéros de ligne
-  // recalculés à chaque édition de ce bloc (déjà décalés deux fois) : le sous-agent
-  // traducteur doit vérifier les 5, pas s'arrêter à 4.
+  // message déjà traduit — il n'envoie et ne lit AUCUN secret, et ne touche à un élément
+  // .configKey QUE pour le champ Pays, sur action explicite de l'utilisateur (cf. le bloc
+  // « Champ Pays » ci-dessous). Aucun champ porteur d'un SECRET n'est jamais modifié ni
+  // vidé côté client : un champ vidé écraserait le secret stocké à l'enregistrement
+  // suivant de la modale, y compris lors d'un enregistrement visant un autre champ.
+  // ⚠️ Les 5 chaînes traduisibles de ce bloc sont toutes en guillemets DOUBLES (jamais
+  // simples) : le français comme plusieurs traductions cibles contiennent des
+  // apostrophes, qui casseraient une chaîne délimitée par des guillemets simples — panne
+  // invisible à php -l comme à la CI. Les repérer par une recherche des doubles
+  // accolades dans ce bloc, JAMAIS par numéro de ligne : les numéros qui figuraient ici
+  // ont été décalés à chaque édition, et le sous-agent traducteur doit vérifier les 5,
+  // pas s'arrêter à 4.
+  // ⚠️ Et ne JAMAIS écrire une double accolade ouvrante littérale dans ce fichier, pas
+  // même en commentaire : le core la traite comme un début de clé de traduction sur le
+  // HTML rendu, et avale tout jusqu'à la fermeture suivante — la chaîne d'après cesse
+  // alors d'être traduite, sans erreur nulle part.
+
+  // --- Champ Pays ---------------------------------------------------------------
+  // La liste déroulante est la SEULE source de vérité (c'est elle qui porte configKey) ;
+  // le champ texte ne sert qu'à alimenter l'option « Autre pays » quand le code n'est pas
+  // dans la liste. Écrire dans un élément .configKey est ici sans danger, à la différence
+  // du cas interdit plus haut : aucun secret n'est en jeu, et la valeur ne change que sur
+  // une action explicite de l'utilisateur — jamais à son insu au chargement de la page.
+  $('#sc_selectPays').off('change').on('change', function () {
+    var $champ = $('#sc_champPaysLibre');
+    if ($(this).find('option:selected').attr('data-sc-libre') === '1') {
+      $champ.show().focus();
+      return;
+    }
+    $champ.hide();
+  });
+
+  // Normalisation identique à celle du serveur (smartclim::normaliserPays) : lettres
+  // seulement, majuscules, 3 caractères. Le code est reporté dans l'ATTRIBUT value de
+  // l'option « Autre pays » — c'est ce que le core lira à l'enregistrement, .val() d'un
+  // <select> renvoyant la value de l'option sélectionnée. On écoute aussi 'change' pour
+  // couvrir un collage ou un remplissage automatique du navigateur.
+  $('#sc_champPaysLibre').off('input change').on('input change', function () {
+    var code = $(this).val().toUpperCase().replace(/[^A-Z]/g, '').substring(0, 3);
+    $(this).val(code);
+    $('#sc_selectPays').find('option[data-sc-libre="1"]').attr('value', code);
+  });
+
   $('#sc_btnTesterConnexion').off('click').on('click', function () {
     var $bouton = $(this);
     var libelleInitial = $bouton.text();

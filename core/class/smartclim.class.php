@@ -44,43 +44,49 @@ class smartclim extends eqLogic {
   const INTERVALLE_MAX = 1440;
   const INTERVALLE_DEFAUT = 5;
 
+  // Pays du compte AUX Home retenu tant que l'utilisateur n'en a pas choisi un autre dans
+  // la liste déroulante de la page de configuration. Valeur EN DUR, sans déduction depuis
+  // le fuseau horaire de Jeedom : ce fuseau ne dit rien du pays d'un compte cloud (une
+  // installation française réglée sur « Europe/Brussels » se voyait proposer BEL, cas
+  // remonté en recette), et un pays faux échoue au login sur un message trompeur. Un
+  // défaut simple et prévisible, que la liste déroulante rend trivial à corriger, vaut
+  // mieux qu'une devinette.
+  // ⚠️ Doit rester identique à la valeur de core/config/smartclim.config.ini, seul défaut
+  // vu par config::byKeys() — donc par le chargement AJAX du formulaire.
+  const PAYS_DEFAUT = 'FRA';
+
   // Le mot de passe du compte AUX Home est chiffré au repos par le core Jeedom.
   public static $_encryptConfigKey = array('auxhome_password');
 
   /*     * ***********************Methode static*************************** */
 
   /**
-   * Amorce le pays du compte AUX Home à partir du fuseau horaire de Jeedom, si aucune
-   * valeur n'est déjà enregistrée. Idempotent (no-op si déjà renseigné ou indéductible).
-   * Appelée à la fois par plugin_info/install.php (installation/mise à jour) et par
-   * plugin_info/configuration.php (édité via son miroir configuration.txt ; amorçage
-   * paresseux) : ce second appel couvre le cas d'un plugin posé à la main ou cloné en
-   * git, où smartclim_install() n'est pas garanti d'avoir été exécuté.
-   */
-  public static function amorcerPaysAuxHome() {
-    if (self::normaliserPays(config::byKey('auxhome_country', 'smartclim')) == '') {
-      $pays = self::paysAuxHome();
-      if ($pays != '') {
-        config::save('auxhome_country', $pays, 'smartclim');
-      }
-    }
-  }
-
-  /**
    * Code pays ISO-3166 alpha-3 du compte AUX Home (en-tête "country" du cloud).
-   * Utilise la valeur configurée si conforme, sinon déduit du fuseau horaire de Jeedom.
-   * Repasse par la même normalisation qu'à l'écriture (normaliserPays()) : une valeur
-   * non conforme présente en base (restauration, script, écriture SQL directe) n'est
-   * jamais renvoyée telle quelle — elle alimentera un en-tête HTTP dès UC02.
+   * Utilise la valeur configurée si conforme, sinon le défaut PAYS_DEFAUT. Repasse par la
+   * même normalisation qu'à l'écriture (normaliserPays()) : une valeur non conforme
+   * présente en base (restauration, script, écriture SQL directe) n'est jamais renvoyée
+   * telle quelle — elle alimente un en-tête HTTP.
    *
-   * @return string Code pays en majuscules (ex. "FRA"), ou '' si indéductible.
+   * @return string Code pays en majuscules (ex. "FRA") ; jamais vide.
    */
   public static function paysAuxHome() {
     $pays = self::normaliserPays(config::byKey('auxhome_country', 'smartclim'));
     if ($pays != '') {
       return $pays;
     }
-    return smartclimAuxHomeApi::paysParDefaut();
+    return self::PAYS_DEFAUT;
+  }
+
+  /**
+   * Pays proposables pour le compte AUX Home : code ISO-3 => libellé traduit, trié par
+   * libellé. Sert à peupler la liste déroulante de la page de configuration. Simple
+   * délégation : ni la page de configuration ni le reste du plugin ne parlent
+   * directement à une brique de transport (CLAUDE.md § Conventions).
+   *
+   * @return array<string,string>
+   */
+  public static function paysDisponiblesAuxHome() {
+    return smartclimAuxHomeApi::paysDisponibles();
   }
 
   /**
@@ -126,9 +132,12 @@ class smartclim extends eqLogic {
    * aucune session ou clé mise en cache d'une tentative précédente n'est réutilisée
    * (AC6). Les deux gardes ci-dessous sont testées séparément — et non via
    * compteConfigure(), qui renvoie un simple booléen — car elles produisent chacune un
-   * message distinct : un utilisateur hors table Europe doit savoir que c'est le pays
-   * qui bloque, sans le confondre avec un compte non configuré (§ 4 de la spec
-   * technique).
+   * message distinct : si le pays manque, l'utilisateur doit savoir que c'est LUI qui
+   * bloque, sans le confondre avec un compte non configuré (§ 4 de la spec technique).
+   * ⚠️ Depuis l'adoption d'un défaut constant (PAYS_DEFAUT), paysAuxHome() ne renvoie
+   * plus jamais de chaîne vide : la seconde garde est devenue théorique. Elle est
+   * conservée à dessein — c'est le seul filet si ce défaut redevient un jour vide, et
+   * elle ne coûte qu'une comparaison.
    *
    * @return string Message de succès en français, déjà traduit.
    * @throws smartclimException Message d'échec curaté en français (jamais de code brut).
@@ -138,7 +147,7 @@ class smartclim extends eqLogic {
       throw new smartclimException(__('Compte AUX Home non configuré : renseignez l\'e-mail et le mot de passe', __FILE__), smartclimException::TYPE_AUTH);
     }
     if (self::paysAuxHome() == '') {
-      throw new smartclimException(__('Pays du compte AUX Home introuvable : saisissez le code ISO à 3 lettres (FRA, BEL…) dans le champ Pays', __FILE__), smartclimException::TYPE_AUTH);
+      throw new smartclimException(__('Pays du compte AUX Home introuvable : sélectionnez-le dans la liste du champ Pays', __FILE__), smartclimException::TYPE_AUTH);
     }
     try {
       smartclimAuxHomeApi::login();
@@ -256,19 +265,21 @@ class smartclim extends eqLogic {
   /**
    * Normalise le code pays avant enregistrement — délègue à normaliserPays() (même
    * règle qu'à la lecture, cf. paysAuxHome()). Si le résultat n'est pas conforme, repli
-   * sur la déduction automatique (fuseau horaire de Jeedom) ; à défaut, chaîne vide
-   * acceptée : le compte reste enregistrable même sans pays déductible (cf. § 3.1 de la
-   * spec technique).
+   * sur PAYS_DEFAUT : le formulaire n'enregistre jamais un pays vide, qui bloquerait
+   * toute connexion au cloud sans que rien ne l'indique dans l'interface.
    * ⚠️ Aucun throw ici : config.ajax.php::addKey boucle sans transaction sur les clés
    * de configuration, une exception ferait perdre les clés suivantes (dont
    * refresh_interval).
+   * ⚠️ Enregistrer une valeur ÉGALE au défaut de l'INI supprime la ligne en base et
+   * court-circuite ce hook (piège documenté dans CLAUDE.md) : c'est sans conséquence
+   * ici, la lecture appliquant la même normalisation et le même défaut.
    */
   public static function preConfig_auxhome_country($value) {
     $pays = self::normaliserPays($value);
     if ($pays != '') {
       return $pays;
     }
-    return smartclimAuxHomeApi::paysParDefaut();
+    return self::PAYS_DEFAUT;
   }
 
   /**

@@ -14,9 +14,11 @@ aucun pilotage n'est possible.
 
 Sur la page de configuration du plugin, l'utilisateur renseigne un e-mail, un mot de passe et un pays
 associés à son compte AUX Home, ainsi qu'un intervalle de rafraîchissement des climatiseurs (en minutes).
-Le pays est pré-rempli automatiquement à partir du fuseau horaire configuré dans Jeedom, mais reste
-modifiable — utile si la déduction automatique se trompe ou si le fuseau horaire ne couvre pas la zone
-géographique du compte. Une fois le formulaire enregistré, le mot de passe n'est plus jamais restitué en
+Le pays se choisit dans une **liste déroulante** des pays pris en charge, positionnée par défaut sur
+**France (FRA)**. Aucune déduction automatique n'est tentée (cf. « Décisions actées ») : le défaut est
+constant, et l'utilisateur le change en un clic. Un compte dont le pays ne figure pas dans la liste reste
+saisissable via l'entrée « Autre pays », qui ouvre un champ de code ISO à 3 lettres. Une fois le formulaire
+enregistré, le mot de passe n'est plus jamais restitué en
 clair : ni à l'écran après rechargement de la page, ni dans les journaux du plugin, quel que soit le niveau
 de log.
 
@@ -37,8 +39,9 @@ doit jamais tenter d'appeler le cloud avec des identifiants vides.
 - [ ] **AC2** — Le mot de passe enregistré n'apparaît en clair dans aucun journal du plugin (tous niveaux
       confondus), y compris juste après l'enregistrement du formulaire.
 - [ ] **AC3** — À la toute première ouverture de la page de configuration (aucune configuration
-      préexistante), le champ pays est déjà pré-rempli avec un code cohérent avec le fuseau horaire de
-      Jeedom, affiché en majuscules, et reste éditable par l'utilisateur.
+      préexistante), le champ pays est une liste déroulante déjà positionnée sur **France (FRA)**, et
+      l'utilisateur peut y choisir un autre pays, qui est bien celui réenregistré et réaffiché.
+      *(Amendé en recette : cet AC exigeait auparavant un code déduit du fuseau horaire de Jeedom.)*
 - [ ] **AC4** — Renseigner un intervalle de rafraîchissement inférieur à 1 minute puis enregistrer aboutit
       soit à un refus explicite, soit à une valeur ramenée à 1 minute — jamais à une valeur inférieure
       effectivement appliquée.
@@ -56,12 +59,23 @@ doit jamais tenter d'appeler le cloud avec des identifiants vides.
   « Pays », « Intervalle de rafraîchissement (minutes) », « La température ambiante remontée par AUX Home
   se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée »,
   « Enregistrer ».
+- S'y ajoutent, depuis l'amendement ci-dessous : « Sélectionnez un pays », « Autre pays (code ISO à
+  3 lettres) », et **les libellés des pays proposés** (un par entrée de la liste, portés par
+  `smartclimAuxHomeApi::paysDisponibles()`, donc traduits dans la section
+  `core/class/smartclimAuxHomeApi.class.php` des fichiers `core/i18n/*.json`).
 
-## À confirmer
+## Décisions actées
 
-- La table de déduction automatique « fuseau horaire → pays ISO-3 » (`smartclim-transport-aux-home.md` § 5)
-  couvre l'Europe ; hors Europe, l'utilisateur devra sélectionner son pays manuellement — limite acceptée,
-  à documenter dans l'aide du champ.
+- **Pas de déduction du pays depuis le fuseau horaire** (arbitré en recette, 2026-08-25, contre la
+  conception d'origine). Le fuseau horaire de Jeedom ne dit rien du pays du **compte cloud** : une
+  installation française réglée sur `Europe/Brussels` se voyait proposer `BEL`, et un pays faux échoue au
+  login sur un message trompeur (« identifiant ou mot de passe incorrect »). La table
+  « fuseau → ISO-3 » (`smartclim-transport-aux-home.md` § 5) et son amorçage en base ont été retirés au
+  profit d'un **défaut constant** `FRA` et d'une **liste déroulante**, qui rend la correction triviale.
+- **Liste des pays limitée à l'Europe** : le transport AUX Home n'a qu'un point d'entrée régional
+  (`eu-smthome-api.aux-global.com`), et proposer un code ISO plausible mais non confirmé produirait le
+  même échec trompeur. Les comptes hors de cette couverture passent par l'entrée « Autre pays » et son
+  champ de saisie libre.
 
 ## Hors périmètre
 

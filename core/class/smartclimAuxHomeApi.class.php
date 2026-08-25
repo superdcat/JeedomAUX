@@ -161,7 +161,7 @@ class smartclimAuxHomeApi {
    * Clé de tri ASCII d'un libellé de pays : diacritiques ramenés à leur lettre de base,
    * puis majuscules. Table explicite plutôt qu'iconv('//TRANSLIT'), dont le rendu varie
    * selon la libc (jusqu'à rendre un simple point d'interrogation), et plutôt que
-   * mb_*/intl, non garantis sur un Jeedom minimal : elle
+   * les extensions mb_* ou intl, non garanties sur un Jeedom minimal : elle
    * couvre les diacritiques effectivement présents dans les quatre langues du plugin.
    *
    * @return string

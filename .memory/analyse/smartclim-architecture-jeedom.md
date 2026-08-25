@@ -20,7 +20,7 @@
 | `licence` | `AGPL` (inchangé) | crédits MIT/Apache-2.0 à conserver, cf. `smartclim-ecosysteme-aux-broadlink.md` § 6 |
 | `description` | ≥ 80 caractères **par langue**, **dans `info.json`** | règle market ; ⚠️ **pas** dans `core/i18n/*.json` (cf. `CLAUDE.md`) |
 
-## 2. Classes et fichiers (⚠️ autoload : 1 classe ↔ 1 fichier)
+## 2. Classes et fichiers (⚠️ 1 classe ↔ 1 fichier + `require_once` obligatoire)
 
 | Fichier | Classe(s) | Rôle |
 |---|---|---|
@@ -33,10 +33,37 @@
 | `core/class/smartclimBroadlinkLan.class.php` | `smartclimBroadlinkLan` | LAN Broadlink UDP *(post-MVP)* |
 | `core/class/smartclimFrame.class.php` | `smartclimFrame` | décodage/encodage des trames HVAC `bb00…` **mutualisé LAN ↔ AUX Home** |
 
-> ⚠️ **Règle critique** (`CLAUDE.md`) : toute classe appelée depuis un point d'entrée externe
-> (`core/ajax/smartclim.ajax.php`, hooks cron, `desktop/php/*.php`, `install.php`) doit avoir **son propre**
-> fichier `<Classe>.class.php`. Ici c'est le cas de chacune. Le `Fatal error: Class not found` correspondant
-> est **invisible à `php -l`**.
+> ⚠️⚠️ **VÉRIFIÉ EN RECETTE UC02 — l'ancienne version de cette règle était FAUSSE.** Il n'y a **aucun
+> `glob`** dans l'autoloader Jeedom : `jeedomAutoload()` (`core/php/core.inc.php`) ne charge qu'**un seul
+> fichier par plugin**, `plugins/<id>/core/class/<id>.class.php`. Code réel du core :
+>
+> ```php
+> $classname = str_replace(array('Real', 'Cmd'), '', $_classname);
+> $plugin_active = config::byKey('active', $classname, null);
+> if (($plugin_active === null || …) && strpos($classname, '_') !== false) {
+>     $classname = explode('_', $classname)[0];      // seule porte de sortie
+>     $plugin_active = config::byKey('active', $classname, null);
+> }
+> if ($plugin_active == 1) { include_file('core', $classname, 'class', $classname); }
+> ```
+>
+> - Un nom **sans `_`** qui n'est pas l'id du plugin (`smartclimAuxHomeApi`, `smartclimException`) ne prend
+>   jamais la branche de repli : `$plugin_active` reste `null`, l'autoloader **ne fait RIEN — sans erreur,
+>   sans log**. Symptôme constaté sur Jeedom réel (2026-08-25) :
+>   `Error : Class 'smartclimAuxHomeApi' not found (smartclim.class.php:76)` et
+>   `Class 'smartclimException' not found (smartclim.class.php:131)`.
+> - Même **avec** un `_`, seul `<id>.class.php` serait inclus : un fichier `<Classe>.class.php` séparé
+>   **n'est jamais chargé tout seul**. `smartclimCmd` marche parce qu'elle est **dans**
+>   `smartclim.class.php` — d'où le `str_replace('Cmd')` du core.
+> - Donc **avoir son propre fichier ne suffit PAS** : « 1 classe ↔ 1 fichier » est une convention de
+>   lisibilité de ce plugin, **pas** un mécanisme de chargement.
+>
+> **Règle réelle** : chaque classe du tableau ci-dessus est déclarée dans son fichier **et** listée en
+> `require_once` dans **`core/php/smartclim.inc.php`**, inclus en tête de `core/class/smartclim.class.php`
+> (le seul fichier que l'autoloader charge). Ainsi tout est disponible dès que `smartclim`/`smartclimCmd`
+> est résolue, depuis n'importe quel point d'entrée. **Ajouter chaque nouvelle classe à cette liste** —
+> l'oubli est invisible à `php -l` **et** à la CI, et ne se voit qu'au runtime, sur le seul chemin de code
+> qui touche la classe manquante.
 >
 > ⚠️ **Centralisation** (`CLAUDE.md`) : aucun `curl_*` ni socket hors de ces classes de transport.
 

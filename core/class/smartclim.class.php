@@ -17,6 +17,13 @@
 
 /* * ***************************Includes********************************* */
 require_once __DIR__  . '/../../../../core/php/core.inc.php';
+// Charge les classes ANNEXES du plugin (smartclimException, smartclimAuxHomeApi, ...).
+// OBLIGATOIRE : l'autoloader du core n'inclut QUE ce fichier-ci pour tout le plugin, et
+// ignore SILENCIEUSEMENT un nom de classe qui n'est pas l'id du plugin (demonstration
+// complete, avec le code du core, dans core/php/smartclim.inc.php). Sans cette ligne,
+// toute reference a une classe annexe casse en « Class not found » au runtime — invisible
+// a `php -l` comme en CI.
+require_once __DIR__ . '/../php/smartclim.inc.php';
 
 class smartclim extends eqLogic {
   /*     * *************************Attributs****************************** */

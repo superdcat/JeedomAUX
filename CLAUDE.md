@@ -76,8 +76,10 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Deux usages distincts du message** : levée par une brique de transport, il est **technique** et
   n'est jamais affiché ; levée par `smartclim::`, il est **déjà curaté en français** et affiché tel quel.
   Le passage de l'un à l'autre se fait **exclusivement** par `smartclim::messageErreurAuxHome()`.
-- **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, cf.
-  Autoload) : `smartclimCapabilities` (énumérations génériques + tables de correspondance),
+- **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
+  chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
+  introuvable au runtime, cf. Conventions → Autoload) : `smartclimCapabilities` (énumérations
+  génériques + tables de correspondance),
   `smartclimFrame` (décodage/encodage de la trame HVAC), `smartclimTransport` (sélection du transport
   actif), et les deux autres briques de transport : `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
@@ -93,7 +95,10 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Rattraper `Throwable` en dernier bloc** (après `smartclimException` puis `Exception`) : une `Error`
   PHP 8 traverse sinon `catch (Exception)` et la réponse cesse d'être du JSON. Message curaté, code
   **figé**, **jamais** `displayException()` sur une `smartclimException`. Idem § 10.
-- **`core/php/smartclim.inc.php`** — includes/constantes internes du plugin.
+- **`core/php/smartclim.inc.php`** — ⚠️ **pièce critique** : la liste des `require_once` des classes
+  annexes (+ constantes internes). Incluse en tête de `core/class/smartclim.class.php`, c'est elle
+  qui rend les classes annexes chargeables — l'autoload du core ne le fait pas (cf. Conventions →
+  Autoload Jeedom).
 - **`core/template/{dashboard,mobile}/cmd.<type>.<subType>.<nom>.html`** — widgets de commande
   personnalisés (dashboard + mobile = **deux fichiers synchronisés**). ⚠️ Le dossier s'appelle bien
   `core/template/` : c'est le **nom standard Jeedom** du dossier de widgets, il ne se renomme pas avec l'id
@@ -286,19 +291,49 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
 - ⚠️ **`.gitattributes`** force `.githooks/** text eol=lf`. C'est la seule règle du fichier —
   volontairement **pas** de `* text=auto`, qui réécrirait en masse les fichiers du plugin. En CRLF,
   `/bin/sh` refuse le shebang du hook, qui devient inopérant **sans aucun message**.
+- ⚠️ Le hook doit rester en mode **100755 dans l'index** : git **n'exécute pas** un hook non exécutable
+  (silencieusement, là encore). Windows n'enregistre pas le bit `+x` tout seul (`core.fileMode=false`) —
+  un `chmod +x` local ne suffit donc pas, il faut :
+  ```bash
+  git update-index --chmod=+x .githooks/pre-commit
+  ```
+  À vérifier avec `git ls-files -s .githooks/pre-commit` (doit afficher `100755`). Sans cela le hook
+  fonctionne sur Windows mais est ignoré sur tout clone Linux/macOS.
 
 ## Conventions
 
 - **Français = langue source** : code, commentaires, noms de variables, messages de `log::add` et chaînes
   UI sont écrits en français (langue **par défaut** de Jeedom — pas de `fr_FR.json`).
-- **Autoload Jeedom (règle critique, fatale au runtime, invisible à `php -l`)** : l'autoloader mappe
-  **1 classe ↔ 1 fichier** `<NomClasse>.class.php` (`glob('plugins/*/core/class/<NomClasse>.class.php')`).
-  Toute classe référencée depuis un **point d'entrée externe** (`core/ajax/*.ajax.php`, hooks cron,
-  `desktop/php/*.php`, `install.php`) — via `Classe::`, `new Classe`, `catch (Classe …)` — doit soit avoir
-  son **propre** fichier `<Classe>.class.php`, soit voir son chargement assuré en transitant par la classe
-  principale `smartclim`/`smartclimCmd` (dont le fichier `smartclim.class.php` charge du même coup les
-  classes annexes qu'il contient). Un appel **direct** à une classe annexe (ex. `smartclimAuxHomeApi`)
-  depuis un point d'entrée externe = `Fatal error: Class not found` au runtime.
+- **Autoload Jeedom (règle critique, fatale au runtime, invisible à `php -l` ET à la CI)** — ⚠️ **corrigée
+  en recette UC02, l'ancienne version de cette règle était fausse et a causé la panne** : il n'y a
+  **aucun `glob`**. `jeedomAutoload()` (core/php/core.inc.php) ne charge, pour tout un plugin, qu'**un
+  seul fichier** : `plugins/<id>/core/class/<id>.class.php`. Son code réel :
+  ```php
+  $classname = str_replace(array('Real', 'Cmd'), '', $_classname);
+  $plugin_active = config::byKey('active', $classname, null);
+  if (($plugin_active === null || …) && strpos($classname, '_') !== false) {
+      $classname = explode('_', $classname)[0];      // seule porte de sortie
+      $plugin_active = config::byKey('active', $classname, null);
+  }
+  if ($plugin_active == 1) { include_file('core', $classname, 'class', $classname); }
+  ```
+  Conséquences, à connaître par cœur :
+  - Un nom de classe **sans `_`** qui n'est pas l'id du plugin (ex. `smartclimAuxHomeApi`) ne prend jamais
+    la branche de repli : `$plugin_active` reste `null` et l'autoloader **ne fait RIEN — sans erreur, sans
+    log, sans warning**. Le plantage arrive plus tard, en « Class not found », uniquement sur le chemin de
+    code concerné.
+  - Même **avec** un `_`, il n'inclurait que `<id>.class.php` : un fichier `<Classe>.class.php` séparé
+    **n'est jamais chargé tout seul**. `smartclimCmd` fonctionne parce qu'elle vit **dans**
+    `smartclim.class.php` — c'est la raison d'être du `str_replace('Cmd')` ci-dessus.
+  - ⚠️ Donc **« 1 classe ↔ 1 fichier » ne suffit PAS** : c'est une convention de lisibilité de ce plugin,
+    pas un mécanisme de chargement.
+  **La règle à appliquer** : toute classe annexe se déclare dans son fichier `<Classe>.class.php` **et**
+  s'ajoute à la liste de `require_once` de **`core/php/smartclim.inc.php`**, lui-même inclus en tête de
+  `core/class/smartclim.class.php` (le seul fichier que l'autoloader charge). Toutes les classes annexes
+  sont ainsi disponibles dès que `smartclim`/`smartclimCmd` est résolue, donc depuis **tous** les points
+  d'entrée (`core/ajax/*.ajax.php`, crons, `desktop/php/*.php`, `install.php`). Chaque nouvelle classe
+  (`smartclimCapabilities`, `smartclimFrame`, `smartclimTransport`, `smartclimAuxCloudApi`,
+  `smartclimBroadlinkLan`) **doit** être ajoutée à cette liste — l'oublier ne casse ni `php -l` ni la CI.
 - **Centraliser les accès externes** : **tous** les appels HTTP passent par la brique du transport concerné
   (`smartclimAuxHomeApi`, `smartclimAuxCloudApi`) et tout le LAN par `smartclimBroadlinkLan` — jamais de
   cURL ou de socket épars. Le reste du plugin ne parle qu'à l'**API générique**, jamais à un transport.

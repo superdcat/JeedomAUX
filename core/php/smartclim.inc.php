@@ -16,8 +16,38 @@
 */
 
 require_once __DIR__  . '/../../../../core/php/core.inc.php';
+
 /*
+* Chargement des classes ANNEXES du plugin — OBLIGATOIRE, ce n'est pas une précaution.
 *
-* Fichier d’inclusion si vous avez plusieurs fichiers de class ou 3rdParty à inclure
+* L'autoloader du core (jeedomAutoload(), core/php/core.inc.php) ne sait charger qu'UN
+* SEUL fichier de classe par plugin : plugins/<id>/core/class/<id>.class.php. Son code :
+*     $classname = str_replace(array('Real', 'Cmd'), '', $_classname);
+*     $plugin_active = config::byKey('active', $classname, null);      // null ici
+*     if ((... null ...) && strpos($classname, '_') !== false) { ... } // sans '_' : ignore
+*     if ($plugin_active == 1) { include_file('core', $classname, 'class', $classname); }
+* -> pour "smartclimAuxHomeApi" (aucun '_'), la branche de repli n'est jamais prise,
+* $plugin_active reste null, et l'autoloader NE FAIT RIEN — sans erreur, sans log, sans
+* warning. La classe est simplement declaree introuvable au premier usage.
+* Panne effectivement observee en recette UC02, sur un Jeedom a jour :
+*   « Error : Class 'smartclimAuxHomeApi' not found (smartclim.class.php:76) »
+*   « Error : Class 'smartclimException' not found (smartclim.class.php:131) »
+* Et meme AVEC un '_' dans le nom, l'autoloader n'inclurait que <id>.class.php : un
+* fichier <Classe>.class.php separe n'est JAMAIS charge tout seul. Le str_replace('Cmd')
+* du core en est la preuve — smartclimCmd est trouvee parce qu'elle vit DANS
+* smartclim.class.php, pas dans un fichier portant son nom.
 *
+* D'ou la regle du plugin : toute classe annexe s'ajoute ICI, et ce fichier est inclus en
+* tete de core/class/smartclim.class.php — le seul fichier que l'autoloader charge. Les
+* classes annexes sont donc disponibles des que `smartclim` ou `smartclimCmd` est resolue,
+* c'est-a-dire depuis TOUS les points d'entree (AJAX, crons, pages desktop, install.php).
+* Les classes a venir (smartclimCapabilities, smartclimFrame, smartclimTransport,
+* smartclimAuxCloudApi, smartclimBroadlinkLan) viennent s'ajouter a cette liste.
+*
+* ⚠️ Ni `php -l` ni la CI ne detectent l'oubli : la panne n'existe qu'au runtime, et
+* seulement sur le chemin de code qui touche la classe manquante.
+*
+* Ordre : smartclimException d'abord (aucune dependance), puis les briques qui la levent.
 */
+require_once __DIR__ . '/../class/smartclimException.class.php';
+require_once __DIR__ . '/../class/smartclimAuxHomeApi.class.php';

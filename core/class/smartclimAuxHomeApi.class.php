@@ -17,6 +17,11 @@
 
 /* * ***************************Includes********************************* */
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
+// Rend ce fichier autonome : toutes les methodes publiques de cette classe levent une
+// smartclimException, que l'autoloader du core ne resoudra jamais seul (cf.
+// core/php/smartclim.inc.php). require_once est idempotent : aucun cout quand
+// smartclim.inc.php l'a deja chargee juste avant.
+require_once __DIR__ . '/smartclimException.class.php';
 
 /**
  * Brique de transport "AUX Home" (cloud eu-smthome-api.aux-global.com).

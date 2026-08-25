@@ -52,12 +52,24 @@ Tu démarres en **contexte neuf** : ne suppose rien d'« déjà chargé ». Dans
    consultation à la demande). Déroule sa boucle. (Au besoin tu peux la ré-invoquer via l'outil `Skill` ;
    si l'outil `Skill` échoue à la charger, applique directement la méthodologie inline de ce prompt.)
 
+## Vérifications mécaniques : un script, pas des `grep`
+
+`python .claude/scripts/verif-plugin.py` (sans argument = les fichiers modifiés selon git) fait en **un
+passage** les contrôles répétitifs : fins de ligne par **comptage d'octets**, octets de contrôle bruts,
+équilibrage `{}`/`()`/`[]` en ignorant chaînes et commentaires, synchro du miroir
+`configuration.txt`/`.php`, JSON i18n, chaînes JS en apostrophes simples, motifs sensibles.
+
+**Lance-le avant de rendre la main**, et ne réinvente pas ces contrôles à la main : un `grep -c $''` mal
+échappé a déjà produit un faux « tout est en CRLF », et un compteur d'accolades naïf un faux déséquilibre
+sur du HTML français. Code de retour `1` s'il reste un PROBLEME ; les AVIS sont à lire, pas à corriger
+aveuglément.
+
 ## Règles critiques (fatales au runtime, invisibles à `php -l`)
 
 - **Autoload 1 classe ↔ 1 fichier** : jamais d'appel direct à une classe annexe (ex. un client API
-  `templateApi::` ou une exception `templateException`) depuis un point d'entrée externe
+  `smartclimAuxHomeApi::` ou une exception `smartclimException`) depuis un point d'entrée externe
   (`core/ajax/*.ajax.php`, hooks cron, `desktop/php/*.php`, `install.php`) — router via
-  `template`/`templateCmd`.
+  `smartclim`/`smartclimCmd`.
 - **Centraliser les accès externes** : tout appel HTTP par la brique API unique du plugin (aucun cURL
   épars) ; toute commande sortante d'un démon par le pont démon (aucun socket/MQTT épars).
 - **`plugin_info/configuration.php` est inaccessible en écriture** (permissions de session) : édite

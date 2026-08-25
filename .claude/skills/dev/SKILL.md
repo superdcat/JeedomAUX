@@ -36,9 +36,9 @@ t'arrêtant dès que tu as la réponse :
 **signale l'écart** (ne tranche pas en silence) et remonte-le dans ton rapport.
 
 Rappels critiques (fatals **invisibles à `php -l`**) :
-- **Autoload 1 classe ↔ 1 fichier** : jamais d'appel direct à une classe annexe (ex. `templateApi::`) depuis
+- **Autoload 1 classe ↔ 1 fichier** : jamais d'appel direct à une classe annexe (ex. `smartclimAuxHomeApi::`) depuis
   un point d'entrée externe (`*.ajax.php`, hooks cron, `desktop/php/*.php`, `install.php`). Router via la
-  classe principale `template`/`templateCmd` (dont `template.class.php` charge aussi les classes annexes
+  classe principale `smartclim`/`smartclimCmd` (dont `smartclim.class.php` charge aussi les classes annexes
   qu'il contient).
 - **Centraliser les accès externes** : tout appel HTTP par la brique API unique du plugin (aucun cURL
   épars) ; toute commande sortante d'un démon par le pont démon (aucun socket/MQTT épars).
@@ -48,9 +48,14 @@ Rappels critiques (fatals **invisibles à `php -l`**) :
 ## Vérification sur ce stack (pas de tests unitaires, pas de PHP local garanti)
 
 Dans l'ordre : (1) critères d'acceptation → **checklist concrète observable** (notre « test d'abord ») ;
-(2) `php -l` si dispo — **syntaxe seule**, ne détecte PAS un « Class not found » ; à défaut, contrôle
-structurel via un script Python (équilibrage `{}`/`()`/`[]`, cf. mémoire d'agent
-`feedback-no-local-php-verification`) ; (3) auto-revue contre la checklist qualité ci-dessous ; (4) les
+(2) **le script de vérifications mécaniques du projet** — `python .claude/scripts/verif-plugin.py`
+(sans argument : les fichiers modifiés selon git ; ou une liste de fichiers). **Ne réinvente pas ces
+contrôles en `grep`/`sed`** : il fait déjà, en un passage, les fins de ligne par comptage d'octets, les
+octets de contrôle bruts, l'équilibrage `{}`/`()`/`[]` en ignorant chaînes et commentaires, la synchro du
+miroir `configuration.txt`/`.php`, les JSON i18n, les chaînes JS en apostrophes simples et les motifs
+sensibles. Code de retour `1` s'il reste un PROBLEME ; les AVIS ne bloquent pas. Complète par `php -l`
+s'il est disponible — **syntaxe seule**, il ne détecte PAS un « Class not found » ;
+(3) auto-revue contre la checklist qualité ci-dessous ; (4) les
 reviews croisées indépendantes (`code-reviewer` + `security-reviewer`) et la CI Jeedom au push sont
 exécutées **après ton retour** par l'orchestrateur `/feature` — tu ne les lances pas toi-même.
 **Ne jamais prétendre qu'un comportement runtime est validé sans l'avoir constaté** (lint OK ≠ feature OK ;
@@ -68,7 +73,7 @@ surtout pour un appel cloud / une commande matérielle → « à valider en rece
    UI en **français** (`{{...}}` / `__()`) — **ne PAS toucher aux `core/i18n/*.json`** (traduction déléguée
    à l'orchestrateur).
 3. **Vérifier** : `php -l`/contrôle structurel + **check autoload** (toute classe référencée depuis un
-   point d'entrée externe a son fichier, ou transite par `template`/`templateCmd`) + dérouler la checklist
+   point d'entrée externe a son fichier, ou transite par `smartclim`/`smartclimCmd`) + dérouler la checklist
    (ce qui exige un Jeedom réel → « à valider en recette »).
 4. **Auto-revue** : passer la checklist qualité ci-dessous ; corriger ce qui est rapide.
 5. **Itérer** : reprendre en 2 tant qu'un critère n'est pas couvert **ou** qu'un point de la checklist
@@ -85,7 +90,7 @@ surtout pour un appel cloud / une commande matérielle → « à valider en rece
       justifié et signalé.
 - [ ] Tout appel externe via la brique API/le pont démon ; **autoload** OK (pas d'appel direct à une
       classe annexe depuis un point d'entrée externe).
-- [ ] **Fidélité chemin d'appel** : le flux suit la spec (ex. AJAX → méthode de `template`, pas
+- [ ] **Fidélité chemin d'appel** : le flux suit la spec (ex. AJAX → méthode de `smartclim`, pas
       directement la classe annexe).
 - [ ] Aucun **secret/token en clair** (identifiants, tokens, codes, PIN) — ni dans les logs, le DOM, les
       réponses AJAX, les commentaires.
@@ -93,14 +98,15 @@ surtout pour un appel cloud / une commande matérielle → « à valider en rece
 - [ ] Si `plugin_info/configuration.*` touché : `.txt` édité **et** `.php` re-synchronisé par `cp`.
 - [ ] **Idempotence** : re-synchro/re-save sans doublon (clé `logicalId`), personnalisations préservées ;
       création de commandes **conditionnelle** à la présence du champ/de la capacité.
-- [ ] Erreurs **non silencieuses** : `log::add('template','error',…)` + remontée propre ; jamais de `catch`
+- [ ] Erreurs **non silencieuses** : `log::add('smartclim','error',…)` + remontée propre ; jamais de `catch`
       vide.
 - [ ] **Robustesse cron** : un équipement en erreur n'interrompt pas la boucle (try/catch par équipement).
 - [ ] **Rate-limit / quotas** d'une API tierce respectés (backoff sur 429, cooldown, pas de rafale).
 - [ ] Indentation conforme au fichier touché (2 espaces en `core/*` ; **tabs+CRLF** en `desktop/php/*`) ;
       pas de code mort ni de `var_dump`/debug oublié.
-- [ ] `php -l`/contrôle structurel OK (ou impossibilité signalée) ; page admin et cron **ne plantent pas**
-      si config vide / non authentifié / API injoignable.
+- [ ] **`python .claude/scripts/verif-plugin.py` sans PROBLEME** (et les AVIS lus) ; `php -l` si
+      disponible ; page admin et cron **ne plantent pas** si config vide / non authentifié / API
+      injoignable.
 
 ## Présentation finale (rapport structuré)
 

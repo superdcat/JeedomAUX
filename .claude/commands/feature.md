@@ -122,7 +122,25 @@ sur le code figé.
 
 ## Étape 7 — Réception du livrable & vérification
 
-À partir du **rapport de l'agent** (étape 6), fais une **vérification indépendante** (l'agent a déjà
+**Commence par lancer le script de vérifications mécaniques** — il fait en un passage tout ce qui était
+jusqu'ici réinventé en `grep`/`sed` ad hoc à chaque tour :
+
+```bash
+python .claude/scripts/verif-plugin.py          # les fichiers modifiés selon git
+```
+
+Il contrôle : fins de ligne (par **comptage d'octets** — un `grep -c $'\r'` mal échappé a déjà produit un
+faux « tout est en CRLF »), octets de contrôle bruts (texte à échappements corrompu), équilibrage
+structurel `{}`/`()`/`[]` **en ignorant chaînes et commentaires** (un compte naïf sur du HTML français
+produit un faux déséquilibre), synchronisation du miroir `configuration.txt`/`.php` (via
+`git diff --numstat`, sans jamais ouvrir le `.php`), validité et couverture des JSON i18n, chaînes JS
+délimitées par des apostrophes simples, et motifs sensibles (`CURLOPT_VERBOSE`, `getTraceAsString`,
+`SSL_VERIFYPEER false`, `var_dump`…).
+Code de retour `1` s'il reste un **PROBLEME**. Les **AVIS** ne bloquent pas : lis-les, ils sont
+volontairement inclusifs (un `displayException()` légitime dans un `catch (Exception)` générique y
+apparaît, par exemple).
+
+Puis, à partir du **rapport de l'agent** (étape 6), fais la **vérification de fond** (l'agent a déjà
 auto-vérifié ; toi tu contrôles, tu ne re-codes pas) :
 
 - **Couverture** : chaque critère d'acceptation est couvert ou explicitement « à valider en recette ».
@@ -144,9 +162,47 @@ créés/modifiés **listés dans le rapport de l'agent** (étape 6), lance **en 
 - sous-agent `security-reviewer` ;
 - sous-agent `code-reviewer` (passe-lui la spec technique en contexte pour la review « cohérence spec »).
 
-Précise-leur que la traduction est **volontairement différée** : ils évaluent le code FR et l'enveloppage
-(`{{...}}` / `__()`), mais l'absence de traduction `en_US`/`de_DE`/`es_ES` n'est **pas** un finding ici.
-Présente une synthèse.
+Les invariants permanents du projet (miroir `configuration.txt`/`.php`, traduction différée, carve-out
+`configKey`, indentation par fichier) sont **portés par les définitions des deux agents** : ne les
+répète pas dans ton prompt. Passe-leur seulement le **nom de la feature**, la **liste des fichiers**, le
+**chemin de la spec technique**, et ce que tu veux voir vérifié en priorité.
+
+### ⚠️ Plafond : DEUX tours de review, pas plus
+
+| Tour | Périmètre |
+|---|---|
+| **1** | review **complète** des fichiers du livrable |
+| **2** | **delta uniquement** — vérifier que les correctifs tiennent et **chasser les régressions**. Interdiction explicite de re-auditer ce qui a déjà été validé au tour 1 |
+
+Au tour 2, dis-leur de **conclure explicitement** par « reste-t-il un `critical`/`high` ? » (sécurité) et
+« reste-t-il un `blocker`/`major` ? » (qualité) — c'est cette réponse qui pilote la gate, pas la liste
+des findings.
+
+**Au tour 2, passe-leur un DIFF plutôt que la liste des fichiers.** Les reviewers n'ont ni `Bash` ni `git`
+— écris le diff dans le scratchpad et donne-leur le chemin :
+
+```bash
+git diff -- <fichiers du delta> > "$SCRATCHPAD/delta-<feature>-tour2.diff"
+```
+
+Donne-leur **les deux** : le chemin du diff **et** la liste des fichiers, en précisant qu'ils partent du
+diff et n'ouvrent un fichier que là où le diff ne suffit pas à juger (un diff sans contexte produit des
+faux positifs). Cela leur évite de relire intégralement 5 fichiers plus les documents de référence pour
+juger une vingtaine de lignes changées.
+
+**Après le tour 2, la boucle s'arrête.** Tout finding qui n'atteint pas la gate
+(`critical`/`high`/`blocker`/`major`) part dans une section **« Dette »** de la spec technique
+`…-tech.md` — il n'est **pas** corrigé dans ce cycle et ne déclenche **pas** de tour supplémentaire.
+S'il reste un finding **au-dessus** de la gate après le tour 2, ne relance pas de ton propre chef :
+**signale-le à l'utilisateur** et laisse-le trancher entre un 3ᵉ tour et la dette.
+
+> **Pourquoi ce plafond** : mesuré sur les cycles UC01 et UC02 du MVP, le 3ᵉ tour n'a produit **aucun**
+> finding atteignant la gate (uniquement des `minor`/`low` cosmétiques ou de diagnostic), pour ~130k
+> tokens de review plus la reprise de l'agent développeur. Les tours 1 et 2, eux, ont trouvé des `major`
+> réels — dont un bug de perte de données. Le plafond coupe le tour improductif, pas les tours utiles.
+
+Présente une synthèse **brève** : tableau des findings (sévérité / fichier / enjeu en une ligne) et
+décision. Ne reformule pas le contenu des reviews.
 
 ## Étape 9 — Décision finale utilisateur
 
@@ -156,8 +212,49 @@ Si findings `critical`/`high` (ou `blocker`/`major`), demande :
 
 Attends la réponse. Si fix demandés : **ne corrige pas toi-même** — renvoie les findings à l'agent
 `php-jeedom-dev` via `SendMessage` (même `agentId` qu'à l'étape 6, pour réutiliser son contexte
-d'implémentation), en lui listant précisément les findings à traiter. Quand il rend la main, **relance les
-reviews croisées** (étape 8) jusqu'à ce qu'il ne reste plus de `critical`/`high`/`blocker`/`major`.
+d'implémentation), en lui listant précisément les findings à traiter.
+
+### ⚠️ UN SEUL lot de correctifs par tour
+
+**Attends les DEUX reviews, fusionne-les, et envoie un lot unique et consolidé.** Jamais deux
+`SendMessage` de correctifs pour un même tour.
+
+> **Pourquoi** : le contexte accumulé de l'agent développeur est **re-facturé intégralement à chaque
+> reprise**. Mesuré sur le cycle UC02 : 234k → 342k → 419k → 495k tokens pour 4 lots successifs, alors
+> que le dernier ne portait que 8 corrections mécaniques. Un lot unique par tour supprime ces reprises.
+
+Si tu découvres un point oublié **après** avoir envoyé le lot, ne l'envoie pas séparément : ajoute-le au
+lot du tour suivant, ou traite-le dans la passe de finition (ci-dessous).
+
+### Quel agent pour le lot : reprise ou agent neuf ?
+
+| Nature du lot | Agent |
+|---|---|
+| Findings qui touchent à la **conception** (contrat, chemin d'appel, classement d'erreurs, architecture) | **Reprends** l'agent d'implémentation (`SendMessage`, même `agentId`) : son contexte est nécessaire |
+| Lot **purement mécanique et localisé** — moins de ~10 points, aucune re-conception (un cast, une ancre de regex, un filtre, un `timeout`, des point-virgules, un commentaire faux) | **Agent NEUF** |
+
+Pour un agent neuf, donne-lui : le chemin de la **spec technique**, un **diff** dans le scratchpad, la
+**liste numérotée des points** avec pour chacun le fichier, la ligne et la correction attendue, et les
+rappels de procédure. Les invariants du projet sont déjà dans sa définition d'agent.
+
+> **Pourquoi** : le contexte accumulé de l'agent d'implémentation est re-facturé **intégralement** à
+> chaque reprise. Mesuré sur UC02 : la dernière reprise, pour 8 corrections mécaniques, a coûté ~76k
+> tokens là où un agent neuf en aurait consommé la moitié — et sans faire croître le suivant.
+> ⚠️ **Contrepartie réelle** : un agent neuf n'a pas le contexte d'implémentation. Ne l'utilise pas pour
+> un finding qui demande de comprendre *pourquoi* le code est écrit ainsi.
+
+### Fin de boucle
+
+Après le **tour 2** de reviews (cf. plafond, étape 8) :
+- s'il ne reste plus de finding au-dessus de la gate → **passe à l'étape 10** ;
+- s'il reste des `minor`/`low` que tu juges utiles et **ponctuels**, tu peux les regrouper en **une seule
+  passe de finition** avant la traduction — un lot, sans review de contrôle derrière ;
+- tout le reste part en **section « Dette »** de la spec technique.
+
+⚠️ **Corrige aussi la spec technique** quand une review a mis en évidence non pas un défaut du code mais
+une **erreur de raisonnement de ta spec** (contrat contradictoire, justification fausse, contrat de
+signature mal posé). C'est le cas le plus rentable de tout le cycle : la spec sert de référence aux UC
+suivantes, une erreur qu'on y laisse est recopiée.
 
 ## Étape 10 — Traduction (sous-agent `translator`) — **une fois tout validé**
 

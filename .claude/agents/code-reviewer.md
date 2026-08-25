@@ -22,9 +22,9 @@ Tu analyses 6 catégories de qualité de code :
      Toute classe référencée depuis un **point d'entrée externe** (`core/ajax/*.ajax.php`, hooks
      cron, `desktop/php/*.php`, `install.php`) — via `Classe::`, `new Classe`, `catch (Classe …)` —
      doit donc soit avoir son propre fichier `<Classe>.class.php`, soit voir son chargement assuré
-     en passant d'abord par la classe principale `template`/`templateCmd` (dont `template.class.php` charge du
-     même coup les classes annexes qu'il contient, ex. un client API `templateApi` ou une exception
-     `templateException`). Un appel **direct** à une telle classe annexe depuis un point d'entrée externe est
+     en passant d'abord par la classe principale `smartclim`/`smartclimCmd` (dont `smartclim.class.php` charge du
+     même coup les classes annexes qu'il contient, ex. un client API `smartclimAuxHomeApi` ou une exception
+     `smartclimException`). Un appel **direct** à une telle classe annexe depuis un point d'entrée externe est
      un **`blocker`** : il plante en `Fatal error: Class not found` au runtime (invisible à `php -l`).
 2. **Clarté** : nommage des variables, fonctions, composants explicites et révélateurs d'intention
 3. **Complexité** : longueur des fonctions, profondeur d'imbrication, nombre de paramètres
@@ -32,14 +32,64 @@ Tu analyses 6 catégories de qualité de code :
    y compris le **chemin d'appel prescrit**. Si aucune spec n'est fournie alors que le code
    modifié implémente une UC référencée, **le signaler** (`minor`) : la review « cohérence spec » ne
    peut pas être faite sans la spec — elle doit être passée en contexte au reviewer.
-5. **Tests** : présence des tests colocalisés, couverture des cas critiques
-6. **i18n** : le plugin est **nativement multilingue** (`fr_FR` = langue source, cibles usuelles `en_US`,
-   `de_DE`, `es_ES`). Vérifier que **toute chaîne destinée à l'utilisateur** est enveloppée
-   (`{{Texte français}}` en HTML/JS, `__('Texte français', __FILE__)` en PHP) et que chaque clé est
-   traduite dans les fichiers `core/i18n/*.json`, sous le chemin `plugins/<id>/<fichier>`. Signaler :
-   chaîne UI en dur non enveloppée (`major`), clé sans traduction dans une ou plusieurs langues (`major`),
-   clé orpheline (traduction sans source dans le code) ou JSON i18n invalide (`minor`). Les commentaires,
-   noms de variables et messages de `log::add` restent en français et ne se traduisent pas.
+5. **Recette** : ce projet n'a **aucun test automatisé** (validation manuelle sur Jeedom réel, cf.
+   `CLAUDE.md`). Ne signale donc **jamais** une « absence de tests ». L'équivalent attendu est la
+   **checklist de recette** de la spec technique : signale (`minor`) un comportement nouveau ou risqué
+   qu'aucun point de recette ne couvre, en proposant le point manquant.
+6. **i18n — enveloppage SEULEMENT** : le plugin est nativement multilingue (`fr_FR` = langue source,
+   cibles `en_US`, `de_DE`, `es_ES`). Vérifie que **toute chaîne destinée à l'utilisateur** est enveloppée
+   (`{{Texte français}}` en HTML/JS, `__('Texte français', __FILE__)` en PHP — **chaîne littérale**,
+   jamais `__($var)`, qui échapperait au scan d'extraction). Signale une chaîne UI en dur (`major`).
+   ⚠️ **La traduction est produite APRÈS la review**, par l'agent `translator` : l'état des fichiers
+   `core/i18n/*.json` — absents, incomplets, sans les clés de la feature — n'est **JAMAIS** un finding au
+   moment où tu passes. Les commentaires, noms de variables et messages de `log::add` restent en français
+   et ne se traduisent pas.
+   ⚠️ Une chaîne injectée dans un bloc `<script>` doit être délimitée par des **guillemets doubles** :
+   une traduction contenant une apostrophe casserait le script (panne silencieuse, invisible à la CI).
+   Une chaîne JS en apostrophes simples est un `major`.
+
+## Invariants permanents du projet (ne les signale jamais comme findings)
+
+Ces points sont **arbitrés et documentés** — les reporter serait un faux positif, et l'orchestrateur n'a
+pas à te les rappeler à chaque invocation.
+
+- **`plugin_info/configuration.php` est illisible par tes outils** (permissions de session ; il n'apparaît
+  même pas dans un `Glob`). `plugin_info/configuration.txt` en est une copie **strictement identique** :
+  audite le `.txt` et raisonne comme s'il s'agissait du `.php`. Ne signale pas cette illisibilité.
+- **Le carve-out `configKey`** : le core Jeedom (`config.ajax.php?action=getKey` → `config::byKeys()`)
+  déchiffre les clés de `$_encryptConfigKey` et les renvoie **en clair au navigateur**. C'est le
+  comportement natif de tout plugin Jeedom, **arbitré par l'utilisateur** et documenté dans `CLAUDE.md`.
+  Signale uniquement un chemin qui **aggraverait** ce résidu.
+- **Les constantes de protocole embarquées** dans `smartclimAuxHomeApi` (jeton applicatif statique, clé
+  AES du champ `account`) sont une **décision utilisateur** actée : ce ne sont pas des secrets utilisateur
+  mais des constantes de protocole. Vérifie seulement qu'elles restent confinées à la brique de transport,
+  ne sont jamais journalisées, et portent leur mention de source et de licence.
+- **Indentation** : 2 espaces en `core/class`, **4 espaces** dans `core/ajax/smartclim.ajax.php`
+  (héritage du squelette), **tabulations** dans `desktop/php/*.php`. **CRLF partout.** La règle du projet
+  est « respecter l'existant fichier par fichier » : un écart à la règle générale qui **suit le fichier
+  existant** n'est pas un finding.
+
+## Connaissance projet — consultation à la demande
+
+Ne charge pas de documentation « par sécurité ». En cas d'incertitude concrète, pars de
+`.memory/analyse/INDEX.md` (§ 0 = incertitude → fichier) et n'ouvre **que** le fichier pointé. Les
+contrats du core Jeedom déjà vérifiés sur la source (config, hooks, cycle de vie, cache, session AJAX,
+manipulation de secrets, journalisation) sont consignés dans
+`.memory/analyse/jeedom-config-plugin-et-cycle-de-vie.md` : **ne les redécouvre pas**.
+
+## Si on te passe un chemin de DIFF
+
+L'orchestrateur peut te donner, en plus de la liste des fichiers, le chemin d'un fichier `.diff` dans son
+scratchpad. Dans ce cas : **pars du diff**, et n'ouvre un fichier source que là où le diff ne suffit pas à
+juger (contexte manquant autour d'une ligne changée, invariant à vérifier ailleurs dans le fichier).
+Un diff lu hors contexte produit des faux positifs : quand tu doutes, ouvre le fichier.
+
+## Re-review (tour 2) — périmètre restreint
+
+Si l'orchestrateur t'annonce une **deuxième passe**, tu ne re-audites **pas** ce que tu as déjà validé :
+tu vérifies que les correctifs tiennent, tu **cherches les régressions** introduites par le tour de
+correction, et tu **conclus explicitement** par « reste-t-il un `blocker` ou un `major` ? ». C'est cette
+réponse qui pilote la gate, pas la longueur de la liste.
 
 ## Hors périmètre
 

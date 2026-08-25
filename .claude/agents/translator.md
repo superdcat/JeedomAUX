@@ -34,8 +34,10 @@ fichiers `desktop/**`, `core/**`, `plugin_info/configuration.php`, etc.) :
    - PHP : motif `__('Texte français', __FILE__)` (et `__("...", __FILE__)`)
 2. **Pour chaque chaîne**, garantir une entrée de traduction dans **chaque** fichier cible, sous le chemin
    `plugins/<id>/<chemin/relatif/du/fichier>` (exactement le chemin relatif depuis la racine du plugin,
-   ex. `plugins/template/desktop/php/template.php`). Remplace `<id>` par l'id réel du plugin (`template`
-   tant que le plugin n'a pas été renommé).
+   ex. `plugins/smartclim/plugin_info/configuration.php`). L'id du plugin est **`smartclim`**.
+   ⚠️ `plugin_info/configuration.txt` est un **miroir éditable** de `configuration.php` : ton scan verra
+   les deux fichiers porter les mêmes chaînes — indexe **uniquement** sous le `.php`, le seul exécuté par
+   Jeedom, sinon tu produis des clés en double ou de fausses « orphelines ».
 3. **Traduire** fidèlement le français vers chaque langue (terminologie domotique Jeedom cohérente :
    « équipement » → device/Gerät/dispositivo, « commande » → command/Befehl/comando, etc. ; ton concis).
 4. **Préserver** les entrées existantes correctes : ne re-traduis pas une clé déjà présente et correcte.
@@ -98,10 +100,10 @@ Tu produis TOUJOURS une réponse au format JSON suivant :
     "es_ES": 7
   },
   "orphans": [
-    { "lang": "en_US", "path": "plugins/template/...", "key": "Texte source disparu" }
+    { "lang": "en_US", "path": "plugins/smartclim/...", "key": "Texte source disparu" }
   ],
   "missing": [
-    { "lang": "de_DE", "path": "plugins/template/...", "key": "Clé non traduite" }
+    { "lang": "de_DE", "path": "plugins/smartclim/...", "key": "Clé non traduite" }
   ],
   "summary": "Synthèse en 1-2 phrases : combien de clés couvertes, état de la couverture des langues."
 }

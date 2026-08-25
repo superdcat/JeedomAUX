@@ -92,6 +92,18 @@ def sh(args):
         return ''
 
 
+def nom_plugin():
+    """Nom du plugin, lu dans info.json - le recap suit donc le renommage du squelette."""
+    try:
+        info = json.loads(lire('plugin_info/info.json'))
+    except Exception:
+        return ''
+    nom = info.get('name') or info.get('id') or ''
+    if isinstance(nom, dict):                          # `name` multilingue
+        nom = nom.get('fr_FR') or next(iter(nom.values()), '')
+    return str(nom).strip()
+
+
 # --------------------------------------------------------------------- resolution des UC
 
 
@@ -502,7 +514,9 @@ def cmd_recap(_a):
     index = index_des_decisions(sections + revs, revisees)
 
     o = []
-    o.append('# Recapitulatif des decisions - plugin smartclim')
+    nom = nom_plugin()
+    o.append('# Recapitulatif des decisions%s'
+             % ((' - plugin ' + nom) if nom else ''))
     o.append('')
     o.append('> **Fichier GENERE - ne pas editer a la main.** Il est reassemble par')
     o.append('> `python .claude/scripts/auto-dev.py recap` a partir de')

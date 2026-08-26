@@ -22,6 +22,9 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 // core/php/smartclim.inc.php). require_once est idempotent : aucun cout quand
 // smartclim.inc.php l'a deja chargee juste avant.
 require_once __DIR__ . '/smartclimException.class.php';
+// Même motif : capacitesAppareil() ci-dessous appelle smartclimCapabilities::valeursLisibles().
+// require_once idempotent, sans coût quand smartclim.inc.php l'a déjà chargée.
+require_once __DIR__ . '/smartclimCapabilities.class.php';
 
 /**
  * Brique de transport "AUX Home" (cloud eu-smthome-api.aux-global.com).
@@ -446,11 +449,15 @@ class smartclimAuxHomeApi {
    * tableau normalisé (§ 6.4/§ 9 de la spec technique UC03 — le libellé "Ignoré —
    * aucun identifiant exploitable" doit rester visible à l'utilisateur dans le
    * résultat du scan, pas disparaître silencieusement ici). Seule classe du plugin qui
-   * connaît les noms de champs AUX ("mac", "deviceId", "alias", "modelId", "online") :
-   * elle n'en laisse aucun sortir.
+   * connaît les noms de champs AUX ("mac", "deviceId", "alias", "modelId", "online",
+   * "status.control", "status.running") : elle n'en laisse aucun sortir. Enrichie pour
+   * UC04 de 2 clés ADDITIVES (les 5 clés d'UC03 sont inchangées) : les trames HVAC
+   * hexadécimales brutes, nettoyées, à destination EXCLUSIVE de capacitesAppareil()
+   * ci-dessous — jamais journalisées ni persistées telles quelles (cf. spec technique
+   * UC04 § Sécurité).
    *
    * @param array $_brut
-   * @return array{mac:string, identifiant:string, nom:string, modele:string, enLigne:bool}|null
+   * @return array{mac:string, identifiant:string, nom:string, modele:string, enLigne:bool, trame_controle:string, trame_running:string}|null
    */
   private static function normaliserAppareil($_brut) {
     if (!is_array($_brut)) {
@@ -478,12 +485,118 @@ class smartclimAuxHomeApi {
     $enLigneBrut = isset($_brut['online']) ? $_brut['online'] : null;
     $enLigne = in_array($enLigneBrut, array(true, 1, '1', 'true'), true);
 
+    $statut = isset($_brut['status']) && is_array($_brut['status']) ? $_brut['status'] : array();
+    $trameControle = isset($statut['control']) ? self::nettoyerTrame($statut['control']) : '';
+    $trameRunning = isset($statut['running']) ? self::nettoyerTrame($statut['running']) : '';
+
     return array(
       'mac' => $mac,
       'identifiant' => $identifiant,
       'nom' => $nom,
       'modele' => $modele,
       'enLigne' => $enLigne,
+      'trame_controle' => $trameControle,
+      'trame_running' => $trameRunning,
+    );
+  }
+
+  /**
+   * Nettoie une trame HVAC hexadécimale brute (status.control / status.running) avant
+   * tout usage (cf. spec technique UC04 § Architecture) : hex minuscule NU, ou '' si
+   * inexploitable (non scalaire, non hexadécimal, longueur impaire, moins de 2
+   * caractères). Frontière d'assainissement au même titre que nettoyerTexteExterne() :
+   * hex minuscule uniquement, donc aucune injection de log possible.
+   *
+   * @param mixed $_valeur
+   * @return string
+   */
+  private static function nettoyerTrame($_valeur) {
+    if (!is_string($_valeur)) {
+      return '';
+    }
+    $valeur = strtolower(trim($_valeur));
+    if (strlen($valeur) < 2 || strlen($valeur) % 2 !== 0) {
+      return '';
+    }
+    if (preg_match('/^[0-9a-f]+\z/', $valeur) !== 1) {
+      return '';
+    }
+    return $valeur;
+  }
+
+  /**
+   * Longueur MINIMALE (en octets) de status.control / status.running requise par
+   * concept, avant d'en tirer une correspondance générique (cf. spec technique UC04 §
+   * Stratégie de détection) : offsets 0-based, donc une trame de longueur N couvre
+   * l'octet d'indice N-1.
+   *
+   * @return array{control:array<string,int>, running:array<string,int>}
+   */
+  private static function offsetsAuxHome() {
+    return array(
+      'control' => array(
+        smartclimCapabilities::CONCEPT_TARGET_TEMP => 13, // octets 10 ET 12 -> 13 octets minimum
+        smartclimCapabilities::CONCEPT_FAN_SPEED => 14,    // octet 13
+        smartclimCapabilities::CONCEPT_MODE => 16,         // octet 15
+        smartclimCapabilities::CONCEPT_POWER => 19,        // octet 18
+      ),
+      'running' => array(
+        smartclimCapabilities::CONCEPT_AMBIENT_TEMP => 16, // octet 15
+      ),
+    );
+  }
+
+  /**
+   * Profil de capacités GÉNÉRIQUE de CET appareil, via CE transport (cf. spec technique
+   * UC04 § Stratégie de détection). Ne lève JAMAIS, quel que soit le contenu de
+   * $_appareil (contrôles is_array/is_string) : au pire renvoie concepts => array('online').
+   * Aucun nom de champ AUX, aucun code propriétaire ne sort de cette méthode :
+   * uniquement des codes génériques (constantes smartclimCapabilities::CONCEPT_x, MODE_x, VITESSE_x).
+   *
+   * @param array $_appareil Ligne normalisée de listerAppareils()/normaliserAppareil().
+   * @return array{concepts:array<int,string>, modes:array<int,string>, vitesses:array<int,string>, temperature:array{min:int,max:int,pas:float}, source:string}
+   */
+  public static function capacitesAppareil(array $_appareil) {
+    $trameControle = isset($_appareil['trame_controle']) && is_string($_appareil['trame_controle']) ? $_appareil['trame_controle'] : '';
+    $trameRunning = isset($_appareil['trame_running']) && is_string($_appareil['trame_running']) ? $_appareil['trame_running'] : '';
+    $octetsControle = strlen($trameControle) / 2;
+    $octetsRunning = strlen($trameRunning) / 2;
+    $offsets = self::offsetsAuxHome();
+
+    $concepts = array(smartclimCapabilities::CONCEPT_ONLINE);
+    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_TARGET_TEMP]) {
+      $concepts[] = smartclimCapabilities::CONCEPT_TARGET_TEMP;
+    }
+    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_FAN_SPEED]) {
+      $concepts[] = smartclimCapabilities::CONCEPT_FAN_SPEED;
+    }
+    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_MODE]) {
+      $concepts[] = smartclimCapabilities::CONCEPT_MODE;
+    }
+    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_POWER]) {
+      $concepts[] = smartclimCapabilities::CONCEPT_POWER;
+    }
+    if ($octetsRunning >= $offsets['running'][smartclimCapabilities::CONCEPT_AMBIENT_TEMP]) {
+      $concepts[] = smartclimCapabilities::CONCEPT_AMBIENT_TEMP;
+    }
+
+    $modes = in_array(smartclimCapabilities::CONCEPT_MODE, $concepts, true)
+      ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE)
+      : array();
+    $vitesses = in_array(smartclimCapabilities::CONCEPT_FAN_SPEED, $concepts, true)
+      ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_FAN_SPEED)
+      : array();
+
+    if ($octetsControle < $offsets['control'][smartclimCapabilities::CONCEPT_TARGET_TEMP] && $octetsRunning < $offsets['running'][smartclimCapabilities::CONCEPT_AMBIENT_TEMP]) {
+      log::add('smartclim', 'debug', 'AUX Home : trames HVAC inexploitables pour la détection de capacités (control=' . $octetsControle . ' octets, running=' . $octetsRunning . ' octets)');
+    }
+
+    return array(
+      'concepts' => $concepts,
+      'modes' => $modes,
+      'vitesses' => $vitesses,
+      'temperature' => smartclimCapabilities::bornesParDefaut(),
+      'source' => smartclimCapabilities::TRANSPORT_AUX_HOME,
     );
   }
 

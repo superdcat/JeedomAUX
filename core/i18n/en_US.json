@@ -54,7 +54,10 @@
         "%d créé(s)": "%d created",
         "%d déjà connu(s)": "%d already known",
         "%d ignoré(s)": "%d ignored",
-        "%d en erreur": "%d failed"
+        "%d en erreur": "%d failed",
+        "%1$s °C à %2$s °C, pas de %3$s °C": "%1$s °C to %2$s °C, step of %3$s °C",
+        "Bornes personnalisées": "Custom limits",
+        "Valeur par défaut du transport": "Transport default value"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -106,6 +109,26 @@
         "Ukraine": "Ukraine",
         "Vatican": "Vatican City"
     },
+    "plugins/smartclim/core/class/smartclimCapabilities.class.php": {
+        "Automatique": "Automatic",
+        "Refroidissement": "Cooling",
+        "Déshumidification": "Dehumidification",
+        "Chauffage": "Heating",
+        "Ventilation": "Fan",
+        "Silencieux": "Silent",
+        "Faible": "Low",
+        "Moyen-faible": "Medium-low",
+        "Moyen": "Medium",
+        "Moyen-fort": "Medium-high",
+        "Fort": "High",
+        "Turbo": "Turbo",
+        "Disponibilité": "Availability",
+        "Marche/Arrêt": "On/Off",
+        "Mode": "Mode",
+        "Consigne de température": "Target temperature",
+        "Température ambiante": "Room temperature",
+        "Vitesse de ventilation": "Fan speed"
+    },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Command name",
         "Choisir une icône": "Choose an icon",
@@ -122,7 +145,9 @@
         "Scan en cours…": "Scan in progress…",
         "Le scan n'a pas répondu à temps": "The scan did not respond in time",
         "Erreur de communication avec le serveur Jeedom": "Error communicating with the Jeedom server",
-        "Afficher les nouveaux équipements": "Show new devices"
+        "Afficher les nouveaux équipements": "Show new devices",
+        "Aucun profil de capacités détecté — lancez un scan des climatiseurs": "No capability profile detected — run a scan of the air conditioners",
+        "Bornes de température corrigées : vérifiez les valeurs saisies": "Temperature limits corrected: check the entered values"
     },
     "plugins/smartclim/desktop/php/smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access",
@@ -169,7 +194,22 @@
         "Ajouter une commande": "Add a command",
         "Type": "Type",
         "Etat": "Status",
-        "Actions": "Actions"
+        "Actions": "Actions",
+        "Bornes de température personnalisées": "Custom temperature limits",
+        "Température minimale": "Minimum temperature",
+        "Laisser vide pour utiliser la valeur détectée": "Leave empty to use the detected value",
+        "Valeur détectée": "Detected value",
+        "Température maximale": "Maximum temperature",
+        "Pas de réglage": "Adjustment step",
+        "0,5 °C": "0.5 °C",
+        "1 °C": "1 °C",
+        "Profil de capacités détecté": "Detected capability profile",
+        "Fonctions détectées": "Detected functions",
+        "Modes disponibles": "Available modes",
+        "Vitesses de ventilation": "Fan speeds",
+        "Plage de température": "Temperature range",
+        "Détecté le": "Detected on",
+        "Transport source": "Source transport"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

@@ -1,0 +1,13 @@
+{"ts": "2026-08-25T23:57:13", "uc": "MVP/04", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T00:29:08", "uc": "MVP/04", "phase": "plan", "etat": "ok", "detail": "plan valide, advisor sans contradiction, 9 decisions journalisees", "commit": ""}
+{"ts": "2026-08-26T00:29:09", "uc": "MVP/04", "phase": "spec-tech", "etat": "ok", "detail": "spec technique ecrite, complement profil de repli", "commit": ""}
+{"ts": "2026-08-26T00:29:09", "uc": "MVP/04", "phase": "impl", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T03:11:54", "uc": "MVP/04", "phase": "verif", "etat": "reprise", "detail": "spec tech + 6 fichiers plugin modifies, aucun commit", "commit": ""}
+{"ts": "2026-08-26T03:14:23", "uc": "MVP/04", "phase": "verif", "etat": "ok", "detail": "verif-plugin OK hors i18n cibles (etape traduction), 2 chaines JS enveloppees", "commit": ""}
+{"ts": "2026-08-26T03:14:24", "uc": "MVP/04", "phase": "review", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T03:22:09", "uc": "MVP/04", "phase": "review", "etat": "ok", "detail": "tour 1: securite 0 critical/high, qualite 0 blocker/major, 3 findings mineurs", "commit": ""}
+{"ts": "2026-08-26T03:22:09", "uc": "MVP/04", "phase": "correctifs", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T03:23:25", "uc": "MVP/04", "phase": "correctifs", "etat": "ok", "detail": "3 findings mineurs corriges en un lot, verif OK hors i18n", "commit": ""}
+{"ts": "2026-08-26T03:23:25", "uc": "MVP/04", "phase": "traduction", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T03:25:19", "uc": "MVP/04", "phase": "traduction", "etat": "ok", "detail": "26 cles ajoutees par langue (en/de/es), verif-plugin sans PROBLEME", "commit": ""}
+{"ts": "2026-08-26T03:25:19", "uc": "MVP/04", "phase": "memoire", "etat": "ok", "detail": "analyse capacites + INDEX + CLAUDE.md mis a jour", "commit": ""}

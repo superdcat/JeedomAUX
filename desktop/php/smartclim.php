@@ -6,6 +6,9 @@ if (!isConnect('admin')) {
 $plugin = plugin::byId('smartclim');
 sendVarToJS('eqType', $plugin->getId());
 $eqLogics = eqLogic::byType($plugin->getId());
+// UC04 : profil de capacités de chaque équipement, DÉJÀ traduit côté serveur
+// (smartclim::profilsAffichables()) — le JS n'assemble aucun libellé, il injecte en .text().
+sendVarToJS('smartclimProfils', smartclim::profilsAffichables($eqLogics));
 ?>
 
 <div class="row row-overflow">
@@ -198,6 +201,33 @@ $eqLogics = eqLogic::byType($plugin->getId());
 									</div>
 								</div>
 							</div>
+							<legend><i class="fas fa-thermometer-half"></i> {{Bornes de température personnalisées}}</legend>
+							<div class="form-group">
+								<label class="col-sm-4 control-label">{{Température minimale}}
+									<sup><i class="fas fa-question-circle tooltips" title="{{Laisser vide pour utiliser la valeur détectée}}"></i></sup>
+								</label>
+								<div class="col-sm-6">
+									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="temp_min" placeholder="{{Valeur détectée}}">
+								</div>
+							</div>
+							<div class="form-group">
+								<label class="col-sm-4 control-label">{{Température maximale}}
+									<sup><i class="fas fa-question-circle tooltips" title="{{Laisser vide pour utiliser la valeur détectée}}"></i></sup>
+								</label>
+								<div class="col-sm-6">
+									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="temp_max" placeholder="{{Valeur détectée}}">
+								</div>
+							</div>
+							<div class="form-group">
+								<label class="col-sm-4 control-label">{{Pas de réglage}}</label>
+								<div class="col-sm-6">
+									<select class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="temp_pas">
+										<option value="">{{Valeur détectée}}</option>
+										<option value="0.5">{{0,5 °C}}</option>
+										<option value="1">{{1 °C}}</option>
+									</select>
+								</div>
+							</div>
 						</div>
 
 						<!-- Partie droite de l'onglet "Équipement" -->
@@ -209,6 +239,36 @@ $eqLogics = eqLogic::byType($plugin->getId());
 								<div class="col-sm-6">
 									<textarea class="form-control eqLogicAttr autogrow" data-l1key="comment"></textarea>
 								</div>
+							</div>
+							<legend><i class="fas fa-list"></i> {{Profil de capacités détecté}}</legend>
+							<div id="div_profilCapacites">
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Fonctions détectées}}</label>
+									<div class="col-sm-8"><span id="span_profilConcepts"></span></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Modes disponibles}}</label>
+									<div class="col-sm-8"><span id="span_profilModes"></span></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Vitesses de ventilation}}</label>
+									<div class="col-sm-8"><span id="span_profilVitesses"></span></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Plage de température}}</label>
+									<div class="col-sm-8"><span id="span_profilTemperature"></span> <small class="text-muted" id="span_profilTemperatureQualif"></small></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Détecté le}}</label>
+									<div class="col-sm-8"><span id="span_profilDetecteLe"></span></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Transport source}}</label>
+									<div class="col-sm-8"><span id="span_profilSource"></span></div>
+								</div>
+							</div>
+							<div class="form-group" id="div_profilAbsent" style="display:none;">
+								<div class="col-sm-12 text-center"><span id="span_profilAbsent"></span></div>
 							</div>
 						</div>
 					</fieldset>

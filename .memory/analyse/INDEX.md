@@ -15,9 +15,10 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-08-25** (création de
+> **Dernière mise à jour de cet index : 2026-08-26** (création de
 > `jeedom-config-plugin-et-cycle-de-vie.md` au cycle UC01, étendu de 4 sections au cycle UC02 ;
-> révision des timeouts dans `smartclim-transport-aux-home.md` § 8).
+> révision des timeouts dans `smartclim-transport-aux-home.md` § 8 ; au cycle UC04, fermeture de l'incertitude
+> « détection des capacités AUX Home » dans `smartclim-modele-abstrait-capacites.md` §§ 4.1, 4.3 et 6).
 
 ---
 
@@ -63,6 +64,7 @@
 | ⚠️ Toujours inclure `pwr` dans une commande cloud legacy | `smartclim-transport-aux-cloud-legacy.md` § 4.1 |
 | **Tables de correspondance** générique ↔ codes propriétaires (modes, vitesses, oscillations, échelles de température) — ⚠️ 3 numérotations différentes | `smartclim-modele-abstrait-capacites.md` § 3 |
 | **Profil de capacités** : comment le détecter par transport, comment le faire évoluer sans casser les scénarios | `smartclim-modele-abstrait-capacites.md` § 4 |
+| ⚠️ **Détection AUX Home tranchée (UC04)** : profil déduit de la **longueur des trames `status.*`** du scan, `getConfig` **jamais** interrogé ; clé persistée `capacites`, bornes personnalisées dans des clés **disjointes** `temp_*` | `smartclim-modele-abstrait-capacites.md` §§ 4.1 et 4.3 |
 | **Modèle eqLogic**, `logicalId` (MAC normalisée), fusion des doublons LAN/cloud, config plugin chiffrée, crons | `smartclim-architecture-jeedom.md` §§ 1-6 |
 | **Nomenclature des `logicalId` de commande** + règles de création dynamique | `smartclim-architecture-jeedom.md` § 5 |
 | **État optimiste / anti-état-périmé** après une commande | `smartclim-architecture-jeedom.md` § 7 |

@@ -189,7 +189,7 @@ capacites = {
 
 | Transport | Méthode de détection |
 |---|---|
-| `AUX_HOME` | intersection : concepts de `GET /app/getConfig?id=deviceMutex` ❓ (schéma à établir) ∩ champs décodables des trames `status.*` ∩ **retours d'écriture observés**. À défaut : profil par défaut « climatiseur générique ». |
+| `AUX_HOME` | ✅ **tranché et implémenté en UC04 du MVP (2026-08-26)** : la **longueur en octets** des trames `status.control` / `status.running` déjà renvoyées par `GET /app/user_device?getStatus=1` (aucun appel supplémentaire). Un concept n'entre dans le profil que si la trame est assez longue pour porter son octet — seuils dans `smartclimAuxHomeApi::offsetsAuxHome()`. `GET /app/getConfig?id=deviceMutex` **n'est PAS interrogé** : son schéma n'est établi par aucune source lue, et l'appeler aurait doublé le coût réseau du scan pour une donnée non vérifiable (décision `D-MVP04-01`). Les listes de **modes** et de **vitesses** viennent du catalogue du transport (`smartclimCapabilities::valeursLisibles()`), pas de l'appareil — conséquence assumée : deux appareils AUX Home affichent les mêmes listes, seule la ligne des concepts peut différer. |
 | `AUX_CLOUD_LEGACY` | ✅ **le plus fiable** : un `get` avec `params: []` renvoie **exactement** les paramètres supportés par l'appareil (`smartclim-transport-aux-cloud-legacy.md` § 4). |
 | `BROADLINK_LAN` | profil **fixe** : la trame a une disposition figée. Toutes les fonctions du § 3.4 marquées « oct. » sont supposées présentes. |
 
@@ -201,7 +201,7 @@ En mode `HEAT` certains modèles descendent plus bas ❓. Les bornes doivent res
 
 ### 4.3 Règles d'évolution du profil
 
-1. Le profil est **persisté** dans la configuration de l'eqLogic (`capabilities`, JSON) avec sa date.
+1. Le profil est **persisté** dans la configuration de l'eqLogic avec sa date. ⚠️ **Clé réelle depuis UC04 : `capacites`** (français, pas `capabilities`), structure `{version, concepts[], modes[], vitesses[], temperature{min,max,pas}, source, detecte_le}`. Les bornes **personnalisées** par l'utilisateur vivent dans des clés **séparées** (`temp_min`/`temp_max`/`temp_pas`) : c'est cette disjonction qui empêche une redétection d'écraser une personnalisation.
 2. Il est **recalculé** à chaque découverte/scan, et au premier rafraîchissement suivant un changement de
    transport.
 3. **Un profil qui s'enrichit crée des commandes ; un profil qui s'appauvrit ne supprime rien** — les
@@ -228,5 +228,5 @@ Le rapprochement inter-transports se fait sur `mac` normalisée — voir
 - [ ] Échelle de `temperature` dans l'intent AUX Home (§ 3.5).
 - [ ] Sens de `ac_vdir`/`ac_hdir` legacy (§ 3.3).
 - [ ] Noms/valeurs des intentions de confort AUX Home (§ 3.4).
-- [ ] Schéma de `deviceMutex` et dérivation d'un profil **par appareil** (§ 4.1).
+- [x] ~~Schéma de `deviceMutex` et dérivation d'un profil **par appareil**~~ — **question fermée par décision, pas par confirmation** (UC04, 2026-08-26) : l'endpoint n'est pas interrogé, le profil se déduit de la longueur des trames `status.*` (§ 4.1). À rouvrir seulement si un besoin réel apparaît — par exemple des fonctions de confort (post-mvp/04) indétectables autrement.
 - [ ] Bornes de température par mode.

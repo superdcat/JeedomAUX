@@ -96,10 +96,20 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Deux usages distincts du message** : levée par une brique de transport, il est **technique** et
   n'est jamais affiché ; levée par `smartclim::`, il est **déjà curaté en français** et affiché tel quel.
   Le passage de l'un à l'autre se fait **exclusivement** par `smartclim::messageErreurAuxHome()`.
+- **`core/class/smartclimCapabilities.class.php`** — **existe** depuis l'UC04 du MVP. **LA** table de
+  correspondance du plugin, et rien d'autre : aucune E/S, aucun `config::`, aucun `eqLogic`. Porte les
+  constantes génériques (`CONCEPT_*`, `MODE_*`, `VITESSE_*`), les bornes de température par défaut
+  (16-32 °C, pas 0,5) et leur enveloppe personnalisable (5-35 °C), les libellés français `__()` et les
+  accesseurs de lecture (`valeursLisibles()`, `versTransport()`, `depuisTransport()`, `libelle()`,
+  `libelleConcept()`, `libelleTransport()`, `conceptsConnus()`).
+  ⚠️ **La colonne `'fil' => null` est le seul mécanisme qui exclut une valeur du profil de capacités** :
+  une valeur sans correspondance de **lecture** vérifiée n'apparaît jamais dans l'interface plutôt que
+  d'y figurer approximativement. `versTransport()`/`depuisTransport()` renvoient `null` quand la
+  correspondance manque — **jamais** de repli silencieux. Ajouter une capacité, c'est éditer cette
+  table, pas ajouter un `switch`.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
   chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
-  introuvable au runtime, cf. Conventions → Autoload) : `smartclimCapabilities` (énumérations
-  génériques + tables de correspondance),
+  introuvable au runtime, cf. Conventions → Autoload) :
   `smartclimFrame` (décodage/encodage de la trame HVAC), `smartclimTransport` (sélection du transport
   actif), et les deux autres briques de transport : `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
@@ -236,6 +246,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   (identifiant cloud, IP/MAC locale), **profil de capacités**, mode de transport (AUTO/LOCAL/CLOUD),
   bornes de température. Les champs sensibles d'un **équipement** (ex. un passcode d'appairage local) se
   chiffrent via les méthodes d'instance `encrypt()`/`decrypt()`.
+  **Clés posées depuis l'UC04** : `capacites` (profil **détecté**, réécrit par chaque scan) et
+  `temp_min` / `temp_max` / `temp_pas` (bornes **personnalisées** par l'utilisateur, `''` = « non
+  personnalisé »).
+  ⚠️ **Ces deux espaces de nommage sont disjoints par construction, et doivent le rester** : c'est cette
+  séparation — pas une convention de nommage — qui garantit qu'une redétection n'écrase jamais une
+  personnalisation. Aucun code ne doit écrire une valeur détectée dans `temp_*`, ni une valeur
+  personnalisée dans `capacites`. Lecture unique par `smartclim::bornesTemperature()` (personnalisé →
+  détecté → constante), validation en **double barrière** (`smartclim::preSave()` autoritaire et
+  **silencieux** — il ne lève jamais, car il est aussi traversé par le `save()` du scan —, plus une aide
+  à la saisie côté JS).
 - **Jetons de session** : cache **chiffré** via la classe `cache` (`cache::set/byKey/delete`), purgé au
   changement d'identifiants. **En place depuis l'UC02** : clé `smartclim::session_auxhome`, **30 min**
   (durée de vie réelle du jeton inconnue jusqu'à UC08), contenu `utils::encrypt(json_encode(...))` avec

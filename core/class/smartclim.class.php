@@ -65,6 +65,16 @@ class smartclim extends eqLogic {
   const CLE_CACHE_VERROU_SCAN = 'smartclim::scan_en_cours';
   const DUREE_VERROU_SCAN = 60;
 
+  // Clés de configuration PAR ÉQUIPEMENT du profil de capacités (UC04). Espaces de
+  // nommage DISJOINTS entre le profil détecté (CLE_CONF_CAPACITES) et les bornes
+  // personnalisées (CLE_CONF_TEMP_*) : c'est cette séparation STRUCTURELLE, pas une
+  // convention, qui garantit AC3 (une redétection n'écrit JAMAIS temp_min/temp_max/temp_pas).
+  const CLE_CONF_CAPACITES = 'capacites';
+  const CLE_CONF_TEMP_MIN = 'temp_min';
+  const CLE_CONF_TEMP_MAX = 'temp_max';
+  const CLE_CONF_TEMP_PAS = 'temp_pas';
+  const VERSION_PROFIL = 1;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -94,6 +104,61 @@ class smartclim extends eqLogic {
    */
   public static function paysDisponiblesAuxHome() {
     return smartclimAuxHomeApi::paysDisponibles();
+  }
+
+  /**
+   * Enveloppe des bornes de température PERSONNALISABLES par équipement — simple
+   * délégation (CLAUDE.md § Conventions : aucun code propriétaire hors des adaptateurs
+   * de transport / tables de smartclimCapabilities).
+   *
+   * NON consommée par UC04 : la barrière AUTORITAIRE reste preSave() (normalisation
+   * serveur silencieuse), et le client (desktop/js/smartclim.js) duplique volontairement
+   * l'enveloppe 5/35 en dur. Cette méthode existe pour UC05/UC06, qui en auront besoin
+   * afin d'éviter une seconde source de vérité sur ces bornes.
+   *
+   * @return array{min:int,max:int,pasAutorises:array<int,string>}
+   */
+  public static function enveloppeTemperature() {
+    return smartclimCapabilities::enveloppeBornes();
+  }
+
+  /**
+   * Profil de capacités AFFICHABLE (chaînes déjà traduites) de plusieurs équipements,
+   * indexé par ID d'équipement — sert directement de charge à sendVarToJS() (§ Server
+   * vs Client de la spec technique UC04 : tout le rendu de texte est SERVEUR).
+   *
+   * @param smartclim[] $_eqLogics
+   * @return array<int,array>
+   */
+  public static function profilsAffichables(array $_eqLogics) {
+    $profils = array();
+    foreach ($_eqLogics as $eqLogic) {
+      if ($eqLogic instanceof smartclim) {
+        $profils[$eqLogic->getId()] = $eqLogic->profilAffichable();
+      }
+    }
+    return $profils;
+  }
+
+  /**
+   * Profil de capacités « vide » : repli UNIQUE utilisé À LA FOIS par appliquerCapacites()
+   * (fusion) et profilAffichable() (rendu), pour que ces deux méthodes ne puissent
+   * jamais diverger sur le cas « aucun profil encore détecté » — le chemin le PLUS
+   * emprunté (aucun équipement créé par UC03 ne possède configuration.capacites), cf.
+   * spec technique UC04 § « Profil de repli et ordre canonique ».
+   *
+   * @return array
+   */
+  private static function profilVide() {
+    return array(
+      'version' => self::VERSION_PROFIL,
+      'concepts' => array(),
+      'modes' => array(),
+      'vitesses' => array(),
+      'temperature' => smartclimCapabilities::bornesParDefaut(),
+      'source' => '',
+      'detecte_le' => 0,
+    );
   }
 
   /**
@@ -242,6 +307,10 @@ class smartclim extends eqLogic {
       // détecter un doublon dans la réponse cloud (jamais écrasé) et à calculer les
       // disparus (§ 5.2/§ 0 de la spec technique).
       $consommes = array();
+      // Équipements touchés par CE scan (créés ou rapprochés) : $index['tous'] est
+      // figé AVANT la boucle (indexerEquipements() plus haut) et ne contient donc pas
+      // les équipements fraîchement créés — UC04 a besoin de leur profil affichable.
+      $eqLogicsTouches = array();
 
       foreach ($appareilsBruts as $appareil) {
         $macNorm = self::normaliserMac($appareil['mac']);
@@ -256,6 +325,12 @@ class smartclim extends eqLogic {
             $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_identifiant');
             continue;
           }
+
+          // Profil de capacités GÉNÉRIQUE de cet appareil (UC04). Appel DIRECT à la
+          // brique de transport autorisé ici : smartclim:: EST le routeur (CLAUDE.md §
+          // Conventions — « aucun appel direct à une classe annexe depuis un point
+          // d'entrée externe » ne s'applique pas à ce fichier).
+          $capacites = smartclimAuxHomeApi::capacitesAppareil($appareil);
 
           $logicalId = $macNorm !== '' ? ('mac:' . $macNorm) : ('auxhome:' . $identifiant);
           $eqLogic = self::chercherEquipementExistant($macNorm, $identifiant, $index);
@@ -286,16 +361,25 @@ class smartclim extends eqLogic {
               $eqLogic->setConfiguration('modele', $appareil['modele']);
               $modifie = true;
             }
+            // Écriture conditionnée au même titre que les 2 champs ci-dessus (§
+            // Invariant UC03 à préserver, spec technique UC04) : appliquerCapacites()
+            // ne modifie/ne renvoie true QUE si le profil fusionné diverge du profil
+            // stocké — un scan strictement identique n'émet donc AUCUN save().
+            if ($eqLogic->appliquerCapacites($capacites)) {
+              $modifie = true;
+            }
             if ($modifie) {
               $eqLogic->save();
             }
             $compteurs['existants']++;
             $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'existant');
+            $eqLogicsTouches[] = $eqLogic;
           } else {
-            $eqLogic = self::creerEquipement($logicalId, $appareil, $macNorm, $index['noms']);
+            $eqLogic = self::creerEquipement($logicalId, $appareil, $macNorm, $index['noms'], $capacites);
             $consommes[] = $logicalId;
             $compteurs['crees']++;
             $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'cree');
+            $eqLogicsTouches[] = $eqLogic;
           }
         } catch (Exception $e) {
           // Même neutralisation que le catch(Throwable) ci-dessous (finding sécurité LOW
@@ -322,6 +406,9 @@ class smartclim extends eqLogic {
         'compteurs' => $compteurs,
         'appareils' => $appareilsResultat,
         'disparus' => $disparus,
+        // UC04 : profil de capacités (affichable) des équipements créés/existants
+        // touchés par ce scan, pour rafraîchir l'affichage sans recharger la page.
+        'profils' => self::profilsAffichables($eqLogicsTouches),
       );
     } finally {
       cache::delete(self::CLE_CACHE_VERROU_SCAN);
@@ -417,9 +504,10 @@ class smartclim extends eqLogic {
    * @param array $_appareil Normalisé par smartclimAuxHomeApi::normaliserAppareil().
    * @param string $_macNorm
    * @param array $_noms Noms déjà utilisés, par référence (nomUnique()).
+   * @param array $_capacites Profil de capacités détecté (smartclimAuxHomeApi::capacitesAppareil()), UC04.
    * @return smartclim
    */
-  private static function creerEquipement($_logicalId, array $_appareil, $_macNorm, array &$_noms) {
+  private static function creerEquipement($_logicalId, array $_appareil, $_macNorm, array &$_noms, array $_capacites) {
     $eqLogic = new smartclim();
     $eqLogic->setEqType_name('smartclim');
     $eqLogic->setLogicalId($_logicalId);
@@ -439,6 +527,9 @@ class smartclim extends eqLogic {
     }
     $eqLogic->setConfiguration('auxhome_device_id', $_appareil['identifiant']);
     $eqLogic->setConfiguration('modele', $_appareil['modele']);
+    // Pose le profil de capacités AVANT le save() unique (UC04) : jamais un 2e save()
+    // dédié, qui romprait l'invariant « une création = un seul save() ».
+    $eqLogic->appliquerCapacites($_capacites);
     $eqLogic->save();
 
     return $eqLogic;
@@ -852,6 +943,72 @@ class smartclim extends eqLogic {
     return min(self::INTERVALLE_MAX, max(self::INTERVALLE_MIN, (int) $valeur));
   }
 
+  /**
+   * Règle de normalisation UNIQUE d'une borne de température personnalisée (temp_min
+   * ou temp_max), appliquée à l'identique côté serveur (preSave() ci-dessous) et
+   * délibérément DUPLIQUÉE côté client (desktop/js/smartclim.js::saveEqLogic(), § "double
+   * barrière" de la spec technique UC04) : le serveur reste la barrière AUTORITAIRE,
+   * silencieuse — jamais de throw ici (§ Validation de la spec technique — preSave()
+   * est aussi traversé par le save() du scan, une exception y transformerait un
+   * équipement en erreur récurrente à chaque scan).
+   * '' (vide) signifie EXPLICITEMENT « non personnalisé » — et rien d'autre : la
+   * détection n'écrit JAMAIS la valeur détectée ici, cela rendrait la personnalisation
+   * indiscernable du défaut et gèlerait les bornes contre toute redétection future
+   * (cœur d'AC3).
+   *
+   * @param mixed $_valeur
+   * @return string Chaîne canonique ('18', '18.5') ou '' (non personnalisé).
+   */
+  private static function normaliserBorneTemperature($_valeur) {
+    if (!is_scalar($_valeur)) {
+      return '';
+    }
+    $valeur = trim(str_replace(',', '.', (string) $_valeur));
+    if ($valeur === '' || !is_numeric($valeur)) {
+      return '';
+    }
+    $enveloppe = smartclimCapabilities::enveloppeBornes();
+    $nombre = min($enveloppe['max'], max($enveloppe['min'], (float) $valeur));
+    // Chaîne canonique : entier sans décimale ('18'), sinon décimale (par ex. '18.5').
+    return (fmod($nombre, 1.0) == 0.0) ? (string) (int) $nombre : (string) $nombre;
+  }
+
+  /**
+   * Règle de normalisation UNIQUE du pas de température personnalisé (temp_pas) :
+   * SEULEMENT 3 valeurs admissibles ('' = valeur détectée, '0.5', '1' — cf.
+   * smartclimCapabilities::enveloppeBornes()['pasAutorises']), toute autre valeur
+   * devient '' (non personnalisé). Même motif de « double barrière silencieuse » que
+   * normaliserBorneTemperature() ci-dessus.
+   *
+   * @param mixed $_valeur
+   * @return string '', '0.5' ou '1'.
+   */
+  private static function normaliserPasTemperature($_valeur) {
+    if (!is_scalar($_valeur)) {
+      return '';
+    }
+    $valeur = (string) $_valeur;
+    $enveloppe = smartclimCapabilities::enveloppeBornes();
+    return in_array($valeur, $enveloppe['pasAutorises'], true) ? $valeur : '';
+  }
+
+  /**
+   * Formate un nombre décimal en notation FRANÇAISE (virgule) pour l'affichage
+   * (profilAffichable() ci-dessous) : '0.5' -> '0,5' ; '16' -> '16'. N'agit que sur la
+   * représentation, jamais sur le stockage (toujours en point décimal, cf. les 2
+   * normaliseurs ci-dessus).
+   *
+   * @param float|int|string $_valeur
+   * @return string
+   */
+  private static function formaterDegre($_valeur) {
+    $texte = rtrim(rtrim(sprintf('%.1f', (float) $_valeur), '0'), '.');
+    if ($texte === '' || $texte === '-') {
+      $texte = '0';
+    }
+    return str_replace('.', ',', $texte);
+  }
+
   /*
   * Permet de déclencher une action après modification d'une variable de configuration du plugin
   * Exemple avec la variable "param3"
@@ -889,11 +1046,216 @@ class smartclim extends eqLogic {
   }
 
   // Fonction exécutée automatiquement avant la sauvegarde (création ou mise à jour) de l'équipement
+  //
+  // Normalise les 3 bornes de température PERSONNALISÉES (UC04, § Validation de la
+  // spec technique — double barrière, serveur AUTORITAIRE et SILENCIEUX) : traversé
+  // aussi bien par l'enregistrement du formulaire d'équipement que par le save() du
+  // scan (creerEquipement()/appliquerCapacites() plus haut) — ne DOIT jamais lever, au
+  // risque de transformer un équipement à configuration douteuse en erreur récurrente
+  // à chaque scan (restauration, écriture SQL directe...).
   public function preSave() {
+    $min = self::normaliserBorneTemperature($this->getConfiguration(self::CLE_CONF_TEMP_MIN));
+    $max = self::normaliserBorneTemperature($this->getConfiguration(self::CLE_CONF_TEMP_MAX));
+    // "min >= max" remet LES DEUX à '' (§ Validation) : une paire incohérente ne doit
+    // jamais rester à moitié personnalisée.
+    if ($min !== '' && $max !== '' && (float) $min >= (float) $max) {
+      log::add('smartclim', 'warning', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : bornes de température personnalisées incohérentes (min >= max), réinitialisées');
+      $min = '';
+      $max = '';
+    }
+    $this->setConfiguration(self::CLE_CONF_TEMP_MIN, $min);
+    $this->setConfiguration(self::CLE_CONF_TEMP_MAX, $max);
+    $this->setConfiguration(self::CLE_CONF_TEMP_PAS, self::normaliserPasTemperature($this->getConfiguration(self::CLE_CONF_TEMP_PAS)));
   }
 
   // Fonction exécutée automatiquement après la sauvegarde (création ou mise à jour) de l'équipement
   public function postSave() {
+  }
+
+  /**
+   * Bornes de température EFFECTIVES de cet équipement (UC04, § Validation/Lecture de
+   * la spec technique) : valeur personnalisée valide en priorité, puis la valeur du
+   * profil détecté, puis les constantes smartclimCapabilities::TEMP_*_DEFAUT. Revalide
+   * la valeur personnalisée À LA LECTURE (double barrière) et convertit les chaînes en
+   * float à ce SEUL endroit.
+   *
+   * @return array{min:float,max:float,pas:float,personnalise:bool}
+   */
+  public function bornesTemperature() {
+    $profil = $this->getConfiguration(self::CLE_CONF_CAPACITES);
+    if (!is_array($profil)) {
+      $profil = self::profilVide();
+    }
+    $temperatureDetectee = isset($profil['temperature']) && is_array($profil['temperature']) ? $profil['temperature'] : smartclimCapabilities::bornesParDefaut();
+
+    $minPerso = self::normaliserBorneTemperature($this->getConfiguration(self::CLE_CONF_TEMP_MIN));
+    $maxPerso = self::normaliserBorneTemperature($this->getConfiguration(self::CLE_CONF_TEMP_MAX));
+    $pasPerso = self::normaliserPasTemperature($this->getConfiguration(self::CLE_CONF_TEMP_PAS));
+    $personnalise = ($minPerso !== '' || $maxPerso !== '' || $pasPerso !== '');
+
+    $min = ($minPerso !== '') ? (float) $minPerso : (float) (isset($temperatureDetectee['min']) ? $temperatureDetectee['min'] : smartclimCapabilities::TEMP_MIN_DEFAUT);
+    $max = ($maxPerso !== '') ? (float) $maxPerso : (float) (isset($temperatureDetectee['max']) ? $temperatureDetectee['max'] : smartclimCapabilities::TEMP_MAX_DEFAUT);
+    $pas = ($pasPerso !== '') ? (float) $pasPerso : (float) (isset($temperatureDetectee['pas']) ? $temperatureDetectee['pas'] : smartclimCapabilities::TEMP_PAS_DEFAUT);
+
+    return array(
+      'min' => $min,
+      'max' => $max,
+      'pas' => $pas,
+      'personnalise' => $personnalise,
+    );
+  }
+
+  /**
+   * Profil de capacités de cet équipement, PRÊT À L'AFFICHAGE (AC1/AC4 de la spec
+   * fonctionnelle UC04) : uniquement des chaînes DÉJÀ traduites, aucun code, aucune
+   * donnée d'origine externe. Sur un `capacites` absent ou corrompu (non tableau),
+   * repli sur profilVide() (même repli qu'appliquerCapacites(), § "Profil de repli et
+   * ordre canonique" de la spec technique).
+   *
+   * @return array
+   */
+  public function profilAffichable() {
+    $profil = $this->getConfiguration(self::CLE_CONF_CAPACITES);
+    if (!is_array($profil)) {
+      $profil = self::profilVide();
+    }
+    $concepts = isset($profil['concepts']) && is_array($profil['concepts']) ? $profil['concepts'] : array();
+    $modes = isset($profil['modes']) && is_array($profil['modes']) ? $profil['modes'] : array();
+    $vitesses = isset($profil['vitesses']) && is_array($profil['vitesses']) ? $profil['vitesses'] : array();
+    $source = isset($profil['source']) && is_string($profil['source']) ? $profil['source'] : '';
+    $detecteLe = isset($profil['detecte_le']) && is_numeric($profil['detecte_le']) ? (int) $profil['detecte_le'] : 0;
+    $temperatureDetectee = isset($profil['temperature']) && is_array($profil['temperature']) ? $profil['temperature'] : smartclimCapabilities::bornesParDefaut();
+
+    $libellesConcepts = array();
+    foreach ($concepts as $concept) {
+      $libelle = smartclimCapabilities::libelleConcept($concept);
+      if ($libelle !== '') {
+        $libellesConcepts[] = $libelle;
+      }
+    }
+    $libellesModes = array();
+    foreach ($modes as $mode) {
+      $libelle = smartclimCapabilities::libelle(smartclimCapabilities::CONCEPT_MODE, $mode);
+      if ($libelle !== '') {
+        $libellesModes[] = $libelle;
+      }
+    }
+    $libellesVitesses = array();
+    foreach ($vitesses as $vitesse) {
+      $libelle = smartclimCapabilities::libelle(smartclimCapabilities::CONCEPT_FAN_SPEED, $vitesse);
+      if ($libelle !== '') {
+        $libellesVitesses[] = $libelle;
+      }
+    }
+
+    $bornes = $this->bornesTemperature();
+    // Gabarit de plage de température : arguments POSITIONNELS, __() enveloppé AVANT
+    // sprintf() (§ Impact i18n de la spec technique).
+    $gabaritPlage = __('%1$s °C à %2$s °C, pas de %3$s °C', __FILE__);
+    $texteDetecte = sprintf(
+      $gabaritPlage,
+      self::formaterDegre(isset($temperatureDetectee['min']) ? $temperatureDetectee['min'] : smartclimCapabilities::TEMP_MIN_DEFAUT),
+      self::formaterDegre(isset($temperatureDetectee['max']) ? $temperatureDetectee['max'] : smartclimCapabilities::TEMP_MAX_DEFAUT),
+      self::formaterDegre(isset($temperatureDetectee['pas']) ? $temperatureDetectee['pas'] : smartclimCapabilities::TEMP_PAS_DEFAUT)
+    );
+    $texteEffectif = sprintf($gabaritPlage, self::formaterDegre($bornes['min']), self::formaterDegre($bornes['max']), self::formaterDegre($bornes['pas']));
+    // Qualificatif de la plage EFFECTIVE affichée (§ Impact i18n de la spec technique
+    // UC04) : distingue « Bornes personnalisées » (AC3) de « Valeur par défaut du
+    // transport » sans obliger le JS à porter cette logique de libellé.
+    $qualificatifTemperature = $bornes['personnalise'] ? __('Bornes personnalisées', __FILE__) : __('Valeur par défaut du transport', __FILE__);
+
+    return array(
+      'detecte' => ($source !== '' && $detecteLe !== 0),
+      'concepts' => implode(', ', $libellesConcepts),
+      'modes' => implode(', ', $libellesModes),
+      'vitesses' => implode(', ', $libellesVitesses),
+      'temperature' => $texteDetecte,
+      'effectives' => $texteEffectif,
+      'qualificatifTemperature' => $qualificatifTemperature,
+      'personnalise' => $bornes['personnalise'],
+      'source' => smartclimCapabilities::libelleTransport($source),
+      'detecteLe' => ($detecteLe !== 0) ? date('d/m/Y H:i', $detecteLe) : '',
+      'placeholderMin' => self::formaterDegre(isset($temperatureDetectee['min']) ? $temperatureDetectee['min'] : smartclimCapabilities::TEMP_MIN_DEFAUT),
+      'placeholderMax' => self::formaterDegre(isset($temperatureDetectee['max']) ? $temperatureDetectee['max'] : smartclimCapabilities::TEMP_MAX_DEFAUT),
+      'placeholderPas' => self::formaterDegre(isset($temperatureDetectee['pas']) ? $temperatureDetectee['pas'] : smartclimCapabilities::TEMP_PAS_DEFAUT),
+    );
+  }
+
+  /**
+   * Fusionne un profil de capacités DÉTECTÉ (smartclimAuxHomeApi::capacitesAppareil())
+   * avec le profil déjà STOCKÉ de cet équipement, par UNION canonique (§ "Profil de
+   * repli et ordre canonique" de la spec technique UC04 — un profil ne s'ampute
+   * JAMAIS : un scan pendant que le climatiseur est hors ligne ne peut pas faire
+   * disparaître des capacités déjà connues). N'appelle JAMAIS save() elle-même :
+   * l'appelant (scannerAuxHome()/creerEquipement()) décide du save() unique.
+   *
+   * @param array $_detecte Renvoyé par smartclimAuxHomeApi::capacitesAppareil().
+   * @return bool true si le profil stocké a changé (l'appelant doit alors save()).
+   */
+  private function appliquerCapacites(array $_detecte) {
+    $actuel = $this->getConfiguration(self::CLE_CONF_CAPACITES);
+    if (!is_array($actuel)) {
+      $actuel = self::profilVide();
+    }
+    $conceptsActuels = isset($actuel['concepts']) && is_array($actuel['concepts']) ? $actuel['concepts'] : array();
+    $modesActuels = isset($actuel['modes']) && is_array($actuel['modes']) ? $actuel['modes'] : array();
+    $vitessesActuelles = isset($actuel['vitesses']) && is_array($actuel['vitesses']) ? $actuel['vitesses'] : array();
+
+    $conceptsDetectes = isset($_detecte['concepts']) && is_array($_detecte['concepts']) ? $_detecte['concepts'] : array();
+    $modesDetectes = isset($_detecte['modes']) && is_array($_detecte['modes']) ? $_detecte['modes'] : array();
+    $vitessesDetectees = isset($_detecte['vitesses']) && is_array($_detecte['vitesses']) ? $_detecte['vitesses'] : array();
+
+    $fusion = array(
+      'version' => self::VERSION_PROFIL,
+      'concepts' => self::ordonnerParReference(array_values(array_unique(array_merge($conceptsActuels, $conceptsDetectes))), smartclimCapabilities::conceptsConnus()),
+      'modes' => self::ordonnerParReference(array_values(array_unique(array_merge($modesActuels, $modesDetectes))), smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE)),
+      'vitesses' => self::ordonnerParReference(array_values(array_unique(array_merge($vitessesActuelles, $vitessesDetectees))), smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_FAN_SPEED)),
+      // Défaut du transport, JAMAIS les bornes personnalisées (espaces de nommage
+      // disjoints, cf. CLE_CONF_TEMP_* — cœur d'AC3).
+      'temperature' => isset($_detecte['temperature']) && is_array($_detecte['temperature']) ? $_detecte['temperature'] : smartclimCapabilities::bornesParDefaut(),
+      'source' => isset($_detecte['source']) && is_string($_detecte['source']) ? $_detecte['source'] : '',
+    );
+
+    // Comparaison HORS 'detecte_le' (§ "Profil de repli et ordre canonique") : c'est ce
+    // qui garantit l'invariant UC03 « un scan strictement identique n'émet aucun save() ».
+    $actuelSansDate = $actuel;
+    unset($actuelSansDate['detecte_le']);
+    if (json_encode($fusion) === json_encode($actuelSansDate)) {
+      return false;
+    }
+
+    $fusion['detecte_le'] = time();
+    $this->setConfiguration(self::CLE_CONF_CAPACITES, $fusion);
+    return true;
+  }
+
+  /**
+   * Réordonne un ensemble de valeurs selon un ordre de RÉFÉRENCE (ex.
+   * smartclimCapabilities::conceptsConnus()) : les valeurs présentes dans l'ordre de
+   * référence viennent D'ABORD, dans CET ordre ; toute valeur de $_ensemble ABSENTE de
+   * l'ordre de référence (profil écrit par une version antérieure, valeur retirée de la
+   * table depuis) est conservée EN FIN de liste, dans son ordre d'apparition — l'union
+   * ne retire JAMAIS rien, y compris ce qu'elle ne sait plus ordonner (§ "ordre
+   * canonique" de la spec technique UC04 : sans ce réordonnancement, 2 ensembles égaux
+   * mais ordonnés différemment compareraient "différents" et réécriraient à chaque scan).
+   *
+   * @param array<int,string> $_ensemble
+   * @param array<int,string> $_ordreReference
+   * @return array<int,string>
+   */
+  private static function ordonnerParReference(array $_ensemble, array $_ordreReference) {
+    $ordonne = array();
+    foreach ($_ordreReference as $valeur) {
+      if (in_array($valeur, $_ensemble, true)) {
+        $ordonne[] = $valeur;
+      }
+    }
+    foreach ($_ensemble as $valeur) {
+      if (!in_array($valeur, $ordonne, true)) {
+        $ordonne[] = $valeur;
+      }
+    }
+    return $ordonne;
   }
 
   // Fonction exécutée automatiquement avant la suppression de l'équipement

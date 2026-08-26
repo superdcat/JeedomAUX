@@ -93,7 +93,7 @@
             "deviceId": "masque:635d7a",
             "productKey": "00010006",
             "mac": "masque:dbfea2",
-            "did": "d5000100061cd1d78bbc05",
+            "did": "masque:635d7a",
             "alias": "Clim",
             "subDevice": null,
             "sn": "",
@@ -108,14 +108,14 @@
             "address": null,
             "transport": 2,
             "customerFuncs": null,
-            "thirdDid": "1C:D1:D7:8B:BC:05",
+            "thirdDid": "masque:778f95",
             "online": true,
             "status": {
               "running": null,
               "control": "bb00070000000f0001115be000a0002000000000000000d14d",
               "type": "uart"
             },
-            "passcode": "3cc76f6ca8"
+            "passcode": "masque:b8f4d6"
           }
         ]
       }

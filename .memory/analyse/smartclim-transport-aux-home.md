@@ -332,6 +332,66 @@ jamais ce dont on doute — c'est la même règle que `'fil' => null` dans `smar
   masquées (`isVisible = 0`), **jamais supprimées** (CLAUDE.md), et **uniquement à la transition** — un
   masquage rejoué à chaque scan écraserait le choix d'un utilisateur qui l'aurait réaffichée.
 
+### 3.4 `deviceMutex` PRÉDIT le comportement de l'application — validation croisée du 2026-08-26
+
+Vitesses proposées par l'application AUX Home, relevées mode par mode sur l'unité de recette :
+
+| Mode | Vitesses proposées |
+|---|---|
+| Froid | faible, moyen, fort, **auto** |
+| Ventilation | faible, moyen, fort (**pas d'auto**) |
+| Déshumidification | **grisé** (aucune vitesse) |
+
+Ces trois observations étaient **déjà écrites** dans le dump de `deviceMutex`, et s'y lisent une par une :
+
+| Observation | Règle correspondante dans `deviceMutex` |
+|---|---|
+| déshumidification : vitesse grisée | `air_con_func.specs["2"].showMutex` contient `wind_speed` (masquer), **et** `wind_speed.toastMutex` contient `{"toast":"…dehumidify_fan_alert","value":"2","key":"air_con_func"}` (message si tentative) |
+| ventilation : pas d'auto | `air_con_func.specs["6"].controlMutex` : `{"control":[{"value":"0","key":"wind_speed"}],"value":"4","key":"wind_speed"}` — en mode 6, une vitesse à `4` (auto) est **forcée à `0`** (faible) |
+| froid : les 4 vitesses | aucune règle ne les retire en mode `1` |
+
+**Ce que cette concordance verrouille**, et ce n'est pas rien pour un protocole entièrement reverse-engineeré :
+
+- ✅ les **codes de mode** : `2` = déshumidification, `6` = ventilation, `1` = froid — confirmés par le
+  comportement observé, pas seulement par un libellé de table ;
+- ✅ les **codes de vitesse** : `4` = auto, `0` = faible — mêmes preuves ;
+- ✅ la **sémantique du moteur de règles** : `showMutex` masque, `controlMutex` force une valeur,
+  `toastMutex` interdit avec message. Trois familles, trois effets distincts, vérifiés.
+
+`deviceMutex` cesse donc d'être une curiosité : c'est une **spécification exécutable de l'IHM
+constructeur**, et elle est exacte. Toute question future du genre « telle fonction est-elle permise dans
+tel mode ? » s'y répond sans matériel.
+
+#### Conséquence : `turbo` et `silence` ne sont PAS des vitesses dans ce modèle
+
+`wind_speed.specs` liste bien 8 codes, dont `3` 静音 (silence) et `5` 强力 (puissance). Mais
+`air_con_func.controlMutex` remet à zéro des clés nommées **`silence`** et **`turbo`**, distinctes de
+`wind_speed`. Autrement dit le backend traite turbo et silence comme des **fonctions à part**, ce qui
+explique que le sélecteur de vitesses de l'application n'en propose que 4 là où la table en compte 8.
+
+⚠️ **À ne pas transformer en exclusion** : l'absence de « turbo » du sélecteur n'est pas une preuve que
+l'appareil ne sait pas faire turbo — c'est un **découpage d'IHM**. C'est exactement la différence avec
+`coolType` (§ 3.3), où le nom du champ corroborait le comportement observé. Une exclusion
+`windSpeed = 2 ⇒ pas de turbo` serait une corrélation sur un seul appareil, sans corroboration : elle
+retirerait une vitesse peut-être supportée. Non retenue.
+
+Note au passage : `VITESSE_TURBO` et `VITESSE_SILENT` sont aujourd'hui modélisées comme des **valeurs du
+concept vitesse** dans `smartclimCapabilities`. Le modèle du backend suggère plutôt des **commandes
+booléennes séparées** — piste pour le domaine post-MVP 04, pas une correction du MVP (le code d'écriture
+`wind_speed = 5` reste dans la table du transport et n'a jamais été démenti).
+
+#### Gating par mode : contrat acquis, exploitation ajournée
+
+Le plugin propose aujourd'hui toutes les vitesses du profil quel que soit le mode courant. Effets réels,
+mesurés au regard des règles ci-dessus : en déshumidification une commande de vitesse est **ignorée**, en
+ventilation `auto` est **ramenée à faible** par l'appareil. Inerte, jamais dangereux — et jamais un mode
+faux.
+
+Le corriger demanderait un profil de capacités **par mode** (aujourd'hui plat) et des commandes d'action
+conditionnelles, ce qui dépasse le MVP. Le contrat, lui, est acquis et vérifié : à traiter au domaine
+post-MVP 04, ou en UC08 si la recette le juge gênant. ⚠️ Toute exploitation de `deviceMutex` devra gérer
+le séparateur `&&` des clés composées (§ 3.2).
+
 > Le backend cousin CN utilise `GET /app/device_bindings?configId=…&getStatus=1` au lieu de
 > `/app/user_device` (`ha-aux-a-plus/README.md`). Les deux backends partagent l'espace de noms `/app/…`
 > mais **pas toutes les routes** : ne pas transposer une route de l'un à l'autre sans vérification.
@@ -548,8 +608,15 @@ l'application officielle. Conséquences pour SmartClim :
 - [ ] Sens de `feature.coolType = 0` : réversible ? → un 2ᵉ appareil, réversible de préférence.
 - [ ] Sens des index de `feature.mode` (5 déclarés pour 4 modes proposés) → un appareil déclarant une
       liste plus courte. Tant que c'est ouvert, ne rien construire dessus.
-- [ ] `feature.windSpeed` (scalaire, `2` ici) : PAS un identifiant de table (la table est unique et
-      confirmée, § 4.3). Reste à savoir ce qu'il compte — nombre de vitesses proposées par l'appareil ?
+- [ ] `feature.windSpeed` (scalaire, `2` ici) : ni un identifiant de table (elle est unique et confirmée,
+      § 4.3), ni un simple compte (l'application propose 4 vitesses en froid). Sens toujours inconnu — et
+      surtout, **pas** un candidat à l'exclusion de `turbo`, qui est une fonction séparée dans le modèle
+      du backend (§ 3.4).
+- [ ] `wind_speed = 5` (turbo) et `= 3` (silence) sont-ils acceptés en écriture, alors que
+      l'application expose ces fonctions ailleurs que dans le sélecteur de vitesses (§ 3.4) ? → recette
+      UC06, une commande suffit à trancher.
+- [ ] Gating des vitesses PAR MODE (rien en déshumidification, pas d'auto en ventilation) : contrat
+      vérifié (§ 3.4), exploitation ajournée au domaine post-MVP 04 — demande un profil par mode.
 - [ ] Table de référence des index de `feature.deviceSupport` / `appSupport` / `healthPlus` (sommaire de
       `configContent` ?) — matière du domaine post-MVP 04.
 - [ ] Schéma de `GET /app/getConfig?id=deviceMutex` et **façon d'en dériver les capacités d'un appareil

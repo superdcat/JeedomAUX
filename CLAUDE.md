@@ -162,6 +162,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   donnée serveur** (`smartclimAuxHomeApi::routesDiagnostic()`), le navigateur n'envoie **aucun** chemin.
   Un chemin **libre** (ou un rapport non masqué) exige `php_sapi_name() === 'cli'`, et tout chemin passe
   en plus une liste blanche de forme. Ne jamais relâcher l'une de ces deux gardes.
+  ⚠️ **Le masquage se fait en DEUX passes, et aucune n'est facultative** (incident du 2026-08-26) : par
+  **nom de clé** (`$clesSensibles`) puis par **valeur** (`masquerParRessemblance()`). La première seule a
+  laissé publier, sur ce dépôt **public**, l'identifiant et le mot de passe d'un climatiseur : le backend
+  republiait `deviceId` sous `did`, la MAC sous `thirdDid` et le mot de passe sous `passcode`. Une liste
+  de noms de clés ne peut pas suivre un backend tiers ; la seconde passe raisonne sur les valeurs (toute
+  chaîne contenant une valeur déjà masquée, forme normalisée). ⚠️ Ne jamais anchorer du 12-hex nu dans
+  cette passe : ce sont les **trames HVAC**, la donnée la plus utile du rapport.
+  ⚠️ **Ne jamais committer un rapport de sonde brut**, ni dans `.memory/` : `.htaccess` ne protège que
+  l'accès web d'une installation Jeedom, pas GitHub. Vérifier la sortie réelle (`grep` des champs
+  d'identifiants) avant d'annoncer qu'un rapport est partageable.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
   chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
   introuvable au runtime, cf. Conventions → Autoload) : `smartclimTransport` (sélection du transport

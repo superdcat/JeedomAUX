@@ -50,12 +50,28 @@ class smartclimDiagnostic {
   * champs susceptibles de porter les capacités — les masquer viderait le rapport de son
   * intérêt. 'alias' est le nom donné par l'utilisateur à la pièce : il aide à reconnaître
   * l'appareil dans le rapport et ne désigne pas le matériel.
+  *
+  * ⚠️ INCIDENT DU 2026-08-26, à ne pas reproduire : cette liste seule est INSUFFISANTE, et
+  * un rapport publié l'a démontré. 'mac' était bien masquée, mais la MÊME adresse MAC
+  * ressortait en clair sous 'thirdDid' (forme 1C:D1:...) et à l'intérieur de 'did'
+  * (concaténée à un préfixe) ; 'passcode' — un secret d'appairage — n'était dans aucune
+  * liste. Une liste de noms de clés ne peut pas suivre un backend tiers qui republie le
+  * même identifiant sous d'autres noms et d'autres formats. D'où la SECONDE passe,
+  * masquerParRessemblance(), qui ne raisonne plus sur les noms mais sur les valeurs. Les
+  * deux passes sont nécessaires : ne jamais en retirer une.
   */
   private static $clesSensibles = array(
-    'deviceid', 'mac', 'cookie', 'token', 'uid', 'sn', 'sncode', 'familyid', 'homeid',
-    'userid', 'username', 'nickname', 'account', 'email', 'phone', 'mobile', 'password',
+    'deviceid', 'did', 'thirddid', 'mac', 'cookie', 'token', 'accesstoken', 'refreshtoken',
+    'uid', 'sn', 'sncode', 'familyid', 'homeid', 'userid', 'username', 'nickname',
+    'account', 'email', 'phone', 'mobile', 'password', 'passcode', 'passwd', 'pwd',
     'ssid', 'bssid', 'ip', 'ipaddress', 'latitude', 'longitude', 'address', 'secret',
+    'devicesecret', 'privatekey', 'licence', 'license',
   );
+
+  // Longueur minimale d'une valeur sensible pour servir de motif à la seconde passe :
+  // en dessous, un identifiant court provoquerait des remplacements parasites partout
+  // dans le rapport.
+  const RESSEMBLANCE_MIN = 8;
 
   // Garde-fou de récursion : une charge utile d'origine externe ne dicte pas la
   // profondeur de pile du plugin.
@@ -103,6 +119,12 @@ class smartclimDiagnostic {
     $correspondances = array();
     foreach ($resultats as $resultat) {
       $donnees = self::masquerValeur($resultat['donnees'], $correspondances, $_masquer);
+      // SECONDE PASSE, sur la même charge utile : rattrape les valeurs qui échappent aux
+      // noms de clés (même identifiant republié sous un autre nom, ou dans un autre
+      // format). Elle tourne APRÈS la première, qui vient d'alimenter la table des motifs.
+      if ($_masquer) {
+        $donnees = self::masquerParRessemblance($donnees, $correspondances);
+      }
       $rapport['routes'][] = array(
         'chemin' => $resultat['chemin'],
         'role' => isset($resultat['role']) ? $resultat['role'] : '',
@@ -326,16 +348,85 @@ class smartclimDiagnostic {
         && is_scalar($sousValeur)
         && (string) $sousValeur !== '';
       if ($sensible) {
-        $brute = (string) $sousValeur;
-        if (!isset($_correspondances[$brute])) {
-          $_correspondances[$brute] = 'masque:' . substr(sha1($brute), 0, 6);
-        }
-        $sortie[$cle] = $_correspondances[$brute];
+        $sortie[$cle] = self::jeton((string) $sousValeur, $_correspondances);
         continue;
       }
       $sortie[$cle] = self::masquerValeur($sousValeur, $_correspondances, $_masquer, $_profondeur + 1);
     }
     return $sortie;
+  }
+
+  /**
+   * SECONDE PASSE de masquage, par RESSEMBLANCE de valeur et non par nom de clé. Deux
+   * règles, toutes deux nées de l'incident du 2026-08-26 (cf. $clesSensibles) :
+   *
+   * 1. Toute chaîne qui CONTIENT une valeur déjà masquée, comparaison faite sur une forme
+   *    normalisée (minuscules, séparateurs retirés). C'est ce qui attrape une MAC republiée
+   *    concaténée à un préfixe, ou ponctuée autrement.
+   * 2. Toute chaîne de FORME MAC PONCTUÉE (xx:xx:xx:xx:xx:xx ou avec des tirets), quel que
+   *    soit le nom de sa clé — un identifiant matériel n'a aucune raison de sortir en clair.
+   *
+   * ⚠️ La règle 2 ne couvre VOLONTAIREMENT pas la forme hexadécimale nue de 12 caractères :
+   * elle collisionnerait avec les trames HVAC (status.control / status.running), qui sont
+   * de l'hexadécimal nu et constituent la donnée la plus utile du rapport. Une MAC nue est
+   * déjà attrapée par la règle 1, puisque le champ 'mac' l'a enregistrée à la passe
+   * précédente. Ne pas « durcir » en anchorant du 12-hex nu : cela viderait le rapport.
+   *
+   * @param mixed $_valeur
+   * @param array $_correspondances Table valeur -> jeton, alimentée par la 1re passe et enrichie ici.
+   * @param int $_profondeur
+   * @return mixed
+   */
+  private static function masquerParRessemblance($_valeur, array &$_correspondances, $_profondeur = 0) {
+    if ($_profondeur > self::PROFONDEUR_MAX) {
+      return $_valeur;
+    }
+    if (is_array($_valeur)) {
+      $sortie = array();
+      foreach ($_valeur as $cle => $sousValeur) {
+        $sortie[$cle] = self::masquerParRessemblance($sousValeur, $_correspondances, $_profondeur + 1);
+      }
+      return $sortie;
+    }
+    if (!is_string($_valeur) || $_valeur === '' || strpos($_valeur, 'masque:') === 0) {
+      return $_valeur;
+    }
+
+    if (preg_match('/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\z/', $_valeur) === 1) {
+      return self::jeton($_valeur, $_correspondances);
+    }
+
+    $normalisee = strtolower(preg_replace('/[^0-9A-Za-z]/', '', $_valeur));
+    if ($normalisee === '') {
+      return $_valeur;
+    }
+    foreach (array_keys($_correspondances) as $sensible) {
+      $motif = strtolower(preg_replace('/[^0-9A-Za-z]/', '', (string) $sensible));
+      if (strlen($motif) < self::RESSEMBLANCE_MIN) {
+        continue;
+      }
+      if (strpos($normalisee, $motif) !== false) {
+        return self::jeton($_valeur, $_correspondances);
+      }
+    }
+    return $_valeur;
+  }
+
+  /**
+   * Jeton stable d'une valeur, enregistré dans la table des correspondances : deux
+   * occurrences de la même valeur portent le même jeton, donc les recoupements d'un
+   * rapport restent lisibles sans que le rapport désigne le matériel.
+   *
+   * @param string $_valeur
+   * @param array $_correspondances
+   * @return string
+   */
+  private static function jeton($_valeur, array &$_correspondances) {
+    $brute = (string) $_valeur;
+    if (!isset($_correspondances[$brute])) {
+      $_correspondances[$brute] = 'masque:' . substr(sha1($brute), 0, 6);
+    }
+    return $_correspondances[$brute];
   }
 
   /**

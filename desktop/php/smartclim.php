@@ -32,6 +32,14 @@ sendVarToJS('smartclimProfils', smartclim::profilsAffichables($eqLogics));
 				<br>
 				<span>{{Scanner les climatiseurs}}</span>
 			</div>
+			<!-- Sonde de diagnostic : outillage de reverse engineering, cf.
+			     smartclimAuxHomeApi::sondeDiagnostic(). Le navigateur n'envoie AUCUN
+			     paramètre — le catalogue de routes sondées est une donnée serveur. -->
+			<div class="cursor eqLogicAction" id="bt_sondeDiagnostic">
+				<i class="fas fa-stethoscope"></i>
+				<br>
+				<span>{{Sonde de diagnostic}}</span>
+			</div>
 		</div>
 		<div class="col-xs-12" id="div_scanResultat" style="display:none;">
 			<legend><i class="fas fa-search"></i> {{Résultat}}</legend>
@@ -73,6 +81,13 @@ sendVarToJS('smartclimProfils', smartclim::profilsAffichables($eqLogics));
 				</div>
 			</div>
 			<a class="btn btn-primary hidden" id="bt_scanRecharger"><i class="fas fa-sync"></i> <span></span></a>
+		</div>
+		<div class="col-xs-12" id="div_sondeResultat" style="display:none;">
+			<legend><i class="fas fa-stethoscope"></i> {{Rapport de diagnostic}}</legend>
+			<p>{{Ce rapport sert à identifier ce que le cloud AUX Home expose des capacités réelles de chaque climatiseur (par exemple : cet appareil sait-il chauffer ?). Les identifiants y sont masqués, vous pouvez le partager tel quel.}}</p>
+			<a class="btn btn-default" id="bt_sondeCopier"><i class="fas fa-copy"></i> {{Copier le rapport}}</a>
+			<a class="btn btn-default" id="bt_sondeTelecharger"><i class="fas fa-download"></i> {{Télécharger le rapport complet}}</a>
+			<pre id="pre_sondeRapport" style="max-height:420px;overflow:auto;margin-top:10px;"></pre>
 		</div>
 		<legend><i class="fas fa-table"></i> {{Mes smartclims}}</legend>
 		<?php

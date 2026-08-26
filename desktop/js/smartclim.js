@@ -257,3 +257,107 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
 $('#bt_scanRecharger').off('click').on('click', function () {
   location.reload()
 })
+
+/* Sonde de diagnostic AUX Home : outillage de reverse engineering, pas une
+   fonctionnalité utilisateur. Ce JS n'envoie AUCUN paramètre — le catalogue de routes
+   sondées vit côté serveur (smartclimAuxHomeApi::sondeDiagnostic()), le bouton ne fait
+   que le déclencher. Il affiche le texte déjà mis en forme par le serveur et garde le
+   rapport complet pour le téléchargement. */
+var smartclimSondeRapport = null
+var smartclimSondeNomFichier = 'smartclim-diagnostic.json'
+
+/* Copie sans navigator.clipboard : Jeedom est très souvent servi en http sur le réseau
+   local, or l'API Clipboard n'existe QUE dans un contexte sécurisé (https ou
+   localhost). Sans ce repli, le bouton ne ferait rien du tout sur une installation
+   domestique typique. */
+function smartclimCopierTexte(texte) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(texte).then(function () {
+      $('#div_alert').showAlert({ message: "{{Rapport copié dans le presse-papiers}}", level: 'success' })
+    }).catch(function () {
+      smartclimCopierTexteSecours(texte)
+    })
+    return
+  }
+  smartclimCopierTexteSecours(texte)
+}
+
+function smartclimCopierTexteSecours(texte) {
+  var $zone = $('<textarea></textarea>')
+  $zone.css({ position: 'fixed', top: '-1000px', left: '-1000px' }).val(texte)
+  $('body').append($zone)
+  $zone.get(0).select()
+  var copie = false
+  try {
+    copie = document.execCommand('copy')
+  } catch (e) {
+    copie = false
+  }
+  $zone.remove()
+  if (copie) {
+    $('#div_alert').showAlert({ message: "{{Rapport copié dans le presse-papiers}}", level: 'success' })
+  } else {
+    $('#div_alert').showAlert({ message: "{{Copie impossible : sélectionnez le texte du rapport et copiez-le à la main}}", level: 'warning' })
+  }
+}
+
+$('#bt_sondeDiagnostic').off('click').on('click', function () {
+  var $bouton = $(this)
+  var libelleInitial = $bouton.find('span').text()
+  $bouton.addClass('disableCard')
+  $bouton.find('span').text("{{Sonde en cours…}}")
+  $('#div_sondeResultat').hide()
+  $('#pre_sondeRapport').text('')
+  smartclimSondeRapport = null
+  $.ajax({
+    type: 'POST',
+    url: 'plugins/smartclim/core/ajax/smartclim.ajax.php',
+    data: { action: 'sonderDiagnostic' },
+    dataType: 'json',
+    /* Le serveur borne la sonde à BUDGET_SONDE (40 s) plus un login éventuel (18 s) :
+       ce délai client doit rester AU-DESSUS, sinon le navigateur abandonne un appel qui
+       allait aboutir et l'administrateur ne voit jamais de rapport. */
+    timeout: 75000,
+    global: false,
+    error: function (jqXHR, textStatus) {
+      if (textStatus === 'timeout') {
+        $('#div_alert').showAlert({ message: "{{La sonde n'a pas répondu à temps}}", level: 'danger' })
+      } else {
+        $('#div_alert').showAlert({ message: "{{Erreur de communication avec le serveur Jeedom}}", level: 'danger' })
+      }
+    },
+    success: function (data) {
+      if (data.state != 'ok') {
+        $('#div_alert').showAlert({ message: data.result, level: 'danger' })
+        return
+      }
+      smartclimSondeRapport = data.result.rapport
+      if (data.result.nomFichier) {
+        smartclimSondeNomFichier = data.result.nomFichier
+      }
+      $('#pre_sondeRapport').text(data.result.texte)
+      $('#div_sondeResultat').show()
+    }
+  }).always(function () {
+    $bouton.removeClass('disableCard')
+    $bouton.find('span').text(libelleInitial)
+  })
+})
+
+$('#bt_sondeCopier').off('click').on('click', function () {
+  smartclimCopierTexte($('#pre_sondeRapport').text())
+})
+
+$('#bt_sondeTelecharger').off('click').on('click', function () {
+  if (smartclimSondeRapport === null) {
+    return
+  }
+  var contenu = JSON.stringify(smartclimSondeRapport, null, 2)
+  var lien = document.createElement('a')
+  lien.href = URL.createObjectURL(new Blob([contenu], { type: 'application/json' }))
+  lien.download = smartclimSondeNomFichier
+  document.body.appendChild(lien)
+  lien.click()
+  document.body.removeChild(lien)
+  URL.revokeObjectURL(lien.href)
+})

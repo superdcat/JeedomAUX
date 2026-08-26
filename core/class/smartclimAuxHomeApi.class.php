@@ -69,10 +69,17 @@ class smartclimAuxHomeApi {
   const BUDGET_COMMANDE = 18;
   const RESERVE_ORDRE = 4;
 
-  // Plafond de routes sondées en un passage de diagnostic() (outillage CLI de reverse
-  // engineering, cf. cette méthode) : le script appelant accepte des chemins libres en
-  // argument, cette borne évite de marteler le backend d'un tiers.
+  // Sonde de diagnostic (sondeDiagnostic()). DIAG_MAX_ROUTES borne le NOMBRE de routes
+  // (la CLI accepte des chemins libres en argument : on ne martèle pas le backend d'un
+  // tiers depuis une boucle mal fermée). BUDGET_SONDE borne le TEMPS TOTAL, parce que la
+  // sonde est aussi lancée depuis la page admin : 11 routes x 10 s de timeout unitaire
+  // feraient une requête AJAX de presque 2 minutes, donc un navigateur qui abandonne et
+  // un administrateur qui ne voit jamais de rapport. TIMEOUT_SONDE est volontairement
+  // plus court que TIMEOUT_REQUETE : une route candidate qui n'existe pas répond vite,
+  // et aucune de ces requêtes n'est nécessaire au fonctionnement du plugin.
   const DIAG_MAX_ROUTES = 20;
+  const BUDGET_SONDE = 40;
+  const TIMEOUT_SONDE = 6;
 
   // Cache (chiffré) de la session AUX Home — cf. § 1.5 de la spec technique.
   const CLE_CACHE_SESSION = 'smartclim::session_auxhome';
@@ -1268,42 +1275,173 @@ class smartclimAuxHomeApi {
     return array('http' => $codeHttp, 'corps' => (string) $reponse);
   }
 
+  /*     * ******************* Sonde de diagnostic ********************** */
+
+  /*
+  * OUTILLAGE DE REVERSE ENGINEERING, jamais appelé par le plugin en fonctionnement.
+  *
+  * Ce que le plugin ne sait PAS faire aujourd'hui : restreindre les modes et les
+  * vitesses aux valeurs que CET appareil accepte. capacitesAppareil() déduit des trames
+  * HVAC les CONCEPTS lisibles (la longueur de status.control dit si l'octet de mode est
+  * décodable), puis retourne le CATALOGUE du transport — d'où « Chauffage » proposé sur
+  * une unité froid-seul. L'application AUX Home, elle, masque le chauffage : côté
+  * backend, l'information EXISTE. Reste à trouver OÙ (cf.
+  * .memory/analyse/smartclim-transport-aux-home.md § 3.1).
+  *
+  * La sonde répond à cette question et à celles du même genre : elle exécute des GET
+  * authentifiés sur un catalogue de routes et rend leur réponse BRUTE décodée — soit
+  * exactement ce que le reste du plugin s'interdit de laisser sortir (aucun nom de champ
+  * AUX ne franchit normalement cette classe). C'est assumé : le lecteur d'un rapport de
+  * sonde est le développeur, et le masquage comme la mise en forme sont faits par
+  * smartclimDiagnostic, pas ici.
+  */
+
   /**
-   * SONDE DE DIAGNOSTIC — outillage de reverse engineering, jamais appelée par le
-   * plugin en fonctionnement. Exécute une série de GET AUTHENTIFIÉS sur les chemins
-   * demandés et renvoie leur réponse BRUTE décodée, sans rien normaliser : c'est
-   * précisément ce que capacitesAppareil() ne peut pas faire (elle ne laisse sortir que
-   * des codes génériques), et c'est ce qu'il faut pour découvrir OÙ le backend expose
-   * les capacités RÉELLES d'un appareil donné (question ouverte de
-   * .memory/analyse/smartclim-transport-aux-home.md § 8 : le catalogue de modes du
-   * transport n'est pas le catalogue de CET appareil).
+   * Catalogue des routes sondées : modèle de chemin => rôle, en français. Deux
+   * catégories, volontairement étiquetées, parce qu'une 404 sur une « candidate » est un
+   * RÉSULTAT et non un échec :
+   * - « connue »    : route déjà utilisée par le plugin, ou déjà vérifiée en direct ;
+   * - « candidate » : hypothèse de nommage, à confirmer ou à éliminer.
    *
-   * Trois gardes, dans cet ordre :
-   * 1. CLI UNIQUEMENT (php_sapi_name). Cette méthode prend un chemin en paramètre :
-   *    atteignable depuis le web, ce serait un SSRF authentifié vers le cloud AUX. La
-   *    garde SAPI la rend inatteignable depuis core/ajax, une page desktop ou un cron
-   *    déclenché par le serveur web — aucune revue n'a alors à raisonner sur l'appelant.
-   * 2. Chemin en liste blanche par FORME : doit commencer par '/app/', jeu de caractères
-   *    restreint (ni '@', ni ':', ni '\' — donc pas de changement d'hôte via une URL
-   *    complète), et aucun '..'.
-   * 3. Plafond DIAG_MAX_ROUTES : le script CLI accepte des chemins libres en argument,
-   *    on ne martèle pas le backend d'un tiers depuis une boucle mal fermée.
+   * Les jetons deviceId et productId entre accolades sont substitués par
+   * sondeDiagnostic() à partir du PREMIER appareil renvoyé par la route de référence.
+   * Une route dont le jeton reste introuvable n'est pas sondée (et le rapport le dit).
    *
-   * 🚫 Ne journalise AUCUN corps de réponse (il contient deviceId/mac) : c'est
-   * l'appelant CLI qui masque puis écrit le rapport. executerRequete() journalise déjà
-   * la ligne 'GET <chemin> : http=...' habituelle, sans corps ni en-tête.
+   * ⚠️ C'est ce catalogue — donnée SERVEUR — qui rend la sonde exposable à la page
+   * admin : le navigateur ne choisit jamais un chemin, il déclenche le catalogue.
    *
-   * @param array<int,string> $_chemins Chemins à sonder, ex. '/app/getConfig?id=deviceMutex'.
-   * @return array<int, array{chemin:string, http:int, code:int|null, donnees:array|null, erreur:string}>
-   * @throws smartclimException Uniquement si la SESSION échoue (login) ou hors CLI : une
-   *         route en erreur est RENDUE dans le résultat, elle n'interrompt pas la sonde.
+   * @return array<string,string>
    */
-  public static function diagnostic(array $_chemins) {
-    if (php_sapi_name() !== 'cli') {
-      throw new smartclimException('diagnostic() est réservée à la ligne de commande', smartclimException::TYPE_INTERNE);
+  private static function routesDiagnostic() {
+    return array(
+      '/app/getConfig?id=deviceMutex' => "connue : table GENERIQUE des concepts (HTTP 200 vérifié) — y chercher un lien vers un modèle ou un produit",
+      '/app/getConfig?id=deviceFunction' => "candidate : fonctions par type d'appareil ?",
+      '/app/getConfig?id=deviceType' => "candidate : types d'appareil ?",
+      '/app/getConfig?id=product' => "candidate : catalogue produits ?",
+      '/app/getConfig?id=all' => "candidate : configuration complète ?",
+      '/app/device/config?deviceId={deviceId}' => "candidate : configuration DE CET appareil ?",
+      '/app/device/function?deviceId={deviceId}' => "candidate : fonctions DE CET appareil ?",
+      '/app/device/v2/config?deviceId={deviceId}' => "candidate : variante v2 ?",
+      '/app/user_device/config?deviceId={deviceId}' => "candidate : variante sous user_device ?",
+      '/app/product?productId={productId}' => "candidate : fiche produit ?",
+    );
+  }
+
+  /**
+   * Exécute la sonde complète et renvoie ses résultats BRUTS (non masqués, non mis en
+   * forme : c'est le rôle de smartclimDiagnostic).
+   *
+   * Deux passages, et cet ordre est la raison d'être de la méthode : le premier appelle
+   * la route de référence user_device (la source actuelle du plugin, rendue ici SANS
+   * normalisation — c'est justement dans ses champs jetés que le drapeau de capacités
+   * peut se cacher), le second sonde le catalogue avec le deviceId/productId qui
+   * viennent d'en être lus.
+   *
+   * GARDES (la seule surface d'attaque étant les chemins supplémentaires) :
+   * 1. Un chemin supplémentaire est une entrée LIBRE : il exige la CLI. Atteignable
+   *    depuis le web, ce paramètre serait un SSRF authentifié vers le cloud AUX. Le
+   *    catalogue, lui, est une donnée serveur : la page admin peut donc le déclencher
+   *    sans qu'aucune revue n'ait à raisonner sur l'origine du chemin.
+   * 2. Liste blanche de FORME sur tout chemin (executerSonde) : doit commencer par
+   *    '/app/', jeu de caractères restreint (ni arobase, ni deux-points, ni antislash —
+   *    donc pas de changement d'hôte via une URL complète), et aucun point-point.
+   * 3. Plafond DIAG_MAX_ROUTES et budget BUDGET_SONDE (cf. ces constantes).
+   *
+   * 🚫 Ne journalise AUCUN corps de réponse (il porte deviceId/mac). executerRequete()
+   * journalise la ligne habituelle 'GET chemin : http=...', sans corps ni en-tête.
+   *
+   * @param array<int,string> $_cheminsSupplementaires Chemins ajoutés à la main (CLI uniquement).
+   * @return array<int, array{chemin:string, role:string, http:int, code:int|null, donnees:array|null, erreur:string}>
+   * @throws smartclimException Si la SESSION échoue (login), ou si des chemins libres
+   *         sont fournis hors CLI. Une route en erreur est RENDUE dans le résultat :
+   *         elle n'interrompt jamais la sonde.
+   */
+  public static function sondeDiagnostic(array $_cheminsSupplementaires = array()) {
+    if (!empty($_cheminsSupplementaires) && php_sapi_name() !== 'cli') {
+      throw new smartclimException('Chemins de sonde libres refuses hors ligne de commande', smartclimException::TYPE_INTERNE);
     }
 
+    $echeance = microtime(true) + self::BUDGET_SONDE;
     $session = self::session();
+    $jeton = $session['jeton'];
+
+    $reference = '/app/user_device?getStatus=1';
+    $roles = array($reference => "connue : liste des appareils et trames HVAC (source actuelle du plugin), rendue ici SANS normalisation");
+    $resultats = self::executerSonde(array($reference), $jeton, $echeance);
+
+    // Identifiants du PREMIER appareil rencontré : la sonde cherche où vivent les
+    // capacités, pas à couvrir tout un parc — une route candidate qui répond pour un
+    // appareil répondra pour les autres.
+    $identifiants = array('deviceId' => '', 'productId' => '');
+    foreach ($resultats as $resultat) {
+      if (!is_array($resultat['donnees']) || !isset($resultat['donnees']['data']) || !is_array($resultat['donnees']['data'])) {
+        continue;
+      }
+      foreach ($resultat['donnees']['data'] as $appareil) {
+        if (!is_array($appareil)) {
+          continue;
+        }
+        foreach (array_keys($identifiants) as $champ) {
+          if ($identifiants[$champ] === '' && isset($appareil[$champ]) && is_scalar($appareil[$champ])) {
+            $identifiants[$champ] = (string) $appareil[$champ];
+          }
+        }
+      }
+    }
+
+    $candidats = array();
+    foreach (self::routesDiagnostic() as $modele => $role) {
+      $chemin = $modele;
+      $manquant = '';
+      foreach ($identifiants as $champ => $valeur) {
+        if (strpos($chemin, '{' . $champ . '}') === false) {
+          continue;
+        }
+        if ($valeur === '') {
+          $manquant = $champ;
+          break;
+        }
+        $chemin = str_replace('{' . $champ . '}', rawurlencode($valeur), $chemin);
+      }
+      if ($manquant !== '') {
+        // Rendue dans le rapport plutôt qu'omise : « pas sondée faute d'identifiant »
+        // est une information, l'absence de ligne serait une ambiguïté.
+        $resultats[] = array('chemin' => $modele, 'role' => $role, 'http' => 0, 'code' => null, 'donnees' => null, 'erreur' => 'non sondee : ' . $manquant . ' absent de la route de reference');
+        continue;
+      }
+      $candidats[] = $chemin;
+      $roles[$chemin] = $role;
+    }
+    foreach ($_cheminsSupplementaires as $chemin) {
+      if (is_string($chemin)) {
+        $candidats[] = $chemin;
+        $roles[$chemin] = 'passee en argument';
+      }
+    }
+
+    foreach (self::executerSonde($candidats, $jeton, $echeance) as $resultat) {
+      $resultats[] = $resultat;
+    }
+
+    foreach ($resultats as $index => $resultat) {
+      if (!isset($resultat['role'])) {
+        $resultats[$index]['role'] = isset($roles[$resultat['chemin']]) ? $roles[$resultat['chemin']] : '';
+      }
+    }
+    return $resultats;
+  }
+
+  /**
+   * Exécute une série de GET sur des chemins DÉJÀ résolus, sous liste blanche de forme,
+   * plafond de routes et budget de temps. Ne lève jamais pour une route : chaque échec
+   * devient une ligne du résultat.
+   *
+   * @param array<int,string> $_chemins
+   * @param string $_jeton Jeton de session utilisateur.
+   * @param float $_echeance Instant (microtime) au-delà duquel plus rien n'est sondé.
+   * @return array<int, array{chemin:string, http:int, code:int|null, donnees:array|null, erreur:string}>
+   */
+  private static function executerSonde(array $_chemins, $_jeton, $_echeance) {
     $resultats = array();
     $sondees = 0;
     foreach ($_chemins as $chemin) {
@@ -1324,10 +1462,19 @@ class smartclimAuxHomeApi {
         $resultats[] = array('chemin' => $chemin, 'http' => 0, 'code' => null, 'donnees' => null, 'erreur' => 'non sondée : plafond de ' . self::DIAG_MAX_ROUTES . ' routes atteint');
         continue;
       }
+      // Budget de temps GLOBAL, pas un timeout par requête : une route candidate qui
+      // pend ne doit pas priver les suivantes de leur passage, ni faire abandonner le
+      // navigateur. Une route non sondée est RENDUE comme telle — jamais omise
+      // silencieusement du rapport.
+      $restant = $_echeance - microtime(true);
+      if ($restant < 3) {
+        $resultats[] = array('chemin' => $chemin, 'http' => 0, 'code' => null, 'donnees' => null, 'erreur' => 'non sondée : budget de temps épuisé');
+        continue;
+      }
       $sondees++;
 
       try {
-        $brute = self::executerRequete('GET', $chemin, null, self::TIMEOUT_REQUETE, $session['jeton']);
+        $brute = self::executerRequete('GET', $chemin, null, (int) max(3, min(self::TIMEOUT_SONDE, $restant)), $_jeton);
         $donnees = json_decode($brute['corps'], true);
         $resultats[] = array(
           'chemin' => $chemin,

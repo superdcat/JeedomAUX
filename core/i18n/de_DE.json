@@ -60,7 +60,8 @@
         "Bornes personnalisées": "Benutzerdefinierte Grenzwerte",
         "Valeur par défaut du transport": "Standardwert des Transports",
         "Transport actif": "Aktiver Transport",
-        "Dernière mise à jour": "Letzte Aktualisierung"
+        "Dernière mise à jour": "Letzte Aktualisierung",
+        "Compte AUX Home non configuré : renseignez l'e-mail, le mot de passe et le pays": "AUX Home-Konto nicht konfiguriert: geben Sie E-Mail-Adresse, Passwort und Land ein"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albanien",
@@ -152,7 +153,11 @@
         "Erreur de communication avec le serveur Jeedom": "Fehler bei der Kommunikation mit dem Jeedom-Server",
         "Afficher les nouveaux équipements": "Neue Geräte anzeigen",
         "Aucun profil de capacités détecté — lancez un scan des climatiseurs": "Kein Funktionsprofil erkannt — starten Sie einen Scan der Klimaanlagen",
-        "Bornes de température corrigées : vérifiez les valeurs saisies": "Temperaturgrenzen korrigiert: überprüfen Sie die eingegebenen Werte"
+        "Bornes de température corrigées : vérifiez les valeurs saisies": "Temperaturgrenzen korrigiert: überprüfen Sie die eingegebenen Werte",
+        "Sonde en cours…": "Sonde läuft…",
+        "La sonde n'a pas répondu à temps": "Die Sonde hat nicht rechtzeitig geantwortet",
+        "Rapport copié dans le presse-papiers": "Bericht in die Zwischenablage kopiert",
+        "Copie impossible : sélectionnez le texte du rapport et copiez-le à la main": "Kopieren nicht möglich: markieren Sie den Berichtstext und kopieren Sie ihn manuell"
     },
     "plugins/smartclim/desktop/php/smartclim.php": {
         "401 - Accès non autorisé": "401 - Nicht autorisierter Zugriff",
@@ -214,7 +219,12 @@
         "Vitesses de ventilation": "Lüftergeschwindigkeiten",
         "Plage de température": "Temperaturbereich",
         "Détecté le": "Erkannt am",
-        "Transport source": "Quell-Transport"
+        "Transport source": "Quell-Transport",
+        "Sonde de diagnostic": "Diagnosesonde",
+        "Rapport de diagnostic": "Diagnosebericht",
+        "Ce rapport sert à identifier ce que le cloud AUX Home expose des capacités réelles de chaque climatiseur (par exemple : cet appareil sait-il chauffer ?). Les identifiants y sont masqués, vous pouvez le partager tel quel.": "Dieser Bericht zeigt, was die AUX Home-Cloud über die tatsächlichen Fähigkeiten jedes Klimageräts offenlegt (zum Beispiel: kann dieses Gerät heizen?). Die Kennungen sind maskiert, Sie können ihn unverändert weitergeben.",
+        "Copier le rapport": "Bericht kopieren",
+        "Télécharger le rapport complet": "Vollständigen Bericht herunterladen"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Nicht autorisierter Zugriff"

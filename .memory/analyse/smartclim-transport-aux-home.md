@@ -166,20 +166,24 @@ backend**. Elle se trouve donc dans un champ de `/app/user_device` que le plugin
 normalisation (candidats plausibles : `productId`, `deviceType`, un drapeau de fonctions), ou derrière
 une route non encore identifiée.
 
-**Comment trancher** (outillage livré le 2026-08-26) :
+**Comment trancher** (outillage livré le 2026-08-26) : bouton **« Sonde de diagnostic »** sur la page du
+plugin (Plugins → Confort → SmartClim). Il exécute en **GET** la route de référence puis un catalogue de
+routes candidates (`smartclimAuxHomeApi::routesDiagnostic()`) et affiche leur réponse **brute** —
+identifiants masqués par jetons stables, donc le rapport se copie et se partage tel quel. Deux sections à
+relire d'abord : le **résumé** (quelle route répond quoi) et les **pistes** (les clés dont le nom évoque
+une capacité, un modèle ou un type). Le rapport complet, charges utiles incluses, se télécharge en JSON.
+
+Pour suivre une piste (chemin non catalogué) ou lever le masquage, il faut la variante CLI — le transport
+refuse ces deux choses hors ligne de commande :
 
 ```bash
 cd /var/www/html/plugins/smartclim
-php core/php/diagnostic-auxhome.php
+php core/php/diagnostic-auxhome.php '/app/getConfig?id=uneAutrePiste'
 ```
 
-`core/php/diagnostic-auxhome.php` (CLI uniquement) sonde en **GET** la route de référence et une liste de
-routes candidates via `smartclimAuxHomeApi::diagnostic()`, et rend leur réponse **brute** — identifiants
-masqués par jetons stables, donc le rapport se partage tel quel. Les deux sections à relire d'abord :
-`resume` (quelle route répond) et `pistes` (les clés dont le nom évoque une capacité, un modèle ou un
-type). Le champ trouvé devra ensuite **remplacer** le catalogue plutôt que s'y unir : l'union de
-`smartclim::appliquerCapacites()` ne retire jamais rien, un `HEAT` déjà stocké survivrait à la
-correction — la migration du profil déjà en base fait partie du travail.
+⚠️ Le champ trouvé devra **remplacer** le catalogue, pas s'y unir : l'union de
+`smartclim::appliquerCapacites()` ne retire jamais rien, un `HEAT` déjà stocké survivrait à la correction —
+la migration du profil déjà en base, et des commandes `mode_heat` déjà créées, fait partie du travail.
 
 > Le backend cousin CN utilise `GET /app/device_bindings?configId=…&getStatus=1` au lieu de
 > `/app/user_device` (`ha-aux-a-plus/README.md`). Les deux backends partagent l'espace de noms `/app/…`

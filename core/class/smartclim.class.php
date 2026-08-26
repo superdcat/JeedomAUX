@@ -262,6 +262,39 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Lance la SONDE DE DIAGNOSTIC du transport AUX Home et renvoie son rapport, prêt à
+   * être affiché puis partagé. Appelée par la page admin (core/ajax/smartclim.ajax.php,
+   * action 'sonderDiagnostic') ; la ligne de commande passe, elle, directement par
+   * smartclimDiagnostic (elle a le droit d'ajouter des chemins et de retirer le
+   * masquage, ce qu'un navigateur n'a pas).
+   *
+   * Cette méthode n'existe que pour une raison, la même que testerConnexionAuxHome() :
+   * traduire un message TECHNIQUE de transport en message CURATÉ français
+   * (messageErreurAuxHome()), en journalisant le technique au passage. Le rapport de
+   * sonde lui-même n'est PAS curaté — c'est un rapport de développeur, il est fait pour
+   * montrer les champs bruts du backend.
+   *
+   * @return array{texte:string, rapport:array, nomFichier:string}
+   * @throws smartclimException Message d'échec curaté en français.
+   */
+  public static function sonderDiagnostic() {
+    if (!self::compteConfigure()) {
+      throw new smartclimException(__('Compte AUX Home non configuré : renseignez l\'e-mail, le mot de passe et le pays', __FILE__), smartclimException::TYPE_AUTH);
+    }
+    try {
+      $rapport = smartclimDiagnostic::rapport();
+    } catch (smartclimException $e) {
+      log::add('smartclim', 'error', 'Sonde de diagnostic AUX Home échouée (type ' . $e->getType() . ') : ' . $e->getMessage());
+      throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
+    }
+    return array(
+      'texte' => smartclimDiagnostic::texte($rapport),
+      'rapport' => $rapport,
+      'nomFichier' => 'smartclim-diagnostic-' . date('Ymd-His') . '.json',
+    );
+  }
+
+  /**
    * Efface l'e-mail et le mot de passe du compte AUX Home enregistrés, puis purge la
    * session en cache. Action VOLONTAIRE de l'utilisateur (bouton dédié de la page de
    * configuration) : ce nettoyage ne vit jamais dans smartclim_remove(), appelée à

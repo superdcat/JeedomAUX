@@ -60,7 +60,8 @@
         "Bornes personnalisées": "Custom limits",
         "Valeur par défaut du transport": "Transport default value",
         "Transport actif": "Active transport",
-        "Dernière mise à jour": "Last update"
+        "Dernière mise à jour": "Last update",
+        "Compte AUX Home non configuré : renseignez l'e-mail, le mot de passe et le pays": "AUX Home account not configured: enter the email, password and country"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -152,7 +153,11 @@
         "Erreur de communication avec le serveur Jeedom": "Error communicating with the Jeedom server",
         "Afficher les nouveaux équipements": "Show new devices",
         "Aucun profil de capacités détecté — lancez un scan des climatiseurs": "No capability profile detected — run a scan of the air conditioners",
-        "Bornes de température corrigées : vérifiez les valeurs saisies": "Temperature limits corrected: check the entered values"
+        "Bornes de température corrigées : vérifiez les valeurs saisies": "Temperature limits corrected: check the entered values",
+        "Sonde en cours…": "Probe running…",
+        "La sonde n'a pas répondu à temps": "The probe did not respond in time",
+        "Rapport copié dans le presse-papiers": "Report copied to the clipboard",
+        "Copie impossible : sélectionnez le texte du rapport et copiez-le à la main": "Copy failed: select the report text and copy it manually"
     },
     "plugins/smartclim/desktop/php/smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access",
@@ -214,7 +219,12 @@
         "Vitesses de ventilation": "Fan speeds",
         "Plage de température": "Temperature range",
         "Détecté le": "Detected on",
-        "Transport source": "Source transport"
+        "Transport source": "Source transport",
+        "Sonde de diagnostic": "Diagnostic probe",
+        "Rapport de diagnostic": "Diagnostic report",
+        "Ce rapport sert à identifier ce que le cloud AUX Home expose des capacités réelles de chaque climatiseur (par exemple : cet appareil sait-il chauffer ?). Les identifiants y sont masqués, vous pouvez le partager tel quel.": "This report identifies what the AUX Home cloud exposes about the real capabilities of each air conditioner (for example: can this unit heat?). Identifiers are masked, so you can share it as is.",
+        "Copier le rapport": "Copy the report",
+        "Télécharger le rapport complet": "Download the full report"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

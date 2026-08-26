@@ -125,6 +125,21 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   d'y figurer approximativement. `versTransport()`/`depuisTransport()` renvoient `null` quand la
   correspondance manque — **jamais** de repli silencieux. Ajouter une capacité, c'est éditer cette
   table, pas ajouter un `switch`.
+- **`core/class/smartclimDiagnostic.class.php`** — **outillage de reverse engineering**, jamais sollicité
+  par le plugin en fonctionnement : met en forme les rapports de **sonde de diagnostic** (masquage des
+  identifiants par jetons stables, section « pistes », résumé, rendu texte). Aucune E/S, aucun réseau
+  (délégué au transport), aucun `eqLogic`. Deux appelants — et c'est ce qui justifie une classe plutôt
+  qu'un bout de script : le bouton **« Sonde de diagnostic »** de `desktop/php/smartclim.php`
+  (action AJAX `sonderDiagnostic` → `smartclim::sonderDiagnostic()`) et la CLI
+  `core/php/diagnostic-auxhome.php`. Les deux doivent rendre **exactement** le même rapport.
+  Son rôle : trancher les « À confirmer » de contrat externe contre le matériel réel, le premier étant
+  **où le backend expose les capacités d'un appareil donné** (cf.
+  `.memory/analyse/smartclim-transport-aux-home.md` § 3.1 — le profil UC04 affiche aujourd'hui le
+  catalogue du transport, donc « Chauffage » sur une unité froid-seul, contre l'objectif et l'AC6 d'UC04).
+  ⚠️ **Ce qui rend la sonde exposable au web sans ouvrir un SSRF** : le **catalogue de routes est une
+  donnée serveur** (`smartclimAuxHomeApi::routesDiagnostic()`), le navigateur n'envoie **aucun** chemin.
+  Un chemin **libre** (ou un rapport non masqué) exige `php_sapi_name() === 'cli'`, et tout chemin passe
+  en plus une liste blanche de forme. Ne jamais relâcher l'une de ces deux gardes.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
   chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
   introuvable au runtime, cf. Conventions → Autoload) : `smartclimTransport` (sélection du transport
@@ -151,16 +166,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   annexes (+ constantes internes). Incluse en tête de `core/class/smartclim.class.php`, c'est elle
   qui rend les classes annexes chargeables — l'autoload du core ne le fait pas (cf. Conventions →
   Autoload Jeedom).
-- **`core/php/diagnostic-auxhome.php`** — **sonde de reverse engineering, jamais appelée par le plugin en
-  fonctionnement** : `php core/php/diagnostic-auxhome.php` (sur le Jeedom de recette) sonde en **GET** une
-  liste de routes AUX Home avec le compte configuré et rend leur réponse **brute**, identifiants masqués
-  par jetons stables — le rapport se partage tel quel. Elle existe pour trancher les « À confirmer » de
-  contrat externe contre le matériel réel, la première étant **où le backend expose les capacités d'un
-  appareil donné** (cf. `.memory/analyse/smartclim-transport-aux-home.md` § 3.1 : le profil UC04 affiche
-  aujourd'hui le catalogue du transport, donc « Chauffage » sur une unité froid-seul).
-  ⚠️ Son unique point d'entrée réseau, `smartclimAuxHomeApi::diagnostic()`, prend un **chemin en
-  paramètre** : elle est gardée par `php_sapi_name() !== 'cli'` **et** par une liste blanche de forme.
-  Ne jamais l'exposer à un point d'entrée web — ce serait un SSRF authentifié vers le cloud AUX.
+- **`core/php/diagnostic-auxhome.php`** — variante **ligne de commande** de la sonde de diagnostic (la voie
+  normale est le bouton « Sonde de diagnostic » de la page du plugin, cf. `smartclimDiagnostic` ci-dessus).
+  N'existe que pour les deux choses que la page ne peut pas faire, et que le transport **refuse hors CLI** :
+  sonder des **chemins libres** passés en argument (suivre une piste ouverte par un premier rapport) et
+  retirer le masquage (`--brut`). Aucun POST, aucune écriture en base.
+  ⚠️ Ne jamais écrire un rapport dans le dossier du plugin : sa racine n'a **pas** de `.htaccess`, le
+  fichier y serait téléchargeable **sans authentification** (même piège que `configuration.txt`).
 - **`core/template/{dashboard,mobile}/cmd.<type>.<subType>.<nom>.html`** — widgets de commande
   personnalisés (dashboard + mobile = **deux fichiers synchronisés**). ⚠️ Le dossier s'appelle bien
   `core/template/` : c'est le **nom standard Jeedom** du dossier de widgets, il ne se renomme pas avec l'id

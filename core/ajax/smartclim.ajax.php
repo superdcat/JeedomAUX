@@ -47,6 +47,14 @@ try {
         ajax::success(smartclim::scannerAuxHome());
     }
 
+    // Sonde de diagnostic (outillage de reverse engineering, cf.
+    // smartclimAuxHomeApi::sondeDiagnostic()). Aucun paramètre reçu du client : le
+    // catalogue de routes est une donnée SERVEUR, le navigateur ne fait que déclencher.
+    // C'est ce qui rend cette action exposable sans ouvrir un SSRF vers le cloud AUX.
+    if (init('action') == 'sonderDiagnostic') {
+        ajax::success(smartclim::sonderDiagnostic());
+    }
+
     // Même neutralisation que dans le catch(Throwable) plus bas (is_scalar, filtre
     // imprimable, troncature courte) : $_GET['action']/$_POST['action'] vient du CLIENT,
     // au même titre que le "message" backend neutralisé par

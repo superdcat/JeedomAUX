@@ -14,3 +14,4 @@
 {"ts": "2026-08-27T00:36:57", "uc": "MVP/08", "phase": "traduction", "etat": "ok", "detail": "14 cles x 3 langues, verif-plugin sans probleme", "commit": ""}
 {"ts": "2026-08-27T00:39:06", "uc": "MVP/08", "phase": "memoire", "etat": "ok", "detail": "analyse 8.7 execCmd + INDEX + memoire agent", "commit": ""}
 {"ts": "2026-08-27T00:39:06", "uc": "MVP/08", "phase": "commit", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-27T00:39:56", "uc": "MVP/08", "phase": "commit", "etat": "ok", "detail": "20 fichiers, version 0.14->0.15 par le hook", "commit": "5d79fff"}

@@ -16,12 +16,12 @@
       "predecesseur_implemente": true,
       "uc_dir": ".memory/auto-dev/run-20260826-2232/MVP-08",
       "existe": true,
-      "etat": "en_cours",
+      "etat": "termine",
       "phase": "commit",
-      "commit": null,
-      "detail": "analyse 8.7 execCmd + INDEX + memoire agent",
-      "maj_le": "2026-08-27T00:39:06"
+      "commit": "5d79fff",
+      "detail": "20 fichiers, version 0.14->0.15 par le hook",
+      "maj_le": "2026-08-27T00:39:56"
     }
   ],
-  "maj_le": "2026-08-27T00:39:06"
+  "maj_le": "2026-08-27T00:39:56"
 }

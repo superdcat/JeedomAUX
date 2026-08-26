@@ -185,6 +185,74 @@ php core/php/diagnostic-auxhome.php '/app/getConfig?id=uneAutrePiste'
 `smartclim::appliquerCapacites()` ne retire jamais rien, un `HEAT` déjà stocké survivrait à la correction —
 la migration du profil déjà en base, et des commandes `mode_heat` déjà créées, fait partie du travail.
 
+### 3.2 Réponse de la sonde (2026-08-26) : `feature`, dans `/app/user_device`
+
+Premier passage de sonde sur le compte de recette. **Aucune route nouvelle n'est nécessaire** : la source
+par appareil est un champ que `normaliserAppareil()` jetait, dans la réponse **déjà appelée** par le
+plugin.
+
+Éliminé, et à ne pas re-tenter :
+
+| Route sondée | Verdict |
+|---|---|
+| `GET /app/getConfig?id=deviceFunction` / `deviceType` / `product` / `all` | HTTP 200 mais **code métier `-1`** — l'identifiant de config n'existe pas. `deviceMutex` est le seul `id` connu qui réponde `200/200`. |
+| `GET /app/device/config` / `device/function` / `device/v2/config` / `user_device/config` (`?deviceId=…`) | **HTTP 404** — ces routes n'existent pas en EU. |
+| `GET /app/product?productId=…` | non sondable : **il n'y a pas de `productId`** dans `/app/user_device` (le champ voisin s'appelle `productKey`). |
+
+Ce que porte **chaque ligne** de `/app/user_device` (relevé sur l'unité de test, un **portable** —
+`modelId` = `m_00010001_portable`, `productKey` = `00010006`) :
+
+```json
+"feature": {
+  "coolType":        ["1", "0"],
+  "frenquency":      ["0", "0"],
+  "mode":            ["0,1,2,3,4", "1"],
+  "tempInterval":    ["0", "0"],
+  "roomTempDisplay": ["1", "0"],
+  "deviceSupport":   ["0,1,2,3,4,5,6,7,9,10,14,25,26,27,36", "1"],
+  "screen":          ["1", "0"],
+  "windSpeed":       ["2", "0"],
+  "appSupport":      ["0,4,5", "1"],
+  "faultSupport":    ["0", "0"],
+  "timing":          ["0", "0"],
+  "healthPlus":      ["0,3,4", "1"],
+  "voice":           ["0", "1"],
+  "tvoc":            ["1", "1"]
+}
+```
+
+Lecture, en distinguant le vérifié de l'hypothèse :
+
+- ✅ `feature` est **par appareil** : c'est la source cherchée depuis le § 3.1.
+- ✅ Chaque entrée est un **couple** `[valeur, drapeau]`. Hypothèse cohérente sur les 14 entrées
+  relevées : **drapeau `1` = la valeur est une liste** séparée par des virgules (`mode`,
+  `deviceSupport`, `appSupport`, `healthPlus`, `voice`, `tvoc`), **drapeau `0` = valeur scalaire**
+  (`coolType`, `windSpeed`, `screen`, `roomTempDisplay`…). ⚠️ À confirmer sur un 2ᵉ appareil.
+- ❓ `coolType` = `1` sur une unité **froid-seul** : candidat n° 1 comme discriminant
+  froid-seul / réversible. Le nom, la valeur et le fait que l'appareil ne chauffe pas concordent —
+  mais un seul appareil ne prouve pas le sens de `0` vs `1`.
+- ⚠️ `mode` = `0,1,2,3,4` (5 entrées) sur cette même unité froid-seul : ces valeurs ne peuvent donc
+  **pas** être les codes protocole `air_con_func` (`0` AUTO, `1` COOL, `2` DRY, `4` HEAT, `6` FAN — noter
+  l'absence de `3` et la présence de `6`). Ce sont des **index**, dans une table à identifier — très
+  probablement `deviceMutex.configContent.air_con_func.specs`, dont la sonde confirme qu'elle a
+  **5 entrées** aux clés `0, 1, 2, 4, 6`. **Ne pas coder de correspondance avant d'avoir lu ces specs.**
+- ❓ `windSpeed` = `2` (scalaire) : ressemble à un **identifiant de table** de vitesses, ce qui serait la
+  réponse à la contradiction ouverte du § 4.3 (deux tables `wind_speed` incompatibles) —
+  `deviceMutex.configContent.wind_speed.specs` a 8 entrées.
+- ❓ `deviceSupport` / `appSupport` / `healthPlus` : listes d'index de **fonctions** supportées. Leur
+  table de référence est probablement le sommaire de `deviceMutex.configContent` (60+ fonctions :
+  `sleep_mode`, `eco`, `clean`, `healthy`, `anti_fungus`, `ultra_silence`, `electric_heating`,
+  `eight_heat`, `pet_model`, `zero_wind_feeling`…). Matière pour le domaine post-MVP 04.
+- `deviceMutex` répond `configType = 1` et un `configContent` par fonction, chacun avec ses `specs` :
+  c'est bien la **table générique**, mais elle devient exploitable **couplée à `feature`** — le lien
+  manquant du § 3.1.
+
+**Reste à faire avant de coder la restriction** : lire `configContent.air_con_func.specs` et
+`configContent.wind_speed.specs` en entier pour établir `feature.mode` → codes `air_con_func`, puis
+`feature.windSpeed` → table de vitesses. Tant que ce lien n'est pas établi, `capacitesAppareil()` ne doit
+pas prétendre restreindre : une correspondance devinée produirait exactement le défaut que la table de
+`smartclimCapabilities` existe pour empêcher (« chauffe au lieu de refroidir »).
+
 > Le backend cousin CN utilise `GET /app/device_bindings?configId=…&getStatus=1` au lieu de
 > `/app/user_device` (`ha-aux-a-plus/README.md`). Les deux backends partagent l'espace de noms `/app/…`
 > mais **pas toutes les routes** : ne pas transposer une route de l'un à l'autre sans vérification.
@@ -371,10 +439,16 @@ l'application officielle. Conséquences pour SmartClim :
 - [ ] Table `wind_speed` réelle de l'appareil (8 valeurs ?) et correspondance avec l'afficheur.
 - [ ] Noms et valeurs exacts des intentions de confort (`screen`/`screen_on_off`, `sleep_mode`, `eco`,
       `clean`, `healthy`, `anti_fungus`, `ultra_silence`).
-- [ ] **Où le backend expose-t-il les capacités RÉELLES d'un appareil donné** (l'unité de test ne chauffe
-      pas, le profil affiche « Chauffage ») : champ inexploité de `/app/user_device` (`productId`,
-      `deviceType`, drapeau de fonctions), route dédiée, ou rien du tout ? → sonde
-      `php core/php/diagnostic-auxhome.php`, cf. § 3.1.
+- [x] ~~Où le backend expose-t-il les capacités RÉELLES d'un appareil donné ?~~ → **`feature`, dans
+      chaque ligne de `/app/user_device`** (sonde du 2026-08-26, § 3.2). Aucune route nouvelle.
+- [ ] Sens de `feature.coolType` (`1` sur l'unité froid-seul de recette) : est-ce LE discriminant
+      froid-seul / réversible ? → sonder un **2ᵉ appareil**, réversible de préférence (§ 3.2).
+- [ ] Correspondance `feature.mode` (index) → codes `air_con_func` : lire
+      `deviceMutex.configContent.air_con_func.specs` (5 entrées, clés 0/1/2/4/6) en entier.
+- [ ] `feature.windSpeed` (scalaire, `2` ici) est-il un **identifiant de table** de vitesses ? Ce serait
+      la réponse à la contradiction du § 4.3 → lire `configContent.wind_speed.specs` (8 entrées).
+- [ ] Table de référence des index de `feature.deviceSupport` / `appSupport` / `healthPlus` (sommaire de
+      `configContent` ?) — matière du domaine post-MVP 04.
 - [ ] Schéma de `GET /app/getConfig?id=deviceMutex` et **façon d'en dériver les capacités d'un appareil
       donné** (par `modelId` ? par un champ de `/app/user_device` ?).
 - [ ] `POST /app/device/control` (sans `v2`) existe-t-il en EU ?

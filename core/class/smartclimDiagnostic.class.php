@@ -61,6 +61,11 @@ class smartclimDiagnostic {
   // profondeur de pile du plugin.
   const PROFONDEUR_MAX = 12;
 
+  // Plafond, en caractères, d'UN extrait rendu dans le rapport texte. Le rapport texte
+  // est fait pour être copié-collé : un sous-arbre de 80 ko le rendrait inutilisable.
+  // Le rapport JSON complet, lui, n'est pas tronqué.
+  const EXTRAIT_MAX = 6000;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -106,6 +111,7 @@ class smartclimDiagnostic {
         'erreur' => $resultat['erreur'],
         'forme' => self::forme($donnees),
         'pistes' => self::pistes($donnees),
+        'extraits' => self::extraits($donnees),
         'donnees' => $donnees,
       );
     }
@@ -163,7 +169,134 @@ class smartclimDiagnostic {
     if ($aucune) {
       $lignes[] = '(aucune cle evoquant une capacite, un modele ou un type)';
     }
+
+    /*
+    * Extraits : les sous-arbres de cheminsExtraits(), rendus EN ENTIER. C'est la section
+    * qui permet de decoder, la ou 'pistes' ne fait que reperer. Tronquee par extrait
+    * (EXTRAIT_MAX), et la troncature est DITE — un extrait coupe en silence se lit comme
+    * un sous-arbre complet, et on en tirerait une correspondance fausse.
+    */
+    $lignes[] = '';
+    $lignes[] = '-- Extraits cibles (sous-arbres complets) --';
+    $aucun = true;
+    foreach ($routes as $route) {
+      if (empty($route['extraits'])) {
+        continue;
+      }
+      $aucun = false;
+      foreach ($route['extraits'] as $chemin => $sousArbre) {
+        $rendu = json_encode($sousArbre, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $rendu = ($rendu === false) ? '(non encodable en JSON)' : $rendu;
+        $lignes[] = '';
+        $lignes[] = '[' . $route['chemin'] . '] ' . $chemin;
+        if (strlen($rendu) > self::EXTRAIT_MAX) {
+          $lignes[] = substr($rendu, 0, self::EXTRAIT_MAX);
+          $lignes[] = '... TRONQUE a ' . self::EXTRAIT_MAX . ' caracteres sur ' . strlen($rendu) . ' (rapport JSON complet non tronque)';
+        } else {
+          $lignes[] = $rendu;
+        }
+      }
+    }
+    if ($aucun) {
+      $lignes[] = '(aucun des sous-arbres recherches n est present)';
+    }
+
     return implode("\n", $lignes) . "\n";
+  }
+
+  /**
+   * Sous-arbres rendus EN ENTIER dans le rapport, en notation pointée ; l'étoile
+   * correspond à n'importe quelle clé de ce niveau (une ligne d'appareil, typiquement).
+   *
+   * Pourquoi une liste explicite : la section « pistes » ne donne que le NOM et la
+   * TAILLE d'un sous-arbre, ce qui suffit à repérer un champ intéressant mais jamais à
+   * le décoder. Sonde du 2026-08-26 : 'feature' a livré 'mode' = "0,1,2,3,4" sur une
+   * unité froid-seul, valeurs qui ne peuvent PAS être les codes air_con_func
+   * (0/1/2/4/6) — donc des index, dont la table de référence est
+   * configContent.air_con_func.specs. Sans ces deux sous-arbres côte à côte dans le même
+   * rapport, la correspondance ne peut qu'être devinée, et une correspondance de mode
+   * devinée produit exactement le défaut que smartclimCapabilities existe pour empêcher.
+   *
+   * Cette liste se modifie au fil des questions ouvertes de
+   * .memory/analyse/smartclim-transport-aux-home.md § 9 — ce n'est pas un contrat figé.
+   *
+   * @return array<int,string>
+   */
+  private static function cheminsExtraits() {
+    return array(
+      // /app/user_device : le profil de capacités PAR APPAREIL (§ 3.2 de l'analyse).
+      'data.*.feature',
+      // deviceMutex : les tables de référence dans lesquelles feature indexe.
+      'data.configContent.air_con_func',
+      'data.configContent.wind_speed',
+      'data.configContent.temperature',
+      'data.configContent.on_off',
+    );
+  }
+
+  /**
+   * Résout les chemins de cheminsExtraits() dans une charge utile et renvoie les
+   * sous-arbres trouvés, indexés par leur chemin RÉSOLU (étoile remplacée par la clé
+   * réelle). Un chemin absent est simplement omis : une charge utile de route candidate
+   * n'a aucune raison de porter les mêmes branches que la route de référence.
+   *
+   * @param mixed $_donnees
+   * @return array<string,mixed>
+   */
+  private static function extraits($_donnees) {
+    $extraits = array();
+    foreach (self::cheminsExtraits() as $chemin) {
+      foreach (self::resoudreChemin($_donnees, explode('.', $chemin)) as $cheminResolu => $sousArbre) {
+        /*
+        * JSON IMBRIQUE DANS UNE CHAINE : le backend AUX Home livre 'feature' comme une
+        * chaine contenant elle-meme du JSON, pas comme un objet. Rendue telle quelle,
+        * elle arrive dans le rapport avec tous ses guillemets echappes, illisible la ou
+        * c'est justement le sous-arbre le plus important. On decode donc UNE fois, et le
+        * chemin le dit.
+        */
+        if (is_string($sousArbre) && $sousArbre !== '') {
+          $decode = json_decode($sousArbre, true);
+          if (is_array($decode)) {
+            $extraits[$cheminResolu . ' (JSON imbrique, decode)'] = $decode;
+            continue;
+          }
+        }
+        $extraits[$cheminResolu] = $sousArbre;
+      }
+    }
+    return $extraits;
+  }
+
+  /**
+   * Descend une suite de segments dans un tableau ; le segment '*' se développe en
+   * TOUTES les clés de ce niveau. Renvoie chemin résolu => valeur.
+   *
+   * @param mixed $_valeur
+   * @param array<int,string> $_segments
+   * @param string $_prefixe
+   * @return array<string,mixed>
+   */
+  private static function resoudreChemin($_valeur, array $_segments, $_prefixe = '') {
+    if (empty($_segments)) {
+      return ($_prefixe === '') ? array() : array($_prefixe => $_valeur);
+    }
+    if (!is_array($_valeur)) {
+      return array();
+    }
+    $segment = array_shift($_segments);
+    $trouves = array();
+    if ($segment === '*') {
+      foreach ($_valeur as $cle => $sousValeur) {
+        $prefixe = ($_prefixe === '') ? (string) $cle : $_prefixe . '.' . $cle;
+        $trouves = array_merge($trouves, self::resoudreChemin($sousValeur, $_segments, $prefixe));
+      }
+      return $trouves;
+    }
+    if (!array_key_exists($segment, $_valeur)) {
+      return array();
+    }
+    $prefixe = ($_prefixe === '') ? $segment : $_prefixe . '.' . $segment;
+    return self::resoudreChemin($_valeur[$segment], $_segments, $prefixe);
   }
 
   /**

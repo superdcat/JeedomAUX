@@ -348,16 +348,39 @@ $('#bt_sondeCopier').off('click').on('click', function () {
   smartclimCopierTexte($('#pre_sondeRapport').text())
 })
 
-$('#bt_sondeTelecharger').off('click').on('click', function () {
+$('#bt_sondeTelecharger').off('click').on('click', function (evenementBouton) {
   if (smartclimSondeRapport === null) {
     return
   }
+  /* ⚠️ stopPropagation() sur l'ancre de téléchargement, et ce n'est PAS une précaution :
+     le desktop Jeedom pose un intercepteur de clic DÉLÉGUÉ sur les liens (navigation
+     interne en AJAX). Sans lui, il capte le clic de l'ancre créée ici, colle '&ajax=1'
+     à l'URL blob: et tente de la charger en $.ajax — symptôme observé en recette :
+     « blob:https://<hote>/<uuid>&ajax=1 : TypeError /error: Failed to fetch », et aucun
+     fichier téléchargé. Le gestionnaire ci-dessous est posé sur l'ancre elle-même (phase
+     cible), donc il s'exécute AVANT le délégué de document et l'empêche de voir le clic.
+     L'ancre doit rester attachée au document : tous les navigateurs ne déclenchent pas un
+     téléchargement depuis un élément détaché. */
+  evenementBouton.stopPropagation()
   var contenu = JSON.stringify(smartclimSondeRapport, null, 2)
   var lien = document.createElement('a')
-  lien.href = URL.createObjectURL(new Blob([contenu], { type: 'application/json' }))
+  var urlObjet = ''
+  try {
+    urlObjet = URL.createObjectURL(new Blob([contenu], { type: 'application/json' }))
+    lien.href = urlObjet
+  } catch (e) {
+    /* Repli si Blob/createObjectURL est indisponible ou bloqué : l'URI de données
+       fonctionne partout, au prix d'un encodage complet du rapport dans l'URL. */
+    lien.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(contenu)
+  }
   lien.download = smartclimSondeNomFichier
+  lien.addEventListener('click', function (evenement) {
+    evenement.stopPropagation()
+  })
   document.body.appendChild(lien)
   lien.click()
   document.body.removeChild(lien)
-  URL.revokeObjectURL(lien.href)
+  if (urlObjet !== '') {
+    URL.revokeObjectURL(urlObjet)
+  }
 })

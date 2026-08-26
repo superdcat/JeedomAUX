@@ -11,3 +11,21 @@
 {"ts": "2026-08-26T03:23:25", "uc": "MVP/04", "phase": "traduction", "etat": "debut", "detail": "", "commit": ""}
 {"ts": "2026-08-26T03:25:19", "uc": "MVP/04", "phase": "traduction", "etat": "ok", "detail": "26 cles ajoutees par langue (en/de/es), verif-plugin sans PROBLEME", "commit": ""}
 {"ts": "2026-08-26T03:25:19", "uc": "MVP/04", "phase": "memoire", "etat": "ok", "detail": "analyse capacites + INDEX + CLAUDE.md mis a jour", "commit": ""}
+{"ts": "2026-08-26T03:26:38", "uc": "MVP/04", "phase": "commit", "etat": "ok", "detail": "17 fichiers, pluginVersion 0.5 -> 0.6 par le hook", "commit": "432432a"}
+{"ts": "2026-08-26T03:27:15", "uc": "MVP/05", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T03:28:36", "uc": "MVP/05", "phase": "plan", "etat": "ok", "detail": "AC2 non applicable journalise, planner lance", "commit": ""}
+{"ts": "2026-08-26T03:48:45", "uc": "MVP/05", "phase": "spec-tech", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T03:58:15", "uc": "MVP/05", "phase": "spec-tech", "etat": "ok", "detail": "spec technique ecrite, advisor sans blocker, 3 minor integres", "commit": ""}
+{"ts": "2026-08-26T03:58:20", "uc": "MVP/05", "phase": "impl", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T04:08:44", "uc": "MVP/05", "phase": "impl", "etat": "ok", "detail": "5 fichiers modifies, verif interne passee", "commit": ""}
+{"ts": "2026-08-26T04:08:44", "uc": "MVP/05", "phase": "verif", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T04:09:20", "uc": "MVP/05", "phase": "verif", "etat": "ok", "detail": "verif-plugin OK hors i18n differee, offsets 13/14/16/19+16 conformes", "commit": ""}
+{"ts": "2026-08-26T04:09:20", "uc": "MVP/05", "phase": "review", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T04:20:22", "uc": "MVP/05", "phase": "review", "etat": "ok", "detail": "tour1: securite aucun finding, qualite pass, 2 minor traites en finition", "commit": ""}
+{"ts": "2026-08-26T04:20:28", "uc": "MVP/05", "phase": "correctifs", "etat": "ok", "detail": "aucun finding au-dessus de la gate, 2 minor en passe de finition", "commit": ""}
+{"ts": "2026-08-26T04:20:28", "uc": "MVP/05", "phase": "traduction", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T04:27:48", "uc": "MVP/05", "phase": "traduction", "etat": "ok", "detail": "5 cles x 3 langues, verif-plugin sans probleme", "commit": ""}
+{"ts": "2026-08-26T04:28:07", "uc": "MVP/05", "phase": "memoire", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T09:18:40", "uc": "MVP/05", "phase": "memoire", "etat": "reprise", "detail": "spec tech + code + i18n modifies, aucun commit, reprise en verif finale", "commit": ""}
+{"ts": "2026-08-26T09:21:31", "uc": "MVP/05", "phase": "memoire", "etat": "ok", "detail": "analyse section 8 + INDEX deja ecrits, CLAUDE.md corrige (smartclimFrame ajournee)", "commit": ""}
+{"ts": "2026-08-26T09:21:31", "uc": "MVP/05", "phase": "commit", "etat": "debut", "detail": "", "commit": ""}

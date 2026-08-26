@@ -75,6 +75,12 @@ class smartclim extends eqLogic {
   const CLE_CONF_TEMP_PAS = 'temp_pas';
   const VERSION_PROFIL = 1;
 
+  // logicalId des 2 commandes info MÉTA (UC05) : produites par le PLUGIN, créées dans
+  // TOUS les cas (y compris sur un équipement sans profil de capacités), contrairement
+  // aux 6 commandes de CONCEPT, conditionnées à configuration.capacites['concepts'].
+  const CMD_TRANSPORT = 'transport';
+  const CMD_DERNIERE_MAJ = 'last_update';
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -380,6 +386,17 @@ class smartclim extends eqLogic {
             $compteurs['crees']++;
             $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'cree');
             $eqLogicsTouches[] = $eqLogic;
+          }
+
+          // UC05 : crée les commandes info manquantes puis pousse l'état décodé des
+          // trames déjà rapportées (aucun appel réseau nouveau). try/catch LOCAL
+          // obligatoire (spec technique UC05, § Branchement) : sans lui, une exception
+          // remonterait au catch par appareil ci-dessous, qui ajouterait une SECONDE
+          // ligne 'erreur' pour un appareil déjà compté 'cree'/'existant'.
+          try {
+            $eqLogic->appliquerEtat(smartclimAuxHomeApi::etatAppareil($appareil));
+          } catch (Throwable $t) {
+            log::add('smartclim', 'error', 'AUX Home : application de l\'état impossible (identifiant=' . $identifiant . ') : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
           }
         } catch (Exception $e) {
           // Même neutralisation que le catch(Throwable) ci-dessous (finding sécurité LOW
@@ -777,6 +794,99 @@ class smartclim extends eqLogic {
     return __('Échec de la connexion — vérifiez vos identifiants et le pays sélectionné', __FILE__);
   }
 
+  /**
+   * Définition Jeedom des commandes info (UC05, § Signatures de la spec technique) :
+   * logicalId => nom/subType/unité/generic_type/historisation/ordre/meta. La CLÉ EST le
+   * logicalId, et pour les 6 concepts elle est identique au code de concept d'UC04
+   * (rien à renommer). 'meta' => true : commande produite par le PLUGIN (transport,
+   * horodatage), créée indépendamment du profil de capacités.
+   *
+   * ⚠️ 'generic_type' laissé VIDE sur ambient_temp (AC11 — cf. § « AC11 en détail » de
+   * la spec technique, D-MVP05-04) : poser un generic_type de température y enrôlerait
+   * automatiquement la valeur dans les intégrations tierces (thermostat, Alexa, Google)
+   * comme une sonde de pièce fiable, ce que l'avertissement d'AC11 met précisément en
+   * garde. Seul 'online' porte un generic_type ('ONLINE'). 'unite' reste posée (°C),
+   * seul l'ENRÔLEMENT AUTOMATIQUE via generic_type est visé par AC11.
+   *
+   * @return array<string, array{name:string, subType:string, unite:string, generic_type:string, isHistorized:int, ordre:int, meta:bool}>
+   */
+  private static function definitionsCommandesInfo() {
+    return array(
+      smartclimCapabilities::CONCEPT_ONLINE => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_ONLINE),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => 'ONLINE',
+        'isHistorized' => 0,
+        'ordre' => 0,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_POWER => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_POWER),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 1,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_MODE => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_MODE),
+        'subType' => 'string',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 2,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_TARGET_TEMP => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_TARGET_TEMP),
+        'subType' => 'numeric',
+        'unite' => '°C',
+        'generic_type' => '',
+        'isHistorized' => 1,
+        'ordre' => 3,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_AMBIENT_TEMP => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_AMBIENT_TEMP),
+        'subType' => 'numeric',
+        'unite' => '°C',
+        'generic_type' => '',
+        'isHistorized' => 1,
+        'ordre' => 4,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_FAN_SPEED => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_FAN_SPEED),
+        'subType' => 'string',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 5,
+        'meta' => false,
+      ),
+      self::CMD_TRANSPORT => array(
+        'name' => __('Transport actif', __FILE__),
+        'subType' => 'string',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 6,
+        'meta' => true,
+      ),
+      self::CMD_DERNIERE_MAJ => array(
+        'name' => __('Dernière mise à jour', __FILE__),
+        'subType' => 'string',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 7,
+        'meta' => true,
+      ),
+    );
+  }
+
   /*
   * Fonction exécutée automatiquement toutes les minutes par Jeedom
   public static function cron() {}
@@ -1069,7 +1179,20 @@ class smartclim extends eqLogic {
   }
 
   // Fonction exécutée automatiquement après la sauvegarde (création ou mise à jour) de l'équipement
+  //
+  // UC05 : garantit l'existence des commandes info (§ « Pourquoi postSave() ET
+  // appliquerEtat() appellent tous deux creerCommandesInfo() » de la spec technique —
+  // sans ce chemin, un équipement déjà pourvu de son profil UC04 ne redéclencherait
+  // jamais save() à un scan identique, donc jamais postSave(), donc aucune commande ne
+  // serait créée au déploiement d'UC05). try/catch(Throwable) : postSave() est traversé
+  // par le save() du scan, il ne doit jamais transformer un équipement en erreur
+  // récurrente.
   public function postSave() {
+    try {
+      $this->creerCommandesInfo();
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Création des commandes info impossible après sauvegarde (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+    }
   }
 
   /**
@@ -1256,6 +1379,135 @@ class smartclim extends eqLogic {
       }
     }
     return $ordonne;
+  }
+
+  /**
+   * Crée les commandes info MANQUANTES depuis configuration.capacites['concepts']
+   * (UC05, § Signatures de la spec technique). IDEMPOTENTE et NON DESTRUCTIVE : une
+   * commande existante n'est jamais relue, jamais modifiée, jamais supprimée
+   * (AC7/AC9) — ses propriétés ne sont posées QU'À LA CRÉATION. try/catch PAR COMMANDE :
+   * ne lève JAMAIS.
+   *
+   * GATING, à lire précisément : la condition « profil absent ou sans concept » ne
+   * s'applique QU'AUX 6 COMMANDES DE CONCEPT. Les 2 commandes MÉTA ('transport',
+   * 'last_update', marquées 'meta' => true) sont créées dans TOUS les cas, y compris sur
+   * un équipement sans profil de capacités.
+   *
+   * COÛT : les commandes déjà présentes sont lues en UN SEUL appel getCmd(null, null)
+   * (indexé par logicalId), pas par un cmd::byEqLogicIdAndLogicalId() par concept —
+   * cette méthode est appelée à chaque cycle de scan (postSave()/appliquerEtat()) puis à
+   * chaque cycle cron (UC07), pour chaque équipement.
+   *
+   * @return int Nombre de commandes créées.
+   */
+  private function creerCommandesInfo() {
+    $profil = $this->getConfiguration(self::CLE_CONF_CAPACITES);
+    $concepts = (is_array($profil) && isset($profil['concepts']) && is_array($profil['concepts'])) ? $profil['concepts'] : array();
+
+    $existantes = array();
+    foreach ($this->getCmd(null, null) as $cmdExistante) {
+      $existantes[$cmdExistante->getLogicalId()] = true;
+    }
+
+    $crees = 0;
+    foreach (self::definitionsCommandesInfo() as $logicalId => $definition) {
+      if (isset($existantes[$logicalId])) {
+        continue;
+      }
+      if (!$definition['meta'] && !in_array($logicalId, $concepts, true)) {
+        continue;
+      }
+      if ($definition['name'] === '') {
+        // libelleCommande() renvoie '' pour un concept inconnu : cmd::save() lèverait
+        // sur un name vide, on ne crée alors AUCUNE commande (spec technique § Validation).
+        continue;
+      }
+      try {
+        $cmd = new smartclimCmd();
+        $cmd->setEqLogic_id($this->getId());
+        $cmd->setLogicalId($logicalId);
+        $cmd->setName($definition['name']);
+        $cmd->setType('info');
+        $cmd->setSubType($definition['subType']);
+        if ($definition['unite'] !== '') {
+          $cmd->setUnite($definition['unite']);
+        }
+        if ($definition['generic_type'] !== '') {
+          $cmd->setGeneric_type($definition['generic_type']);
+        }
+        $cmd->setIsVisible(1);
+        $cmd->setIsHistorized($definition['isHistorized']);
+        $cmd->setOrder($definition['ordre']);
+        // Volontairement AUCUN minValue/maxValue posé sur les commandes numériques (spec
+        // technique § Validation) : cmd::event() jette silencieusement une valeur hors
+        // bornes, des bornes personnalisées feraient disparaître sans un mot une lecture
+        // réelle hors plage. Les bornes appartiennent à la commande action d'UC06.
+        $cmd->save();
+        $crees++;
+      } catch (Throwable $t) {
+        log::add('smartclim', 'error', 'Création de la commande info "' . $logicalId . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      }
+    }
+    return $crees;
+  }
+
+  /**
+   * Applique un état NORMALISÉ (clés = codes de concept, cf.
+   * smartclimAuxHomeApi::etatAppareil()) aux commandes info : garantit d'abord
+   * l'existence des commandes (creerCommandesInfo()), puis pousse les seules clés
+   * PRÉSENTES via checkAndUpdateCmd(). Une clé absente laisse la commande — et son
+   * valueDate — intacte (mécanisme d'AC10 : « valeur non confirmable = commande non
+   * touchée »). SURFACE D'APPEL d'UC06 (état optimiste : un état partiel est un cas
+   * nominal) et d'UC07 (cron).
+   *
+   * AC6 : l'horodatage 'last_update' ne bouge QUE si au moins un checkAndUpdateCmd() de
+   * CONCEPT (les 6 de smartclimCapabilities::conceptsConnus(), hors les 2 commandes
+   * méta) a renvoyé true — contrat vérifié du core : checkAndUpdateCmd() renvoie true
+   * SI ET SEULEMENT SI il a émis un event(). Deux cycles sans changement laissent donc
+   * 'last_update' et son valueDate figés : l'utilisateur lit l'âge RÉEL de la donnée.
+   *
+   * ⚠️ Limite connue et assumée : le contrat du core est event() émis si
+   * execCmd() !== formatValue($value) OU si repeatEventManagement == 'always'. Un
+   * utilisateur qui règle une commande info sur « toujours notifier » fera repartir
+   * 'last_update' à chaque cycle, même sans changement réel — comportement Jeedom natif,
+   * hors du contrôle du plugin (le contourner écraserait un réglage utilisateur, ce
+   * qu'AC7 interdit).
+   *
+   * Il n'existe AUCUN horodatage fourni par le cloud dans /app/user_device :
+   * 'last_update' est donc, par construction, la date à laquelle LE PLUGIN a constaté un
+   * changement — une borne INFÉRIEURE de la fraîcheur, jamais l'instant réel du
+   * changement sur l'appareil (cohérent avec l'avertissement d'AC11).
+   *
+   * @param array $_etat Renvoyé par smartclimAuxHomeApi::etatAppareil() (ou un état
+   *   PARTIEL construit par UC06).
+   * @return bool true si au moins une valeur de CONCEPT a changé.
+   */
+  public function appliquerEtat(array $_etat) {
+    $this->creerCommandesInfo();
+
+    $change = false;
+    // conceptsConnus() = les 6 concepts du modèle générique, 'online' INCLUS : une
+    // bascule en ligne / hors ligne est un changement d'état réel, elle compte donc
+    // pour 'last_update' au même titre que le mode ou la consigne.
+    foreach (smartclimCapabilities::conceptsConnus() as $concept) {
+      if (!array_key_exists($concept, $_etat)) {
+        continue;
+      }
+      if ($this->checkAndUpdateCmd($concept, $_etat[$concept])) {
+        $change = true;
+      }
+    }
+
+    // Littéral figé (le transport AUX Home est le seul actif au MVP) : "change" au
+    // premier cycle uniquement, hors de l'agrégation ci-dessus (spec technique § AC6 en
+    // détail).
+    $this->checkAndUpdateCmd(self::CMD_TRANSPORT, smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_AUX_HOME));
+
+    if ($change) {
+      $this->checkAndUpdateCmd(self::CMD_DERNIERE_MAJ, date('d/m/Y H:i:s'));
+    }
+
+    return $change;
   }
 
   // Fonction exécutée automatiquement avant la suppression de l'équipement

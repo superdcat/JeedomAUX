@@ -217,6 +217,29 @@ class smartclimCapabilities {
   }
 
   /**
+   * Nom de la commande info d'un concept, destiné à cmd::setName() (spec technique UC05
+   * § Signatures). Aucun des caractères supprimés par cleanComponanteName() du core
+   * (`& # ] [ % \ / ' " *`) : « Marche/Arrêt » y deviendrait « MarcheArrêt » — d'où
+   * « Marche-Arrêt » ici, alors que libelleConcept() (destiné à une PHRASE, pas à un nom
+   * de composant) garde « Marche/Arrêt ». Chaîne vide si le concept est inconnu :
+   * l'appelant (creerCommandesInfo()) ne crée alors AUCUNE commande.
+   *
+   * @param string $_concept
+   * @return string
+   */
+  public static function libelleCommande($_concept) {
+    $libelles = array(
+      self::CONCEPT_ONLINE => __('Disponibilité', __FILE__),
+      self::CONCEPT_POWER => __('Marche-Arrêt', __FILE__),
+      self::CONCEPT_MODE => __('Mode', __FILE__),
+      self::CONCEPT_TARGET_TEMP => __('Consigne', __FILE__),
+      self::CONCEPT_AMBIENT_TEMP => __('Température ambiante', __FILE__),
+      self::CONCEPT_FAN_SPEED => __('Vitesse de ventilation', __FILE__),
+    );
+    return isset($libelles[$_concept]) ? $libelles[$_concept] : '';
+  }
+
+  /**
    * Libellé du transport (nom de marque, SANS __() — cf. spec technique § Impact i18n).
    * Chaîne vide si inconnu.
    *

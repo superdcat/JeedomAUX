@@ -117,3 +117,98 @@ navigateur) → il peut récupérer la ressource externe et la relayer.
   aucun proxy, aucune dépendance, mais moins visuel. Décider selon le besoin.
 - Voir aussi `jeedom-panel-page-menu.md` § 4 : dans une **page-panneau** (rendue serveur), on peut embarquer
   l'image externe en **`data:` URI inline** (autorisé par la CSP), sans endpoint proxy.
+
+## 8. Créer et alimenter des commandes INFO : les contrats du core à connaître
+
+> Vérifié dans la source du core (V4-stable) au cycle UC05 du MVP, en écrivant les commandes info du
+> plugin. Ces cinq points sont **génériques à tout plugin Jeedom** et coûteux à redécouvrir : chacun
+> échoue **silencieusement**, sans erreur ni log côté plugin.
+
+### 8.1 ⚠️ `cmd::setName()` ampute silencieusement le nom
+
+`cmd::setName()` passe la valeur par `cleanComponanteName()` (`core/php/utils.inc.php`), qui **supprime**
+les caractères `& # ] [ % \ / ' " *` puis compacte les espaces.
+
+- « Marche/Arrêt » devient **« MarcheArrêt »**, « Qualité de l'air » devient **« Qualité de lair »**.
+- Aucune erreur, aucun log : le nom amputé est simplement enregistré.
+- **Conséquence pour l'i18n** : un nom de commande traduit subit le même traitement. La contrainte
+  s'applique donc aux **traductions** autant qu'à la source française — une tournure anglaise avec
+  apostrophe (`Today's setpoint`) ou une barre oblique (`On/Off`) sera amputée dans l'interface.
+- **Règle** : réserver une table de libellés **dédiée aux noms de commandes**, distincte de celle des
+  libellés de phrase, et bannir ces caractères dans les deux sens (source et cibles).
+
+### 8.2 `checkAndUpdateCmd()` : ce que renvoie son booléen, et ce qu'il écrit vraiment
+
+`eqLogic::checkAndUpdateCmd($logicalId, $value)` appelé **sans** `$_updateTime` :
+
+- si `execCmd() === formatValue($value)` **et** que la commande n'est pas réglée sur
+  `repeatEventManagement == 'always'`, alors **`cmd::event()` n'est PAS appelé** ; seuls
+  `cmd::setCache('collectDate', now)` et `eqLogic::setStatus('lastCommunication', now)` sont écrits ;
+- il renvoie `true` **si et seulement si** un `event()` a été émis, c'est-à-dire si la valeur a
+  réellement changé.
+
+Ce booléen est donc un **détecteur de changement fiable et gratuit** : il évite de tenir un état
+parallèle pour savoir si un cycle de scrutation a rapporté du neuf.
+
+⚠️ **La seule échappatoire est le réglage `repeatEventManagement = 'always'`**, positionnable par
+l'utilisateur commande par commande. Un mécanisme bâti sur ce booléen (horodatage « dernière donnée
+fraîche », compteur de changements) repartira alors à chaque cycle. Ce n'est pas contournable sans
+écraser un réglage utilisateur : cela se **documente**, cela ne se corrige pas.
+
+### 8.3 `collectDate` et `valueDate` ne veulent pas dire la même chose
+
+Dans `cmd::event()` (`core/class/cmd.class.php`) : `$repeat = ($oldValue === $value && …)`, puis
+`setCollectDate(now)` **toujours**, et `setValueDate($repeat ? ancienne valeur : collectDate)`.
+
+| Champ | Sens réel | Bouge quand ? |
+|---|---|---|
+| `collectDate` | date de **collecte** — « on a interrogé la source » | à **chaque** cycle, même sans changement |
+| `valueDate` | date du **dernier changement** de valeur | seulement quand la valeur change |
+
+Corollaire pratique : pour exposer à l'utilisateur **l'âge réel** d'une donnée d'API lente, il n'y a rien
+à écrire — `valueDate` le porte déjà. Une commande « dernière mise à jour » n'a de sens que si on
+l'alimente **conditionnellement** (cf. § 8.2), sinon elle ne fait que redire `collectDate`.
+
+⚠️ L'état d'une commande info (`value`, `valueDate`, `collectDate`) vit **dans le cache**, pas en colonne
+SQL : `execCmd()` lit `getCache(...)`. De même, `eqLogic::setStatus()` écrit dans le cache et **jamais**
+en base — donc un cycle de scrutation qui ne fait que pousser des valeurs **n'émet aucun `save()`**
+d'équipement.
+
+### 8.4 ⚠️ `cmd::event()` jette silencieusement une valeur numérique hors bornes
+
+Si `configuration.minValue` / `maxValue` sont posées sur une commande `numeric`, une valeur en dehors
+est **abandonnée** : un `log::add('cmd', 'info', …)` dans le log **du core**, puis un retour — la
+commande garde son ancienne valeur, et rien n'apparaît dans le log du plugin.
+
+- Recopier des bornes « métier » (une plage de consigne personnalisée, par exemple) sur une commande
+  **info** fait donc **disparaître sans un mot** les lectures réelles hors plage.
+- Sans ces clés, le contrôle est neutre (`getConfiguration('maxValue', $value)` retombe sur la valeur
+  elle-même).
+- **Règle** : les bornes appartiennent aux commandes **action** (slider), pas aux commandes info. Pour
+  une info, filtrer en amont dans le plugin et **journaliser** le rejet — échec bruyant plutôt que
+  silencieux.
+
+### 8.5 Créer des commandes de façon idempotente sans requête inutile
+
+`cmd::byEqLogicIdAndLogicalId()` **interroge la base à chaque appel** (aucun cache statique), alors que
+`eqLogic::getCmd()` ne met en cache que les résultats **trouvés**. Une boucle de création qui teste
+l'existence concept par concept produit donc N requêtes **à chaque cycle**, indéfiniment — pas seulement
+au premier.
+
+**Motif à retenir** : lire **une seule fois** l'ensemble des commandes de l'équipement
+(`getCmd(null, null)`), l'indexer par `logicalId`, puis itérer sur les définitions attendues. Bénéfice
+annexe : l'index contient aussi les commandes **action**, ce qui évite une collision de `logicalId`
+entre deux cycles de développement.
+
+⚠️ Et le corollaire du § 6 reste valable : les propriétés d'une commande (`name`, `isVisible`,
+`isHistorized`, `order`, template, `generic_type`) ne se posent qu'**à la création**. Les reposer à
+chaque cycle réinitialiserait les réglages de l'utilisateur.
+
+### 8.6 `generic_type` n'est pas décoratif
+
+Poser un `generic_type` (`TEMPERATURE`, `THERMOSTAT_*`, `ONLINE`…) **enrôle automatiquement** la commande
+dans les résumés d'objet, les widgets standard et les intégrations tierces (assistants vocaux,
+thermostats). C'est une **décision fonctionnelle**, pas une étiquette : une valeur peu fiable ou lente
+(donnée de cloud rafraîchie en dizaines de minutes) ne doit pas être déclarée comme une sonde de pièce.
+Le laisser vide est réversible en une valeur ; le retirer après coup ne l'est pas, les intégrations
+l'ayant déjà consommé.

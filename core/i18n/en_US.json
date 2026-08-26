@@ -10,6 +10,7 @@
         "Intervalle de rafraîchissement (minutes)": "Refresh interval (minutes)",
         "Entre 1 et 1440 minutes, 5 minutes par défaut.": "Between 1 and 1440 minutes, 5 minutes by default.",
         "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "The room temperature reported by AUX Home refreshes slowly (up to about 30 minutes); reducing this interval does not speed up the data.",
+        "Cette température n'est donc pas une mesure temps réel : ne l'utilisez pas comme sonde d'une régulation fine (thermostat).": "This temperature is therefore not a real-time measurement: do not use it as a probe for fine-grained control (thermostat).",
         "Tester la connexion": "Test connection",
         "Effacer les identifiants": "Clear credentials",
         "Test de connexion en cours…": "Testing connection…",
@@ -57,7 +58,9 @@
         "%d en erreur": "%d failed",
         "%1$s °C à %2$s °C, pas de %3$s °C": "%1$s °C to %2$s °C, step of %3$s °C",
         "Bornes personnalisées": "Custom limits",
-        "Valeur par défaut du transport": "Transport default value"
+        "Valeur par défaut du transport": "Transport default value",
+        "Transport actif": "Active transport",
+        "Dernière mise à jour": "Last update"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -127,7 +130,9 @@
         "Mode": "Mode",
         "Consigne de température": "Target temperature",
         "Température ambiante": "Room temperature",
-        "Vitesse de ventilation": "Fan speed"
+        "Vitesse de ventilation": "Fan speed",
+        "Marche-Arrêt": "On-Off",
+        "Consigne": "Setpoint"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Command name",

@@ -74,6 +74,20 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
     chiffre automatiquement les champs de config **plugin** sensibles.
   - `smartclimCmd extends cmd` — commande (info ou action). `execute($_options)` exécute une action
     (typiquement un `switch` sur `logicalId`).
+
+  Depuis l'UC05, la classe porte aussi le **cycle des commandes info** : `definitionsCommandesInfo()`
+  (table privée : `logicalId` générique → type/subType/unité/template, libellés pris à
+  `smartclimCapabilities::libelleCommande()`), `creerCommandesInfo()` (création **idempotente**,
+  conditionnée au profil de capacités, en **une** lecture `getCmd(null, null)` — jamais N requêtes) et
+  `appliquerEtat(array $_etat)` (pousse par `checkAndUpdateCmd()` les **seules clés présentes** dans
+  l'état). Deux commandes méta hors profil : `smartclim::CMD_TRANSPORT` et `CMD_DERNIERE_MAJ`.
+  ⚠️ **Une clé absente de l'état ne touche pas sa commande** — c'est le mécanisme, volontaire et unique,
+  qui évite d'afficher une valeur non confirmée (vitesse/mode sans correspondance de lecture, trame trop
+  courte, appareil hors ligne, température ambiante implausible). Ne jamais le remplacer par une valeur
+  de repli.
+  ⚠️ `creerCommandesInfo()` est appelée par **`postSave()` ET `appliquerEtat()`** : un scan qui ne change
+  rien n'émet aucun `save()`, donc aucun `postSave()` — sans le second appel, aucune commande
+  n'apparaîtrait sur un parc déjà découvert avant UC05.
 - **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
   plugin. Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
   aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification
@@ -83,7 +97,11 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   **découverte des appareils** (UC03) : `listerAppareils()` (`GET /app/user_device?getStatus=1`, budget
   de temps global `BUDGET_SCAN`, re-login réactif borné à **un** rejeu) qui renvoie des lignes
   **normalisées à clés génériques françaises** — aucun nom de champ AUX (`deviceId`, `alias`, `modelId`,
-  `online`) n'en sort.
+  `online`) n'en sort. Enfin, la **lecture d'état** (UC05) : `etatAppareil(array $_appareil)`, appuyée sur
+  la table privée `champsEtatAuxHome()` (concept → trame `control`/`running` + index d'octet) et
+  l'accesseur `octetTrame()`. C'est **ici**, et nulle part ailleurs, que vivent les offsets d'octets de la
+  trame HVAC — `offsetsAuxHome()` (UC04) en **dérive** désormais ses longueurs minimales : une seule
+  source d'offsets.
   ⚠️ **`nettoyerTexteExterne()` est la frontière d'assainissement du transport** : c'est elle, et elle
   seule, qui garantit qu'un champ du cloud (dont l'`identifiant` d'où dérive un `logicalId`) ne porte pas
   de caractère de contrôle. Toute nouvelle source d'appareil doit passer par un nettoyage équivalent
@@ -109,9 +127,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   table, pas ajouter un `switch`.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
   chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
-  introuvable au runtime, cf. Conventions → Autoload) :
-  `smartclimFrame` (décodage/encodage de la trame HVAC), `smartclimTransport` (sélection du transport
+  introuvable au runtime, cf. Conventions → Autoload) : `smartclimTransport` (sélection du transport
   actif), et les deux autres briques de transport : `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
+  ⚠️ **`smartclimFrame` est volontairement AJOURNÉE, pas oubliée** (arbitrage UC05) : le décodage de la
+  trame HVAC vit dans `smartclimAuxHomeApi` tant qu'il n'a **qu'un seul appelant** — l'en extraire
+  imposerait de sortir les offsets de la brique de transport. Elle se crée le jour où un **second**
+  transport décode la même trame (domaine post-MVP 01, Broadlink LAN), et ce jour-là son `require_once`
+  dans `core/php/smartclim.inc.php` est **obligatoire**. Ne pas la (re)proposer avant.
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
   `isConnect('admin')`, `ajax::init()`, puis aiguille sur `init('action')` en branches
   `if (init('action') == '...')`. Pour un endpoint **non-admin** (widget de dashboard, page-panneau), créer
@@ -216,7 +238,10 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   Elles vivent dans une **table de données unique** (`smartclimCapabilities`), jamais dupliquées ni codées
   en `switch`.
 - **Découverte structurante** : le champ d'état renvoyé par le cloud AUX Home est **la même trame HVAC**
-  que la réponse du LAN Broadlink → **un seul décodeur** (`smartclimFrame`) sert aux deux transports.
+  que la réponse du LAN Broadlink → à terme **un seul décodeur** sert aux deux transports. Au MVP il vit
+  dans `smartclimAuxHomeApi` (`champsEtatAuxHome()` / `octetTrame()` / `etatAppareil()`), faute d'un
+  second appelant ; son extraction en `smartclimFrame` est la première tâche du transport LAN, pas une
+  tâche du MVP.
 
 ## Configuration & secrets
 

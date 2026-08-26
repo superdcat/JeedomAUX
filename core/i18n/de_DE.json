@@ -10,6 +10,7 @@
         "Intervalle de rafraîchissement (minutes)": "Aktualisierungsintervall (Minuten)",
         "Entre 1 et 1440 minutes, 5 minutes par défaut.": "Zwischen 1 und 1440 Minuten, standardmäßig 5 Minuten.",
         "La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.": "Die von AUX Home gemeldete Raumtemperatur aktualisiert sich nur langsam (bis zu etwa 30 Minuten); eine Verkürzung dieses Intervalls beschleunigt die Daten nicht.",
+        "Cette température n'est donc pas une mesure temps réel : ne l'utilisez pas comme sonde d'une régulation fine (thermostat).": "Diese Temperatur ist somit keine Echtzeitmessung: verwenden Sie sie nicht als Fühler für eine Feinregelung (Thermostat).",
         "Tester la connexion": "Verbindung testen",
         "Effacer les identifiants": "Zugangsdaten löschen",
         "Test de connexion en cours…": "Verbindungstest läuft…",
@@ -57,7 +58,9 @@
         "%d en erreur": "%d fehlgeschlagen",
         "%1$s °C à %2$s °C, pas de %3$s °C": "%1$s °C bis %2$s °C, Schritt von %3$s °C",
         "Bornes personnalisées": "Benutzerdefinierte Grenzwerte",
-        "Valeur par défaut du transport": "Standardwert des Transports"
+        "Valeur par défaut du transport": "Standardwert des Transports",
+        "Transport actif": "Aktiver Transport",
+        "Dernière mise à jour": "Letzte Aktualisierung"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albanien",
@@ -127,7 +130,9 @@
         "Mode": "Modus",
         "Consigne de température": "Solltemperatur",
         "Température ambiante": "Raumtemperatur",
-        "Vitesse de ventilation": "Lüftergeschwindigkeit"
+        "Vitesse de ventilation": "Lüftergeschwindigkeit",
+        "Marche-Arrêt": "Ein-Aus",
+        "Consigne": "Sollwert"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Befehlsname",

@@ -121,6 +121,7 @@ $sc_saisieLibre = (count($sc_paysDisponibles) == 0
         <!-- min/max doivent rester identiques à smartclim::INTERVALLE_MIN/INTERVALLE_MAX (core/class/smartclim.class.php) -->
         <input type="number" min="1" max="1440" step="1" class="configKey form-control" data-l1key="refresh_interval"/>
         <span class="help-block">{{La température ambiante remontée par AUX Home se rafraîchit lentement (jusqu'à environ 30 minutes) ; réduire cet intervalle n'accélère pas la donnée.}}</span>
+        <span class="help-block">{{Cette température n'est donc pas une mesure temps réel : ne l'utilisez pas comme sonde d'une régulation fine (thermostat).}}</span>
       </div>
     </div>
   </fieldset>

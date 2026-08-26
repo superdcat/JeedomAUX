@@ -81,6 +81,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   conditionnée au profil de capacités, en **une** lecture `getCmd(null, null)` — jamais N requêtes) et
   `appliquerEtat(array $_etat)` (pousse par `checkAndUpdateCmd()` les **seules clés présentes** dans
   l'état). Deux commandes méta hors profil : `smartclim::CMD_TRANSPORT` et `CMD_DERNIERE_MAJ`.
+  ⚠️ **`modes_exclus` est la SEULE exception à l'union de `appliquerCapacites()`** (« un profil ne
+  s'ampute jamais ») : c'est une **preuve** fournie par l'appareil, pas une absence de détection. Sans
+  elle, un mode stocké avant l'existence de la restriction survivrait indéfiniment à sa correction — la
+  migration du parc est donc automatique au premier scan, sans script. Un mode qui **quitte** le profil
+  voit ses commandes d'action **masquées** par `masquerCommandesModes()` (`isVisible = 0`, jamais de
+  suppression), **une seule fois, à la transition** : rejoué à chaque scan, le masquage écraserait le
+  choix d'un utilisateur qui aurait réaffiché la commande.
   ⚠️ **Une clé absente de l'état ne touche pas sa commande** — c'est le mécanisme, volontaire et unique,
   qui évite d'afficher une valeur non confirmée (vitesse/mode sans correspondance de lecture, trame trop
   courte, appareil hors ligne, température ambiante implausible). Ne jamais le remplacer par une valeur
@@ -102,6 +109,18 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   l'accesseur `octetTrame()`. C'est **ici**, et nulle part ailleurs, que vivent les offsets d'octets de la
   trame HVAC — `offsetsAuxHome()` (UC04) en **dérive** désormais ses longueurs minimales : une seule
   source d'offsets.
+  Depuis le 2026-08-26, elle porte aussi la **restriction des capacités PAR APPAREIL** — ce que le
+  profil UC04 ne savait pas faire, d'où un « Chauffage » proposé sur une unité froid-seul :
+  `nettoyerCapacitesBrutes()` récolte le champ d'origine (JSON **imbriqué dans une chaîne**, entrées en
+  couples `[valeur, drapeau]`) et l'expose sous la clé générique `capacites_brutes` — destination
+  **exclusive** `capacitesAppareil()`, même statut que les trames ; `exclusionsAuxHome()` est la table
+  `valeur observée => codes génériques NON supportés`.
+  ⚠️ **Exclusions, jamais inclusions, et ce sens ne s'inverse pas** : une exclusion s'appuie sur une
+  preuve positive (valeur observée sur un appareil dont l'IHM constructeur masque la fonction) et tient
+  donc avec un seul appareil de référence ; une inclusion exigerait de décoder la liste complète des
+  capacités, ce qui n'est **pas** le cas (`feature.mode` déclare 5 modes là où l'application n'en propose
+  que 4 — index de sens inconnu, ne rien construire dessus). Détail et preuves :
+  `.memory/analyse/smartclim-transport-aux-home.md` § 3.3.
   ⚠️ **`nettoyerTexteExterne()` est la frontière d'assainissement du transport** : c'est elle, et elle
   seule, qui garantit qu'un champ du cloud (dont l'`identifiant` d'où dérive un `logicalId`) ne porte pas
   de caractère de contrôle. Toute nouvelle source d'appareil doit passer par un nettoyage équivalent
@@ -120,9 +139,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   (16-32 °C, pas 0,5) et leur enveloppe personnalisable (5-35 °C), les libellés français `__()` et les
   accesseurs de lecture (`valeursLisibles()`, `versTransport()`, `depuisTransport()`, `libelle()`,
   `libelleConcept()`, `libelleTransport()`, `conceptsConnus()`).
-  ⚠️ **La colonne `'fil' => null` est le seul mécanisme qui exclut une valeur du profil de capacités** :
-  une valeur sans correspondance de **lecture** vérifiée n'apparaît jamais dans l'interface plutôt que
-  d'y figurer approximativement. `versTransport()`/`depuisTransport()` renvoient `null` quand la
+  ⚠️ **La colonne `'fil' => null` exclut une valeur au niveau du TRANSPORT** : une valeur sans
+  correspondance de **lecture** vérifiée n'apparaît jamais dans l'interface plutôt que d'y figurer
+  approximativement. ⚠️ Ce n'est plus le **seul** mécanisme d'exclusion depuis le 2026-08-26 : le second
+  agit à l'échelle de l'**appareil** et vit dans le transport
+  (`smartclimAuxHomeApi::exclusionsAuxHome()`, cf. ci-dessous). Les deux répondent à la même règle —
+  on n'ampute que sur preuve. `versTransport()`/`depuisTransport()` renvoient `null` quand la
   correspondance manque — **jamais** de repli silencieux. Ajouter une capacité, c'est éditer cette
   table, pas ajouter un `switch`.
 - **`core/class/smartclimDiagnostic.class.php`** — **outillage de reverse engineering**, jamais sollicité

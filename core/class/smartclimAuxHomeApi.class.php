@@ -629,7 +629,7 @@ class smartclimAuxHomeApi {
    * UC04 § Sécurité).
    *
    * @param array $_brut
-   * @return array{mac:string, identifiant:string, nom:string, modele:string, enLigne:bool, trame_controle:string, trame_running:string}|null
+   * @return array{mac:string, identifiant:string, nom:string, modele:string, enLigne:bool, trame_controle:string, trame_running:string, capacites_brutes:array<string,string>}|null
    */
   private static function normaliserAppareil($_brut) {
     if (!is_array($_brut)) {
@@ -661,6 +661,13 @@ class smartclimAuxHomeApi {
     $trameControle = isset($statut['control']) ? self::nettoyerTrame($statut['control']) : '';
     $trameRunning = isset($statut['running']) ? self::nettoyerTrame($statut['running']) : '';
 
+    // Profil déclaré PAR L'APPAREIL (champ 'feature'), même destination exclusive que les
+    // trames ci-dessus : capacitesAppareil(), et rien d'autre. C'est LA source des
+    // capacités par appareil, identifiée par la sonde de diagnostic le 2026-08-26 après
+    // avoir éliminé toutes les routes candidates (cf.
+    // .memory/analyse/smartclim-transport-aux-home.md § 3.2).
+    $capacitesBrutes = isset($_brut['feature']) ? self::nettoyerCapacitesBrutes($_brut['feature']) : array();
+
     return array(
       'mac' => $mac,
       'identifiant' => $identifiant,
@@ -669,7 +676,112 @@ class smartclimAuxHomeApi {
       'enLigne' => $enLigne,
       'trame_controle' => $trameControle,
       'trame_running' => $trameRunning,
+      'capacites_brutes' => $capacitesBrutes,
     );
+  }
+
+  /**
+   * Nettoie le champ 'feature' d'une ligne de user_device : carte "nom déclaré => valeur
+   * déclarée", à destination EXCLUSIVE de capacitesAppareil(). Frontière d'assainissement
+   * au même titre que nettoyerTexteExterne() et nettoyerTrame() — ces valeurs finissent
+   * dans des logs.
+   *
+   * ⚠️ DEUX PIÈGES DU FORMAT, vérifiés sur le matériel de recette :
+   * 1. 'feature' est une CHAÎNE contenant du JSON, pas un objet. Un json_decode de plus
+   *    est donc nécessaire, et son échec doit rester silencieux (profil simplement absent).
+   * 2. Chaque entrée est un COUPLE [valeur, drapeau] où le drapeau vaut 1 quand la valeur
+   *    est une liste séparée par des virgules, 0 quand elle est scalaire. Seul le premier
+   *    élément porte l'information ; le drapeau est redondant avec la présence de virgules
+   *    et n'est donc pas conservé.
+   *
+   * @param mixed $_valeur Contenu du champ 'feature'.
+   * @return array<string,string> Vide si inexploitable.
+   */
+  private static function nettoyerCapacitesBrutes($_valeur) {
+    if (!is_string($_valeur) || $_valeur === '') {
+      return array();
+    }
+    $decode = json_decode($_valeur, true);
+    if (!is_array($decode)) {
+      log::add('smartclim', 'debug', 'AUX Home : champ de capacités par appareil illisible (JSON imbriqué invalide)');
+      return array();
+    }
+
+    $capacites = array();
+    foreach ($decode as $nom => $entree) {
+      if (!is_string($nom) || preg_match('/^[A-Za-z0-9_]{1,40}\z/', $nom) !== 1) {
+        continue;
+      }
+      $brute = is_array($entree) ? (isset($entree[0]) ? $entree[0] : null) : $entree;
+      if (!is_scalar($brute)) {
+        continue;
+      }
+      // Jeu de caractères volontairement étroit : ces valeurs sont des codes et des listes
+      // de codes, jamais du texte libre. Tout le reste est rejeté plutôt que filtré.
+      $valeur = (string) $brute;
+      if (preg_match('/^[0-9A-Za-z,._-]{0,200}\z/', $valeur) !== 1) {
+        continue;
+      }
+      $capacites[$nom] = $valeur;
+    }
+    return $capacites;
+  }
+
+  /**
+   * Table des EXCLUSIONS de capacités déduites du profil déclaré par l'appareil :
+   * nom déclaré => valeur observée => codes génériques que l'appareil ne sait PAS exécuter.
+   *
+   * Pourquoi une table d'EXCLUSIONS et non une table d'inclusions — c'est le cœur de la
+   * conception, à ne pas inverser :
+   * - une exclusion s'appuie sur une PREUVE POSITIVE (telle valeur observée sur un
+   *   appareil dont l'application masque effectivement la fonction). Elle est donc sûre
+   *   même avec un seul appareil de référence ;
+   * - une inclusion demanderait de savoir décoder la liste COMPLÈTE des capacités, ce qui
+   *   n'est pas le cas : 'mode' vaut "0,1,2,3,4" sur l'unité de recette (5 entrées) alors
+   *   que l'application n'y propose que 4 modes — ces index ne se décodent pas encore
+   *   (§ 3.2 de l'analyse). Une inclusion bâtie là-dessus retirerait des modes bien
+   *   supportés.
+   * Conséquence assumée : ce qui n'est pas explicitement exclu reste proposé. On ampute la
+   * seule chose dont on est sûr, jamais ce dont on doute.
+   *
+   * ✅ 'coolType' = '1' -> pas de chauffage. Établi le 2026-08-26 : l'unité de recette
+   * (portable, m_00010001_portable) déclare coolType=1, et l'application AUX Home n'y
+   * propose que froid / déshumidification / ventilation / automatique — le chauffage est
+   * absent, alors que la table générique deviceMutex contient bien le mode 4 (制热).
+   * ⚠️ Le sens de coolType=0 reste INCONNU (un seul appareil observé) : il n'est donc
+   * volontairement PAS dans la table. Toute autre valeur n'exclut rien.
+   *
+   * @return array<string, array<string, array<int,string>>>
+   */
+  private static function exclusionsAuxHome() {
+    return array(
+      'coolType' => array(
+        '1' => array(smartclimCapabilities::MODE_HEAT),
+      ),
+    );
+  }
+
+  /**
+   * Codes génériques de mode que CET appareil ne sait pas exécuter, d'après son profil
+   * déclaré. Renvoie un tableau VIDE dès que le profil est absent ou muet : l'absence de
+   * preuve n'exclut rien (un scan hors ligne ne doit pas amputer un profil).
+   *
+   * @param array<string,string> $_capacitesBrutes
+   * @return array<int,string>
+   */
+  private static function modesExclusAuxHome(array $_capacitesBrutes) {
+    $exclus = array();
+    foreach (self::exclusionsAuxHome() as $nom => $valeurs) {
+      if (!isset($_capacitesBrutes[$nom]) || !isset($valeurs[$_capacitesBrutes[$nom]])) {
+        continue;
+      }
+      foreach ($valeurs[$_capacitesBrutes[$nom]] as $mode) {
+        if (!in_array($mode, $exclus, true)) {
+          $exclus[] = $mode;
+        }
+      }
+    }
+    return $exclus;
   }
 
   /**
@@ -859,7 +971,7 @@ class smartclimAuxHomeApi {
    * uniquement des codes génériques (constantes smartclimCapabilities::CONCEPT_x, MODE_x, VITESSE_x).
    *
    * @param array $_appareil Ligne normalisée de listerAppareils()/normaliserAppareil().
-   * @return array{concepts:array<int,string>, modes:array<int,string>, vitesses:array<int,string>, temperature:array{min:int,max:int,pas:float}, source:string}
+   * @return array{concepts:array<int,string>, modes:array<int,string>, vitesses:array<int,string>, modes_exclus:array<int,string>, temperature:array{min:int,max:int,pas:float}, source:string}
    */
   public static function capacitesAppareil(array $_appareil) {
     $trameControle = isset($_appareil['trame_controle']) && is_string($_appareil['trame_controle']) ? $_appareil['trame_controle'] : '';
@@ -885,9 +997,20 @@ class smartclimAuxHomeApi {
       $concepts[] = smartclimCapabilities::CONCEPT_AMBIENT_TEMP;
     }
 
+    $capacitesBrutes = isset($_appareil['capacites_brutes']) && is_array($_appareil['capacites_brutes']) ? $_appareil['capacites_brutes'] : array();
+    $modesExclus = self::modesExclusAuxHome($capacitesBrutes);
+
     $modes = in_array(smartclimCapabilities::CONCEPT_MODE, $concepts, true)
       ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE)
       : array();
+    // La trame dit si le concept "mode" est LISIBLE ; le profil déclaré dit quelles
+    // VALEURS l'appareil sait exécuter. Les deux sont nécessaires : sans cette ligne, le
+    // profil affichait le catalogue du transport, donc « Chauffage » sur une unité
+    // froid-seul (écart à l'objectif d'UC04 et à son AC6).
+    if (!empty($modesExclus)) {
+      $modes = array_values(array_diff($modes, $modesExclus));
+      log::add('smartclim', 'debug', 'AUX Home : ' . count($modesExclus) . ' mode(s) écarté(s) par le profil déclaré de l\'appareil (' . implode(', ', $modesExclus) . ')');
+    }
     $vitesses = in_array(smartclimCapabilities::CONCEPT_FAN_SPEED, $concepts, true)
       ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_FAN_SPEED)
       : array();
@@ -900,6 +1023,11 @@ class smartclimAuxHomeApi {
       'concepts' => $concepts,
       'modes' => $modes,
       'vitesses' => $vitesses,
+      // Publié À PART de 'modes' (et non déduit d'une comparaison au catalogue) parce que
+      // c'est une PREUVE, pas une absence : smartclim::appliquerCapacites() a besoin de
+      // distinguer « cet appareil ne sait pas chauffer » de « ce scan n'a rien détecté »,
+      // le premier devant retirer un mode déjà stocké et le second jamais.
+      'modes_exclus' => $modesExclus,
       'temperature' => smartclimCapabilities::bornesParDefaut(),
       'source' => smartclimCapabilities::TRANSPORT_AUX_HOME,
     );

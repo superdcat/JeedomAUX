@@ -95,7 +95,7 @@ Sources ✅ : `com.zwegersit.auxairco/lib/auxcloud/constants.ts::AuxMode` (AUX H
 
 ### 3.2 Vitesses de ventilation
 
-| Générique | AUX Home `wind_speed` **[❓ à confirmer]** | Fil HVAC (oct.13 `>>5`) | Legacy `ac_mark` |
+| Générique | AUX Home `wind_speed` **[✅ confirmé 2026-08-26 par `deviceMutex`]** | Fil HVAC (oct.13 `>>5`) **[❓ numérotation DIFFÉRENTE, toujours à confirmer]** | Legacy `ac_mark` |
 |---|---|---|---|
 | `AUTO` | 4 | **5** | **0** |
 | `SILENT` / mute | 3 | *(bit `mute` dédié, oct.14/16)* | **5** |
@@ -224,7 +224,9 @@ Le rapprochement inter-transports se fait sur `mac` normalisée — voir
 
 ## 6. À confirmer
 
-- [ ] Table `wind_speed` réelle d'AUX Home (§ 3.2, contradiction ouverte).
+- [x] ~~Table `wind_speed` réelle d'AUX Home (§ 3.2, contradiction ouverte).~~ → **close le 2026-08-26**
+      par la sonde de diagnostic : `getConfig?id=deviceMutex` → `configContent.wind_speed.specs`, table EU
+      confirmée (cf. `smartclim-transport-aux-home.md` § 4.3). ⚠️ Vaut pour l'ÉCRITURE seulement.
 - [ ] Échelle de `temperature` dans l'intent AUX Home (§ 3.5).
 - [ ] Sens de `ac_vdir`/`ac_hdir` legacy (§ 3.3).
 - [ ] Noms/valeurs des intentions de confort AUX Home (§ 3.4).

@@ -247,11 +247,90 @@ Lecture, en distinguant le vérifié de l'hypothèse :
   c'est bien la **table générique**, mais elle devient exploitable **couplée à `feature`** — le lien
   manquant du § 3.1.
 
-**Reste à faire avant de coder la restriction** : lire `configContent.air_con_func.specs` et
-`configContent.wind_speed.specs` en entier pour établir `feature.mode` → codes `air_con_func`, puis
-`feature.windSpeed` → table de vitesses. Tant que ce lien n'est pas établi, `capacitesAppareil()` ne doit
-pas prétendre restreindre : une correspondance devinée produirait exactement le défaut que la table de
-`smartclimCapabilities` existe pour empêcher (« chauffe au lieu de refroidir »).
+#### Ce que le dump complet de `deviceMutex` a fermé (2026-08-26, 2ᵉ passage)
+
+`configContent` compte **35 fonctions**, chacune avec `key`, `keyN` (libellé constructeur), `specs`
+(les valeurs possibles, `valueN` = libellé), et trois familles de règles : `toastMutex` (message si
+interdit), `showMutex` (masquer telle fonction), `controlMutex` (forcer telle valeur). C'est un moteur de
+règles d'IHM, pas un profil d'appareil.
+
+✅ **Codes de mode confirmés à la source** — `configContent.air_con_func.specs` est un objet dont les
+**clés sont les codes protocole** : `0` 自动 AUTO, `1` 制冷 COOL, `2` 除湿 DRY, `4` 制热 HEAT, `6` 送风
+FAN. Exactement la table déjà en place dans `smartclimCapabilities`. Le trou entre 4 et 6 est réel.
+
+✅ **Table `wind_speed` confirmée** → § 4.3, contradiction close.
+
+⚠️ **Mais `deviceMutex` est générique** : la présence de la clé `4` (制热) ne dit **rien** de cet
+appareil-là, et **aucune** règle de `configContent` n'est indexée sur `coolType` ni sur `feature.mode`.
+La lecture de `feature` vit donc dans les ressources de l'application, pas dans ce que le backend expose.
+
+Ce que les règles apprennent quand même, et qui servira au domaine post-MVP 04 :
+
+- `deviceSupport` est bien une **liste d'identifiants de capacités**, référencée par les règles sous la
+  forme `{"value":"34","key":"deviceSupport"}` ou `"!37"` (le `!` = « ne contient pas »). Ids vus dans les
+  règles : `15`, `34`, `37`, `38`. Notre appareil déclare `0..7,9,10,14,25,26,27,36` — donc ni 34, ni 37,
+  ni 38. Le **sens** de chaque id n'est pas exposé.
+- `use_type` (0/1) sépare deux familles d'appareils : les mêmes fonctions y reçoivent des messages
+  différents (`only_use_cool_mode` en `use_type=0` contre `only_support_hot_cool_mode` en `use_type=1`).
+  Notre appareil a `useType = 0`. Piste sérieuse, non concluante seule.
+- Les valeurs composées existent : `key` = `"comfort_wind&&wind_speed&&air_con_func"` avec
+  `value` = `"1&&0&&1"`. Toute exploitation future de `deviceMutex` doit gérer ce séparateur `&&`.
+- Coquille backend relevée : `left_right_swing.controlMutex` utilise `useType` là où tout le reste écrit
+  `use_type`. Ne pas « corriger » en lisant — accepter les deux graphies.
+
+**Observation à part, utile pour UC05/UC07** : sur cet appareil `status.running` est **`null`** alors que
+`status.control` est présent — et `feature.roomTempDisplay` vaut `1`. La température ambiante n'est donc
+pas toujours servie, même sur un appareil qui l'affiche. C'est exactement le cas que le mécanisme UC05
+« une clé absente de l'état ne touche pas sa commande » couvre : rien à corriger, mais ne jamais supposer
+`running` présent.
+
+### 3.3 Tranché : `coolType` — et pourquoi la restriction est une table d'EXCLUSIONS
+
+**Mesure du 2026-08-26** : l'application AUX Home, sur l'unité de recette, propose **froid,
+déshumidification, ventilation, automatique** — soit **4 modes, sans chauffage**. Or `feature.mode`
+déclare **5 entrées** (`0,1,2,3,4`) et la table générique `deviceMutex` contient bien le mode `4` (制热).
+Donc :
+
+- ✅ **`feature.coolType` = `1` ⇒ pas de chauffage.** L'application filtre, et `coolType` est le seul
+  champ du profil qui puisse porter ce filtre. Preuve positive, sur un appareil dont on a vérifié le
+  comportement réel de l'IHM constructeur.
+- ⚠️ **`feature.mode` n'est PAS la liste des modes supportés** : 5 entrées déclarées contre 4 modes
+  proposés. Le sens de ses index reste **inconnu** (catalogue de la famille de modèles ? autre
+  énumération ?) et il faudra un appareil déclarant une liste plus courte pour le décoder. **Ne rien
+  construire dessus.**
+- ⚠️ **`coolType = 0` reste de sens inconnu** : un seul appareil observé, et l'inférence n'est valable que
+  dans un sens (`1` ⇒ pas de chauffage). Le déduire réversible serait une extrapolation.
+
+#### Conséquence de conception : exclusions, jamais inclusions
+
+`smartclimAuxHomeApi::exclusionsAuxHome()` est une table `nom déclaré => valeur observée => codes
+génériques NON supportés`. Ce sens n'est pas un détail d'implémentation :
+
+| | S'appuie sur | Tient avec un seul appareil de référence ? |
+|---|---|---|
+| **Exclusion** (retenu) | une **preuve positive** : telle valeur observée sur un appareil dont l'IHM constructeur masque effectivement la fonction | **oui** |
+| Inclusion (écarté) | savoir décoder la liste **complète** des capacités — c'est-à-dire `feature.mode`, justement indéchiffrable | non : retirerait des modes bien supportés |
+
+Corollaire assumé : **ce qui n'est pas explicitement exclu reste proposé**. On ampute ce dont on est sûr,
+jamais ce dont on doute — c'est la même règle que `'fil' => null` dans `smartclimCapabilities`, appliquée
+à l'échelle de l'appareil et non plus du transport.
+
+#### Ce que ça change dans le code (2026-08-26)
+
+- `normaliserAppareil()` récolte le champ `feature` via `nettoyerCapacitesBrutes()` (nouvelle frontière
+  d'assainissement : le JSON est **imbriqué dans une chaîne**, et chaque entrée est un couple
+  `[valeur, drapeau]` dont seul le premier élément porte l'information) et l'expose sous la clé générique
+  `capacites_brutes`, à destination **exclusive** de `capacitesAppareil()` — même statut que
+  `trame_controle` / `trame_running`.
+- `capacitesAppareil()` retire les modes exclus du catalogue **et publie `modes_exclus` à part**. Cette
+  séparation est nécessaire : `smartclim::appliquerCapacites()` doit distinguer « cet appareil ne sait pas
+  chauffer » (retirer, même d'un profil déjà stocké) de « ce scan n'a rien détecté » (ne rien toucher).
+- `smartclim::appliquerCapacites()` : `modes_exclus` est **la seule exception** à la règle « un profil ne
+  s'ampute jamais ». Sans elle, le `HEAT` stocké avant l'existence de la restriction survivrait
+  indéfiniment à sa correction — la migration est donc automatique au premier scan, sans script.
+- `smartclim::masquerCommandesModes()` : les commandes d'action d'un mode qui **quitte** le profil sont
+  masquées (`isVisible = 0`), **jamais supprimées** (CLAUDE.md), et **uniquement à la transition** — un
+  masquage rejoué à chaque scan écraserait le choix d'un utilisateur qui l'aurait réaffichée.
 
 > Le backend cousin CN utilise `GET /app/device_bindings?configId=…&getStatus=1` au lieu de
 > `/app/user_device` (`ha-aux-a-plus/README.md`). Les deux backends partagent l'espace de noms `/app/…`
@@ -314,10 +393,32 @@ Deux tables incompatibles coexistent :
 | 6 | MEDIUM_LOW | low |
 | 7 | MEDIUM_HIGH | high |
 
-**Décision SmartClim** : ne **pas** figer cette table en dur. La retenir depuis
-`GET /app/getConfig?id=deviceMutex` quand le schéma sera établi, avec la table EU
-(`com.zwegersit.auxairco`) comme valeur par défaut, et **valider en recette** vitesse par vitesse. C'est
-l'argument principal en faveur d'une table de correspondance **donnée** et non **codée en dur** (cf.
+✅ **TRANCHÉ le 2026-08-26 par le backend lui-même** (sonde de diagnostic →
+`getConfig?id=deviceMutex` → `configContent.wind_speed.specs`). Cette branche est une **liste ordonnée
+dont l'index EST le code**, avec les libellés constructeur :
+
+| Code | `valueN` | Sens | Générique SmartClim |
+|---|---|---|---|
+| 0 | 低档 | bas | `VITESSE_LOW` |
+| 1 | 中档 | moyen | `VITESSE_MEDIUM` |
+| 2 | 高档 | haut | `VITESSE_HIGH` |
+| 3 | 静音 | silence | `VITESSE_SILENT` |
+| 4 | 自动 | auto | `VITESSE_AUTO` |
+| 5 | 强力 | puissance | `VITESSE_TURBO` |
+| 6 | 中低 | moyen-bas | `VITESSE_MEDIUM_LOW` |
+| 7 | 中高 | moyen-haut | `VITESSE_MEDIUM_HIGH` |
+
+C'est **exactement** la table EU (`com.zwegersit.auxairco::AuxFanSpeed`) : la colonne `intent` de
+`smartclimCapabilities` était juste sur les 8 valeurs, et ses `intent_confirme` sont passés à `true`. La
+table CN (`ha-aux-a-plus`) est **écartée pour ce backend**.
+
+⚠️ **Ne pas surinterpréter** : ceci confirme la numérotation d'**ÉCRITURE** (`wind_speed` d'un `intent`).
+Le codage **LU** dans la trame HVAC (colonne `fil`) est une numérotation **différente**, que cette table
+ne documente pas — les `fil => null` restent null. Confondre les deux est précisément le défaut que la
+table de correspondance existe pour empêcher.
+
+La décision de fond ne change pas : la table reste une **donnée** et non du code, et
+`getConfig?id=deviceMutex` est la source de vérité quand un doute revient (cf.
 `smartclim-modele-abstrait-capacites.md`).
 
 ## 5. En-tête `country` : cause d'échec de login documentée
@@ -436,17 +537,19 @@ l'application officielle. Conséquences pour SmartClim :
 ## 9. À confirmer (recette)
 
 - [ ] `temperature` : entier °C ou ×10 sur le backend EU ?
-- [ ] Table `wind_speed` réelle de l'appareil (8 valeurs ?) et correspondance avec l'afficheur.
+- [x] ~~Table `wind_speed` réelle (8 valeurs ?)~~ → **confirmée par `deviceMutex`** le 2026-08-26,
+      identique à la table EU (§ 4.3). Reste à valider l'ADÉQUATION vitesse ↔ ressenti sur l'appareil.
 - [ ] Noms et valeurs exacts des intentions de confort (`screen`/`screen_on_off`, `sleep_mode`, `eco`,
       `clean`, `healthy`, `anti_fungus`, `ultra_silence`).
 - [x] ~~Où le backend expose-t-il les capacités RÉELLES d'un appareil donné ?~~ → **`feature`, dans
       chaque ligne de `/app/user_device`** (sonde du 2026-08-26, § 3.2). Aucune route nouvelle.
-- [ ] Sens de `feature.coolType` (`1` sur l'unité froid-seul de recette) : est-ce LE discriminant
-      froid-seul / réversible ? → sonder un **2ᵉ appareil**, réversible de préférence (§ 3.2).
-- [ ] Correspondance `feature.mode` (index) → codes `air_con_func` : lire
-      `deviceMutex.configContent.air_con_func.specs` (5 entrées, clés 0/1/2/4/6) en entier.
-- [ ] `feature.windSpeed` (scalaire, `2` ici) est-il un **identifiant de table** de vitesses ? Ce serait
-      la réponse à la contradiction du § 4.3 → lire `configContent.wind_speed.specs` (8 entrées).
+- [x] ~~`feature.mode` ou `feature.coolType` ?~~ → **`coolType = 1` ⇒ pas de chauffage** (l'application
+      ne propose que froid / déshu / ventilation / auto). Implémenté en table d'EXCLUSIONS, § 3.3.
+- [ ] Sens de `feature.coolType = 0` : réversible ? → un 2ᵉ appareil, réversible de préférence.
+- [ ] Sens des index de `feature.mode` (5 déclarés pour 4 modes proposés) → un appareil déclarant une
+      liste plus courte. Tant que c'est ouvert, ne rien construire dessus.
+- [ ] `feature.windSpeed` (scalaire, `2` ici) : PAS un identifiant de table (la table est unique et
+      confirmée, § 4.3). Reste à savoir ce qu'il compte — nombre de vitesses proposées par l'appareil ?
 - [ ] Table de référence des index de `feature.deviceSupport` / `appSupport` / `healthPlus` (sommaire de
       `configContent` ?) — matière du domaine post-MVP 04.
 - [ ] Schéma de `GET /app/getConfig?id=deviceMutex` et **façon d'en dériver les capacités d'un appareil

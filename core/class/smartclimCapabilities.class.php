@@ -32,6 +32,18 @@
  * - "intent_confirme" : marqueur de RECETTE pour UC06 (jamais lu par UC04). false =
  *   code d'écriture issu d'une source unique et contestée (cf. § "À confirmer" de la
  *   spec fonctionnelle UC04) ; true = confirmé par recoupement de sources concordantes.
+ *   ✅ Les 8 vitesses sont passées à true le 2026-08-26 sur une source qui n'est plus un
+ *   recoupement mais le BACKEND LUI-MÊME : la sonde de diagnostic a rendu
+ *   getConfig?id=deviceMutex -> configContent.wind_speed.specs, liste ORDONNÉE dont
+ *   l'index EST le code d'écriture, avec les libellés constructeur (0 低档 faible,
+ *   1 中档 moyen, 2 高档 fort, 3 静音 silencieux, 4 自动 auto, 5 强力 turbo, 6 中低
+ *   moyen-faible, 7 中高 moyen-fort). La colonne 'intent' ci-dessous était donc juste sur
+ *   les 8 valeurs, et la table CN concurrente (ha-aux-a-plus) est écartée pour ce backend
+ *   (cf. .memory/analyse/smartclim-transport-aux-home.md § 4.3, contradiction CLOSE).
+ *   ⚠️ Cela ne dit RIEN de la colonne 'fil' : le codage LU dans la trame HVAC est une
+ *   numérotation DIFFÉRENTE, qui reste non confirmée là où elle vaut null. Ne pas
+ *   « compléter » 'fil' depuis cette table d'écriture — c'est exactement la confusion
+ *   que ce fichier existe pour empêcher.
  *
  * Non couvert ICI, délibérément (emplacement prévu, pas de code mort) :
  * - oscillations : aucune lecture par axe possible depuis la trame HVAC connue à ce
@@ -111,13 +123,13 @@ class smartclimCapabilities {
           self::MODE_FAN => array('intent' => 6, 'fil' => 6, 'intent_confirme' => true, 'libelle' => __('Ventilation', __FILE__)),
         ),
         self::CONCEPT_FAN_SPEED => array(
-          self::VITESSE_AUTO => array('intent' => 4, 'fil' => 5, 'intent_confirme' => false, 'libelle' => __('Automatique', __FILE__)),
-          self::VITESSE_SILENT => array('intent' => 3, 'fil' => null, 'intent_confirme' => false, 'libelle' => __('Silencieux', __FILE__)),
-          self::VITESSE_LOW => array('intent' => 0, 'fil' => 3, 'intent_confirme' => false, 'libelle' => __('Faible', __FILE__)),
-          self::VITESSE_MEDIUM_LOW => array('intent' => 6, 'fil' => null, 'intent_confirme' => false, 'libelle' => __('Moyen-faible', __FILE__)),
-          self::VITESSE_MEDIUM => array('intent' => 1, 'fil' => 2, 'intent_confirme' => false, 'libelle' => __('Moyen', __FILE__)),
-          self::VITESSE_MEDIUM_HIGH => array('intent' => 7, 'fil' => null, 'intent_confirme' => false, 'libelle' => __('Moyen-fort', __FILE__)),
-          self::VITESSE_HIGH => array('intent' => 2, 'fil' => 1, 'intent_confirme' => false, 'libelle' => __('Fort', __FILE__)),
+          self::VITESSE_AUTO => array('intent' => 4, 'fil' => 5, 'intent_confirme' => true, 'libelle' => __('Automatique', __FILE__)),
+          self::VITESSE_SILENT => array('intent' => 3, 'fil' => null, 'intent_confirme' => true, 'libelle' => __('Silencieux', __FILE__)),
+          self::VITESSE_LOW => array('intent' => 0, 'fil' => 3, 'intent_confirme' => true, 'libelle' => __('Faible', __FILE__)),
+          self::VITESSE_MEDIUM_LOW => array('intent' => 6, 'fil' => null, 'intent_confirme' => true, 'libelle' => __('Moyen-faible', __FILE__)),
+          self::VITESSE_MEDIUM => array('intent' => 1, 'fil' => 2, 'intent_confirme' => true, 'libelle' => __('Moyen', __FILE__)),
+          self::VITESSE_MEDIUM_HIGH => array('intent' => 7, 'fil' => null, 'intent_confirme' => true, 'libelle' => __('Moyen-fort', __FILE__)),
+          self::VITESSE_HIGH => array('intent' => 2, 'fil' => 1, 'intent_confirme' => true, 'libelle' => __('Fort', __FILE__)),
           self::VITESSE_TURBO => array('intent' => 5, 'fil' => 4, 'intent_confirme' => true, 'libelle' => __('Turbo', __FILE__)),
         ),
       ),

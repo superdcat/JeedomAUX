@@ -1386,11 +1386,17 @@ class smartclim extends eqLogic {
     $conceptsDetectes = isset($_detecte['concepts']) && is_array($_detecte['concepts']) ? $_detecte['concepts'] : array();
     $modesDetectes = isset($_detecte['modes']) && is_array($_detecte['modes']) ? $_detecte['modes'] : array();
     $vitessesDetectees = isset($_detecte['vitesses']) && is_array($_detecte['vitesses']) ? $_detecte['vitesses'] : array();
+    // SEULE chose qui puisse AMPUTER un profil, et la seule exception à l'union ci-dessous
+    // (« un profil ne s'ampute jamais »). L'exception est légitime parce que ce n'est pas
+    // une absence de détection mais une PREUVE fournie par l'appareil lui-même : sans
+    // elle, un HEAT stocké avant que la restriction n'existe survivrait indéfiniment à sa
+    // correction. Vide dès que le transport n'a rien pu établir -> union pure.
+    $modesExclus = isset($_detecte['modes_exclus']) && is_array($_detecte['modes_exclus']) ? $_detecte['modes_exclus'] : array();
 
     $fusion = array(
       'version' => self::VERSION_PROFIL,
       'concepts' => self::ordonnerParReference(array_values(array_unique(array_merge($conceptsActuels, $conceptsDetectes))), smartclimCapabilities::conceptsConnus()),
-      'modes' => self::ordonnerParReference(array_values(array_unique(array_merge($modesActuels, $modesDetectes))), smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE)),
+      'modes' => self::ordonnerParReference(array_diff(array_values(array_unique(array_merge($modesActuels, $modesDetectes))), $modesExclus), smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE)),
       'vitesses' => self::ordonnerParReference(array_values(array_unique(array_merge($vitessesActuelles, $vitessesDetectees))), smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_FAN_SPEED)),
       // Défaut du transport, JAMAIS les bornes personnalisées (espaces de nommage
       // disjoints, cf. CLE_CONF_TEMP_* — cœur d'AC3).
@@ -1408,7 +1414,57 @@ class smartclim extends eqLogic {
 
     $fusion['detecte_le'] = time();
     $this->setConfiguration(self::CLE_CONF_CAPACITES, $fusion);
+
+    // Un mode qui QUITTE le profil laisse derrière lui les commandes déjà créées pour lui
+    // (CLAUDE.md : « une capacité qui disparaît ne supprime jamais une commande »). La
+    // règle est conservée — rien n'est supprimé — mais laisser un bouton « Chauffage »
+    // visible sur un appareil dont on vient d'établir qu'il ne chauffe pas serait rendre
+    // la correction invisible là où l'utilisateur l'a signalée. Les commandes concernées
+    // sont donc MASQUÉES, une seule fois, au moment de la transition.
+    $modesPartis = array_values(array_diff($modesActuels, $fusion['modes']));
+    if (!empty($modesPartis)) {
+      $this->masquerCommandesModes($modesPartis);
+    }
     return true;
+  }
+
+  /**
+   * Masque (isVisible = 0, JAMAIS de suppression) les commandes d'action des modes passés
+   * en paramètre. Appelée UNIQUEMENT à la transition, depuis appliquerCapacites() : un
+   * masquage rejoué à chaque scan écraserait le choix d'un utilisateur qui aurait
+   * délibérément réaffiché la commande.
+   *
+   * Ne lève jamais et ne présume pas de l'existence des commandes : sur un équipement
+   * pas encore enregistré (chemin creerEquipement -> appliquerCapacites avant le premier
+   * save()), getId() est vide et il n'y a rien à masquer.
+   *
+   * @param array<int,string> $_modes Codes génériques de mode (smartclimCapabilities::MODE_*).
+   * @return int Nombre de commandes masquées.
+   */
+  private function masquerCommandesModes(array $_modes) {
+    if ($this->getId() == '') {
+      return 0;
+    }
+    $cibles = array();
+    foreach ($_modes as $mode) {
+      $cibles[self::PREFIXE_CMD_MODE . strtolower($mode)] = true;
+    }
+
+    $masquees = 0;
+    foreach ($this->getCmd(null, null) as $cmd) {
+      if (!isset($cibles[$cmd->getLogicalId()]) || !$cmd->getIsVisible()) {
+        continue;
+      }
+      try {
+        $cmd->setIsVisible(0);
+        $cmd->save();
+        $masquees++;
+        log::add('smartclim', 'info', 'Commande masquée (mode non supporté par l\'appareil) : ' . $cmd->getLogicalId() . ' sur ' . $this->getHumanName());
+      } catch (Throwable $t) {
+        log::add('smartclim', 'warning', 'Masquage impossible pour ' . $cmd->getLogicalId() . ' : ' . $t->getMessage());
+      }
+    }
+    return $masquees;
   }
 
   /**

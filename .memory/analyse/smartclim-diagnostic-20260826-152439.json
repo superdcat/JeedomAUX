@@ -1,0 +1,4982 @@
+{
+  "genere_le": "2026-08-26T15:24:39+02:00",
+  "transport": "AUX Home",
+  "masquage": true,
+  "routes": [
+    {
+      "chemin": "/app/user_device?getStatus=1",
+      "role": "connue : liste des appareils et trames HVAC (source actuelle du plugin), rendue ici SANS normalisation",
+      "http": 200,
+      "code": 200,
+      "erreur": "",
+      "forme": {
+        "code": "integer",
+        "message": "string",
+        "data": [
+          "array(22)"
+        ]
+      },
+      "pistes": {
+        "data.0.productKey": "00010006",
+        "data.0.modelId": "m_00010001_portable",
+        "data.0.suitType": 0,
+        "data.0.useType": 0,
+        "data.0.feature": "{\"coolType\":[\"1\",\"0\"],\"frenquency\":[\"0\",\"0\"],\"mode\":[\"0,1,2,3,4\",\"1\"],\"tempInterval\":[\"0\",\"0\"],\"roomTempDisplay\":[\"1\",\"0\"],\"deviceSupport\":[\"0,1,2,3,4,5,6,7,9,10,14,25,26,27,36\",\"1\"],\"screen\":[\"1\",\"0\"],\"windSpeed\":[\"2\",\"0\"],\"appSupport\":[\"0,4,5\",\"1\"],\"faultSupport\":[\"0\",\"0\"],\"timing\":[\"0\",\"0\"],\"healthPlus\":[\"0,3,4\",\"1\"],\"voice\":[\"0\",\"1\"],\"tvoc\":[\"1\",\"1\"]}",
+        "data.0.customerFuncs": null,
+        "data.0.status.type": "uart"
+      },
+      "extraits": {
+        "data.0.feature (JSON imbrique, decode)": {
+          "coolType": [
+            "1",
+            "0"
+          ],
+          "frenquency": [
+            "0",
+            "0"
+          ],
+          "mode": [
+            "0,1,2,3,4",
+            "1"
+          ],
+          "tempInterval": [
+            "0",
+            "0"
+          ],
+          "roomTempDisplay": [
+            "1",
+            "0"
+          ],
+          "deviceSupport": [
+            "0,1,2,3,4,5,6,7,9,10,14,25,26,27,36",
+            "1"
+          ],
+          "screen": [
+            "1",
+            "0"
+          ],
+          "windSpeed": [
+            "2",
+            "0"
+          ],
+          "appSupport": [
+            "0,4,5",
+            "1"
+          ],
+          "faultSupport": [
+            "0",
+            "0"
+          ],
+          "timing": [
+            "0",
+            "0"
+          ],
+          "healthPlus": [
+            "0,3,4",
+            "1"
+          ],
+          "voice": [
+            "0",
+            "1"
+          ],
+          "tvoc": [
+            "1",
+            "1"
+          ]
+        }
+      },
+      "donnees": {
+        "code": 200,
+        "message": "",
+        "data": [
+          {
+            "deviceId": "masque:635d7a",
+            "productKey": "00010006",
+            "mac": "masque:dbfea2",
+            "did": "d5000100061cd1d78bbc05",
+            "alias": "Clim",
+            "subDevice": null,
+            "sn": "",
+            "modelId": "m_00010001_portable",
+            "suitType": 0,
+            "useType": 0,
+            "password": "masque:b8f4d6",
+            "feature": "{\"coolType\":[\"1\",\"0\"],\"frenquency\":[\"0\",\"0\"],\"mode\":[\"0,1,2,3,4\",\"1\"],\"tempInterval\":[\"0\",\"0\"],\"roomTempDisplay\":[\"1\",\"0\"],\"deviceSupport\":[\"0,1,2,3,4,5,6,7,9,10,14,25,26,27,36\",\"1\"],\"screen\":[\"1\",\"0\"],\"windSpeed\":[\"2\",\"0\"],\"appSupport\":[\"0,4,5\",\"1\"],\"faultSupport\":[\"0\",\"0\"],\"timing\":[\"0\",\"0\"],\"healthPlus\":[\"0,3,4\",\"1\"],\"voice\":[\"0\",\"1\"],\"tvoc\":[\"1\",\"1\"]}",
+            "deviceMainUri": "http://smtoss2.aux-home.com/mgr_uat2/img/3ce3330d3d5e29953aec9cf77b84d852.png",
+            "userTag": 0,
+            "wash": false,
+            "address": null,
+            "transport": 2,
+            "customerFuncs": null,
+            "thirdDid": "1C:D1:D7:8B:BC:05",
+            "online": true,
+            "status": {
+              "running": null,
+              "control": "bb00070000000f0001115be000a0002000000000000000d14d",
+              "type": "uart"
+            },
+            "passcode": "3cc76f6ca8"
+          }
+        ]
+      }
+    },
+    {
+      "chemin": "/app/product?productId={productId}",
+      "role": "candidate : fiche produit ?",
+      "http": 0,
+      "code": null,
+      "erreur": "non sondee : productId absent de la route de reference",
+      "forme": "NULL",
+      "pistes": [],
+      "extraits": [],
+      "donnees": null
+    },
+    {
+      "chemin": "/app/getConfig?id=deviceMutex",
+      "role": "connue : table GENERIQUE des concepts (HTTP 200 vérifié) — y chercher un lien vers un modèle ou un produit",
+      "http": 200,
+      "code": 200,
+      "erreur": "",
+      "forme": {
+        "code": "integer",
+        "message": "string",
+        "data": {
+          "configId": "string",
+          "name": "string",
+          "configContent": "array(35)",
+          "configType": "integer"
+        }
+      },
+      "pistes": {
+        "data.configContent.ai_eco.specs": "(array, 2 entrees)",
+        "data.configContent.ai_eco.specs.1.showMutex.0.func": "(array, 1 entrees)",
+        "data.configContent.wind_child.specs": "(array, 2 entrees)",
+        "data.configContent.ventilate.specs": "(array, 4 entrees)",
+        "data.configContent.auto_eco.specs": "(array, 2 entrees)",
+        "data.configContent.air_con_func": "(array, 5 entrees)",
+        "data.configContent.air_con_func.specs": "(array, 5 entrees)",
+        "data.configContent.air_con_func.specs.0.showMutex.0.func": "(array, 14 entrees)",
+        "data.configContent.air_con_func.specs.0.showMutex.1.func": "(array, 1 entrees)",
+        "data.configContent.air_con_func.specs.0.showMutex.2.func": "(array, 1 entrees)",
+        "data.configContent.air_con_func.specs.1.showMutex.0.func": "(array, 2 entrees)",
+        "data.configContent.air_con_func.specs.2.showMutex.0.func": "(array, 13 entrees)",
+        "data.configContent.air_con_func.specs.4.showMutex.0.func": "(array, 6 entrees)",
+        "data.configContent.air_con_func.specs.4.showMutex.1.func": "(array, 4 entrees)",
+        "data.configContent.air_con_func.specs.6.showMutex.0.func": "(array, 15 entrees)",
+        "data.configContent.screen.specs": "(array, 3 entrees)",
+        "data.configContent.wind_light2.specs": "(array, 4 entrees)",
+        "data.configContent.eco.specs": "(array, 2 entrees)",
+        "data.configContent.eco.specs.1.showMutex.0.func": "(array, 1 entrees)",
+        "data.configContent.up_down_swing.specs": "(array, 7 entrees)",
+        "data.configContent.power_limit.specs": "(array, 4 entrees)",
+        "data.configContent.power_limit.specs.1.showMutex.0.func": "(array, 3 entrees)",
+        "data.configContent.power_limit.specs.2.showMutex.0.func": "(array, 3 entrees)",
+        "data.configContent.power_limit.specs.3.showMutex.0.func": "(array, 3 entrees)",
+        "data.configContent.electric_lock.specs": "(array, 2 entrees)",
+        "data.configContent.electric_lock.specs.1.showMutex.0.func": "(array, 26 entrees)",
+        "data.configContent.anti_fungus.specs": "(array, 2 entrees)",
+        "data.configContent.temperature.specs": "(array, 0 entrees)",
+        "data.configContent.wind_speed.specs": "(array, 8 entrees)",
+        "data.configContent.left_right_swing.specs": "(array, 8 entrees)",
+        "data.configContent.wind_smart.specs": "(array, 2 entrees)",
+        "data.configContent.wind_far.specs": "(array, 2 entrees)",
+        "data.configContent.sleep_mode": "(array, 5 entrees)",
+        "data.configContent.sleep_mode.specs": "(array, 2 entrees)",
+        "data.configContent.sleep_mode.specs.1.showMutex.0.func": "(array, 1 entrees)",
+        "data.configContent.wind_flow.specs": "(array, 3 entrees)",
+        "data.configContent.pet_model": "(array, 4 entrees)",
+        "data.configContent.pet_model.specs": "(array, 0 entrees)",
+        "data.configContent.electric_heating": "(array, 5 entrees)",
+        "data.configContent.electric_heating.specs": "(array, 2 entrees)",
+        "data.configContent.comfort_wind.specs": "(array, 2 entrees)",
+        "data.configContent.eight_heat": "(array, 4 entrees)",
+        "data.configContent.eight_heat.specs": "(array, 2 entrees)",
+        "data.configContent.eight_heat.specs.2.showMutex.0.func": "(array, 3 entrees)",
+        "data.configContent.wind_ring.specs": "(array, 3 entrees)",
+        "data.configContent.on_off.specs": "(array, 2 entrees)",
+        "data.configContent.on_off.specs.0.showMutex.0.func": "(array, 21 entrees)",
+        "data.configContent.on_off.specs.1.showMutex.0.func": "(array, 2 entrees)",
+        "data.configContent.clean.specs": "(array, 2 entrees)",
+        "data.configContent.zero_wind_feeling.specs": "(array, 2 entrees)",
+        "data.configContent.sleep_diy.specs": "(array, 2 entrees)",
+        "data.configContent.sleep_diy.specs.1.showMutex.0.func": "(array, 1 entrees)",
+        "data.configContent.air_light.specs": "(array, 2 entrees)",
+        "data.configContent.ultra_silence.specs": "(array, 2 entrees)",
+        "data.configContent.ultra_silence.specs.2.showMutex.0.func": "(array, 1 entrees)",
+        "data.configContent.ventilate_auxiliary.specs": "(array, 6 entrees)",
+        "data.configContent.healthy.specs": "(array, 2 entrees)",
+        "data.configContent.old_comfort_wind.specs": "(array, 2 entrees)",
+        "data.configContent.wind_light.specs": "(array, 3 entrees)",
+        "data.configContent.ai_ctl.specs": "(array, 2 entrees)",
+        "data.configType": 1
+      },
+      "extraits": {
+        "data.configContent.air_con_func": {
+          "toastMutex": [
+            {
+              "toast": "common_device_control_lock_message",
+              "value": "1",
+              "key": "electric_lock"
+            },
+            {
+              "toast": "common_device_control_open_use_function",
+              "value": "0",
+              "key": "on_off"
+            }
+          ],
+          "specs": {
+            "0": {
+              "toastMutex": [],
+              "showMutex": [
+                {
+                  "func": [
+                    "electric_heating",
+                    "eco",
+                    "ai_eco",
+                    "sleep_mode",
+                    "old_comfort_wind",
+                    "zero_wind_feeling",
+                    "comfort_wind",
+                    "wind_child",
+                    "wind_far",
+                    "wind_light",
+                    "wind_light2",
+                    "ultra_silence",
+                    "eight_heat",
+                    "pet_model"
+                  ]
+                },
+                {
+                  "func": [
+                    "wind_smart"
+                  ],
+                  "value": "1",
+                  "key": "use_type"
+                },
+                {
+                  "func": [
+                    "temperature"
+                  ],
+                  "value": "!37",
+                  "key": "deviceSupport"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "electric_heating"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    },
+                    {
+                      "value": "24",
+                      "key": "temperature"
+                    },
+                    {
+                      "value": "0",
+                      "key": "half"
+                    },
+                    {
+                      "value": "0",
+                      "key": "comfort_wind"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "value": "34",
+                  "key": "deviceSupport"
+                }
+              ],
+              "valueN": "自动"
+            },
+            "1": {
+              "toastMutex": [],
+              "showMutex": [
+                {
+                  "func": [
+                    "electric_heating",
+                    "eight_heat"
+                  ]
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "electric_heating"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "0&&15&&1",
+                  "key": "wind_speed&&deviceSupport&&comfort_wind"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "comfort_wind"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "value": "34",
+                  "key": "deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "25",
+                      "key": "temperature"
+                    },
+                    {
+                      "value": "0",
+                      "key": "half"
+                    }
+                  ],
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "valueN": "制冷"
+            },
+            "2": {
+              "toastMutex": [],
+              "showMutex": [
+                {
+                  "func": [
+                    "wind_speed",
+                    "electric_heating",
+                    "eco",
+                    "ai_eco",
+                    "old_comfort_wind",
+                    "zero_wind_feeling",
+                    "wind_light",
+                    "wind_light2",
+                    "wind_child",
+                    "wind_far",
+                    "eight_heat",
+                    "ultra_silence",
+                    "pet_model"
+                  ]
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "electric_heating"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "value": "0",
+                      "key": "comfort_wind"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "value": "34",
+                  "key": "deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "25",
+                      "key": "temperature"
+                    },
+                    {
+                      "value": "0",
+                      "key": "half"
+                    }
+                  ],
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "valueN": "除湿"
+            },
+            "4": {
+              "toastMutex": [],
+              "showMutex": [
+                {
+                  "func": [
+                    "eco",
+                    "ai_eco",
+                    "old_comfort_wind",
+                    "zero_wind_feeling",
+                    "comfort_wind",
+                    "pet_model"
+                  ]
+                },
+                {
+                  "func": [
+                    "wind_child",
+                    "wind_light",
+                    "wind_light2",
+                    "wind_smart"
+                  ],
+                  "value": "0",
+                  "key": "use_type"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "electric_heating"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    },
+                    {
+                      "value": "0",
+                      "key": "comfort_wind"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "value": "34",
+                  "key": "deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "25",
+                      "key": "temperature"
+                    },
+                    {
+                      "value": "0",
+                      "key": "half"
+                    }
+                  ],
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "valueN": "制热"
+            },
+            "6": {
+              "toastMutex": [],
+              "showMutex": [
+                {
+                  "func": [
+                    "temperature",
+                    "sleep_mode",
+                    "electric_heating",
+                    "eco",
+                    "ai_eco",
+                    "old_comfort_wind",
+                    "zero_wind_feeling",
+                    "wind_child",
+                    "wind_smart",
+                    "wind_far",
+                    "wind_light",
+                    "wind_light2",
+                    "eight_heat",
+                    "ultra_silence",
+                    "pet_model"
+                  ]
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "electric_heating"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_smart"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "0&&15&&1",
+                  "key": "wind_speed&&deviceSupport&&comfort_wind"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "comfort_wind"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "4",
+                  "key": "wind_speed"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "value": "34",
+                  "key": "deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "25",
+                      "key": "temperature"
+                    },
+                    {
+                      "value": "0",
+                      "key": "half"
+                    }
+                  ],
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "valueN": "送风"
+            }
+          },
+          "controlMutex": [
+            {
+              "control": [
+                {
+                  "value": "0",
+                  "key": "silence"
+                },
+                {
+                  "value": "0",
+                  "key": "turbo"
+                },
+                {
+                  "value": "0",
+                  "key": "sleep_mode"
+                },
+                {
+                  "value": "0",
+                  "key": "eco"
+                },
+                {
+                  "value": "0",
+                  "key": "ai_eco"
+                },
+                {
+                  "value": "0",
+                  "key": "zero_wind_feeling"
+                },
+                {
+                  "value": "0",
+                  "key": "wind_light"
+                },
+                {
+                  "value": "0",
+                  "key": "wind_light2"
+                },
+                {
+                  "value": "0",
+                  "key": "wind_far"
+                },
+                {
+                  "value": "0",
+                  "key": "sleep_diy"
+                },
+                {
+                  "value": "0",
+                  "key": "ai_ctl"
+                }
+              ]
+            },
+            {
+              "control": [
+                {
+                  "value": "0",
+                  "key": "wind_child"
+                }
+              ],
+              "value": "1",
+              "key": "use_type"
+            },
+            {
+              "control": [
+                {
+                  "value": "1",
+                  "key": "ultra_silence"
+                }
+              ],
+              "value": "38",
+              "key": "deviceSupport"
+            }
+          ],
+          "keyN": "模式",
+          "key": "air_con_func"
+        },
+        "data.configContent.wind_speed": {
+          "toastMutex": [
+            {
+              "toast": "common_device_control_lock_message",
+              "value": "1",
+              "key": "electric_lock"
+            },
+            {
+              "toast": "common_device_control_open_use_function",
+              "value": "0",
+              "key": "on_off"
+            },
+            {
+              "toast": "common_device_control_dehumidify_fan_alert",
+              "value": "2",
+              "key": "air_con_func"
+            },
+            {
+              "toast": "common_device_control_8c_heating_alert",
+              "value": "8",
+              "key": "temperature"
+            },
+            {
+              "toast": "common_device_control_8c_heating_alert",
+              "value": "2",
+              "key": "eight_heat"
+            },
+            {
+              "toast": "common_device_control_gold_sleep_alert",
+              "value": "1",
+              "key": "sleep_diy"
+            }
+          ],
+          "specs": [
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "低档"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "中档"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "高档"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "静音"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "自动"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "valueN": "强力"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "中低"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "中高"
+            }
+          ],
+          "controlMutex": [
+            {
+              "control": [
+                {
+                  "value": "0",
+                  "key": "ai_ctl"
+                }
+              ]
+            }
+          ],
+          "keyN": "风速",
+          "key": "wind_speed"
+        },
+        "data.configContent.temperature": {
+          "toastMutex": [
+            {
+              "toast": "common_device_control_lock_message",
+              "value": "1",
+              "key": "electric_lock"
+            },
+            {
+              "toast": "common_device_control_open_use_function",
+              "value": "0",
+              "key": "on_off"
+            },
+            {
+              "toast": "common_device_control_auto_mode_temp_alert",
+              "value": "0&&!37",
+              "key": "air_con_func&&deviceSupport"
+            },
+            {
+              "toast": "common_device_control_fan_mode_temp_alert",
+              "value": "6",
+              "key": "air_con_func"
+            },
+            {
+              "toast": "common_device_control_8c_heating_alert",
+              "value": "8",
+              "key": "temperature"
+            },
+            {
+              "toast": "common_device_control_gold_sleep_alert",
+              "value": "1",
+              "key": "sleep_diy"
+            },
+            {
+              "toast": "common_device_control_8c_heating_alert",
+              "value": "2",
+              "key": "eight_heat"
+            }
+          ],
+          "specs": [],
+          "controlMutex": [
+            {
+              "control": [
+                {
+                  "value": "0",
+                  "key": "ai_ctl"
+                }
+              ]
+            }
+          ],
+          "keyN": "温度",
+          "key": "temperature"
+        },
+        "data.configContent.on_off": {
+          "toastMutex": [
+            {
+              "toast": "common_device_control_lock_message",
+              "value": "1",
+              "key": "electric_lock"
+            }
+          ],
+          "specs": [
+            {
+              "toastMutex": [],
+              "showMutex": [
+                {
+                  "func": [
+                    "temperature",
+                    "air_con_func",
+                    "wind_speed",
+                    "up_down_swing",
+                    "left_right_swing",
+                    "electric_heating",
+                    "sleep_mode",
+                    "healthy",
+                    "eco",
+                    "ai_eco",
+                    "electric_lock",
+                    "old_comfort_wind",
+                    "comfort_wind",
+                    "zero_wind_feeling",
+                    "wind_light",
+                    "wind_light2",
+                    "wind_child",
+                    "wind_smart",
+                    "wind_ring",
+                    "wind_far",
+                    "power_limit"
+                  ]
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "1&&0&&1",
+                  "key": "comfort_wind&&wind_speed&&air_con_func"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "1&&0&&6",
+                  "key": "comfort_wind&&wind_speed&&air_con_func"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "sleep_mode"
+                    },
+                    {
+                      "value": "0",
+                      "key": "electric_heating"
+                    },
+                    {
+                      "value": "0",
+                      "key": "eco"
+                    },
+                    {
+                      "value": "0",
+                      "key": "ai_eco"
+                    },
+                    {
+                      "value": "0",
+                      "key": "healthy"
+                    },
+                    {
+                      "value": "0",
+                      "key": "power_limit"
+                    },
+                    {
+                      "value": "0",
+                      "key": "zero_wind_feeling"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_smart"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_ring"
+                    },
+                    {
+                      "value": "0",
+                      "key": "ventilate"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light2"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    },
+                    {
+                      "value": "1",
+                      "key": "wind_flow"
+                    },
+                    {
+                      "value": "1",
+                      "key": "auto_eco"
+                    },
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "关闭"
+            },
+            {
+              "toastMutex": [],
+              "showMutex": [
+                {
+                  "func": [
+                    "clean",
+                    "anti_fungus"
+                  ]
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "electric_heating"
+                    }
+                  ],
+                  "value": "4",
+                  "key": "air_con_func"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "clean"
+                    }
+                  ]
+                }
+              ],
+              "valueN": "开启"
+            }
+          ],
+          "controlMutex": [
+            {
+              "control": [
+                {
+                  "value": "0",
+                  "key": "ai_ctl"
+                }
+              ]
+            }
+          ],
+          "keyN": "开关",
+          "key": "on_off"
+        }
+      },
+      "donnees": {
+        "code": 200,
+        "message": "",
+        "data": {
+          "configId": "deviceMutex",
+          "name": "互斥逻辑表",
+          "configContent": {
+            "ai_eco": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "4",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "1",
+                  "key": "power_limit"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "2",
+                  "key": "power_limit"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "3",
+                  "key": "power_limit"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "power_limit"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "ultra_silence"
+                        }
+                      ],
+                      "value": "38",
+                      "key": "deviceSupport"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "智能省电",
+              "key": "ai_eco"
+            },
+            "wind_child": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&0",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&2",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&4",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&6",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "1&&0",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "1&&2",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "1&&6",
+                  "key": "use_type&&air_con_func"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "ventilate"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate_auxiliary"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate"
+                        },
+                        {
+                          "value": "1",
+                          "key": "ventilate_auxiliary"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate_auxiliary"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "母婴风",
+              "key": "wind_child"
+            },
+            "ventilate": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_self_clean_alert",
+                  "value": "1",
+                  "key": "clean"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "clean"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "ventilate_auxiliary"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "4",
+                          "key": "ventilate_auxiliary"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "排风"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "clean"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "ventilate_auxiliary"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "4",
+                          "key": "ventilate_auxiliary"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "新风"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "clean"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "ventilate_auxiliary"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "4",
+                          "key": "ventilate_auxiliary"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "智慧新风"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "新风",
+              "key": "ventilate"
+            },
+            "auto_eco": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": {
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                "2": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                }
+              },
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "人走自动节能",
+              "key": "auto_eco"
+            },
+            "air_con_func": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": {
+                "0": {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "electric_heating",
+                        "eco",
+                        "ai_eco",
+                        "sleep_mode",
+                        "old_comfort_wind",
+                        "zero_wind_feeling",
+                        "comfort_wind",
+                        "wind_child",
+                        "wind_far",
+                        "wind_light",
+                        "wind_light2",
+                        "ultra_silence",
+                        "eight_heat",
+                        "pet_model"
+                      ]
+                    },
+                    {
+                      "func": [
+                        "wind_smart"
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    },
+                    {
+                      "func": [
+                        "temperature"
+                      ],
+                      "value": "!37",
+                      "key": "deviceSupport"
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "electric_heating"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "24",
+                          "key": "temperature"
+                        },
+                        {
+                          "value": "0",
+                          "key": "half"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "eight_heat"
+                        }
+                      ],
+                      "value": "34",
+                      "key": "deviceSupport"
+                    }
+                  ],
+                  "valueN": "自动"
+                },
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "electric_heating",
+                        "eight_heat"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "electric_heating"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "0&&15&&1",
+                      "key": "wind_speed&&deviceSupport&&comfort_wind"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "eight_heat"
+                        }
+                      ],
+                      "value": "34",
+                      "key": "deviceSupport"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "25",
+                          "key": "temperature"
+                        },
+                        {
+                          "value": "0",
+                          "key": "half"
+                        }
+                      ],
+                      "value": "2",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "valueN": "制冷"
+                },
+                "2": {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "wind_speed",
+                        "electric_heating",
+                        "eco",
+                        "ai_eco",
+                        "old_comfort_wind",
+                        "zero_wind_feeling",
+                        "wind_light",
+                        "wind_light2",
+                        "wind_child",
+                        "wind_far",
+                        "eight_heat",
+                        "ultra_silence",
+                        "pet_model"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "electric_heating"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "eight_heat"
+                        }
+                      ],
+                      "value": "34",
+                      "key": "deviceSupport"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "25",
+                          "key": "temperature"
+                        },
+                        {
+                          "value": "0",
+                          "key": "half"
+                        }
+                      ],
+                      "value": "2",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "valueN": "除湿"
+                },
+                "4": {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "eco",
+                        "ai_eco",
+                        "old_comfort_wind",
+                        "zero_wind_feeling",
+                        "comfort_wind",
+                        "pet_model"
+                      ]
+                    },
+                    {
+                      "func": [
+                        "wind_child",
+                        "wind_light",
+                        "wind_light2",
+                        "wind_smart"
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "electric_heating"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "eight_heat"
+                        }
+                      ],
+                      "value": "34",
+                      "key": "deviceSupport"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "25",
+                          "key": "temperature"
+                        },
+                        {
+                          "value": "0",
+                          "key": "half"
+                        }
+                      ],
+                      "value": "2",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "valueN": "制热"
+                },
+                "6": {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "temperature",
+                        "sleep_mode",
+                        "electric_heating",
+                        "eco",
+                        "ai_eco",
+                        "old_comfort_wind",
+                        "zero_wind_feeling",
+                        "wind_child",
+                        "wind_smart",
+                        "wind_far",
+                        "wind_light",
+                        "wind_light2",
+                        "eight_heat",
+                        "ultra_silence",
+                        "pet_model"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "electric_heating"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "0&&15&&1",
+                      "key": "wind_speed&&deviceSupport&&comfort_wind"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "4",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "eight_heat"
+                        }
+                      ],
+                      "value": "34",
+                      "key": "deviceSupport"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "25",
+                          "key": "temperature"
+                        },
+                        {
+                          "value": "0",
+                          "key": "half"
+                        }
+                      ],
+                      "value": "2",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "valueN": "送风"
+                }
+              },
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "silence"
+                    },
+                    {
+                      "value": "0",
+                      "key": "turbo"
+                    },
+                    {
+                      "value": "0",
+                      "key": "sleep_mode"
+                    },
+                    {
+                      "value": "0",
+                      "key": "eco"
+                    },
+                    {
+                      "value": "0",
+                      "key": "ai_eco"
+                    },
+                    {
+                      "value": "0",
+                      "key": "zero_wind_feeling"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light2"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_far"
+                    },
+                    {
+                      "value": "0",
+                      "key": "sleep_diy"
+                    },
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    }
+                  ],
+                  "value": "1",
+                  "key": "use_type"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "ultra_silence"
+                    }
+                  ],
+                  "value": "38",
+                  "key": "deviceSupport"
+                }
+              ],
+              "keyN": "模式",
+              "key": "air_con_func"
+            },
+            "screen": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启屏显"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "智能光感"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "屏显",
+              "key": "screen"
+            },
+            "wind_light2": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [
+                    {
+                      "toast": "common_device_only_support_hot_cool_mode",
+                      "value": "0",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "toast": "common_device_only_support_hot_cool_mode",
+                      "value": "2",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "toast": "common_device_only_support_hot_cool_mode",
+                      "value": "6",
+                      "key": "air_con_func"
+                    }
+                  ],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "轻风1（轻风感）"
+                },
+                {
+                  "toastMutex": [
+                    {
+                      "toast": "common_device_control_only_use_cool_mode",
+                      "value": "0",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "toast": "common_device_control_only_use_cool_mode",
+                      "value": "2",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "toast": "common_device_control_only_use_cool_mode",
+                      "value": "4",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "toast": "common_device_control_only_use_cool_mode",
+                      "value": "6",
+                      "key": "air_con_func"
+                    }
+                  ],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "轻风2（微风感）"
+                },
+                {
+                  "toastMutex": [
+                    {
+                      "toast": "common_device_only_support_hot_cool_mode",
+                      "value": "0",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "toast": "common_device_only_support_hot_cool_mode",
+                      "value": "2",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "toast": "common_device_only_support_hot_cool_mode",
+                      "value": "6",
+                      "key": "air_con_func"
+                    }
+                  ],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "轻风（智慧轻风）"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "智慧沐轻风2",
+              "key": "wind_light2"
+            },
+            "eco": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "4",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "1",
+                  "key": "power_limit"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "2",
+                  "key": "power_limit"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "3",
+                  "key": "power_limit"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "power_limit"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "ultra_silence"
+                        }
+                      ],
+                      "value": "38",
+                      "key": "deviceSupport"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "智能省电",
+              "key": "eco"
+            },
+            "up_down_swing": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": {
+                "0": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                },
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格1"
+                },
+                "2": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格2"
+                },
+                "3": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格3"
+                },
+                "4": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格4"
+                },
+                "5": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格5"
+                },
+                "7": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                }
+              },
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "zero_wind_feeling"
+                    }
+                  ],
+                  "value": "0",
+                  "key": "use_type"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "1&&0&&1&&15",
+                  "key": "comfort_wind&&wind_speed&&air_con_func&&deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "1&&0&&6&&15",
+                  "key": "comfort_wind&&wind_speed&&air_con_func&&deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    },
+                    {
+                      "value": "0",
+                      "key": "comfort_wind"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_smart"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_ring"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light2"
+                    },
+                    {
+                      "value": "1",
+                      "key": "wind_flow"
+                    },
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "上下摆风",
+              "key": "up_down_swing"
+            },
+            "power_limit": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_eco_alert",
+                  "value": "1",
+                  "key": "eco"
+                },
+                {
+                  "toast": "common_device_control_eco_alert",
+                  "value": "1",
+                  "key": "ai_eco"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "eco",
+                        "ai_eco",
+                        "eight_heat"
+                      ]
+                    }
+                  ],
+                  "valueN": "低（最省电）"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "eco",
+                        "ai_eco",
+                        "eight_heat"
+                      ]
+                    }
+                  ],
+                  "valueN": "中"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "eco",
+                        "ai_eco",
+                        "eight_heat"
+                      ]
+                    }
+                  ],
+                  "valueN": "高（强性能）"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "匹数可调",
+              "key": "power_limit"
+            },
+            "electric_lock": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "on_off",
+                        "temperature",
+                        "air_con_func",
+                        "wind_speed",
+                        "up_down_swing",
+                        "left_right_swing",
+                        "electric_heating",
+                        "sleep_mode",
+                        "healthy",
+                        "screen",
+                        "eco",
+                        "ai_eco",
+                        "old_comfort_wind",
+                        "comfort_wind",
+                        "zero_wind_feeling",
+                        "wind_light",
+                        "wind_light2",
+                        "wind_child",
+                        "ventilate",
+                        "ventilate_speed",
+                        "wind_smart",
+                        "wind_ring",
+                        "wind_far",
+                        "power_limit",
+                        "clean",
+                        "anti_fungus"
+                      ]
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "童锁",
+              "key": "electric_lock"
+            },
+            "anti_fungus": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_off_function_to_support",
+                  "value": "1",
+                  "key": "on_off"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "防霉",
+              "key": "anti_fungus"
+            },
+            "temperature": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_auto_mode_temp_alert",
+                  "value": "0&&!37",
+                  "key": "air_con_func&&deviceSupport"
+                },
+                {
+                  "toast": "common_device_control_fan_mode_temp_alert",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "8",
+                  "key": "temperature"
+                },
+                {
+                  "toast": "common_device_control_gold_sleep_alert",
+                  "value": "1",
+                  "key": "sleep_diy"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "specs": [],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "温度",
+              "key": "temperature"
+            },
+            "wind_speed": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_dehumidify_fan_alert",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "8",
+                  "key": "temperature"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "2",
+                  "key": "eight_heat"
+                },
+                {
+                  "toast": "common_device_control_gold_sleep_alert",
+                  "value": "1",
+                  "key": "sleep_diy"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "低档"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "中档"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "高档"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "静音"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "自动"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "强力"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "中低"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "中高"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "风速",
+              "key": "wind_speed"
+            },
+            "left_right_swing": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格1"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格2"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格3"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格5"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "定格4"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "zero_wind_feeling"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_child"
+                    }
+                  ],
+                  "value": "1",
+                  "key": "useType"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "1&&0&&1&&15",
+                  "key": "comfort_wind&&wind_speed&&air_con_func&&deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "1",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "value": "1&&0&&6&&15",
+                  "key": "comfort_wind&&wind_speed&&air_con_func&&deviceSupport"
+                },
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "comfort_wind"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_smart"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light"
+                    },
+                    {
+                      "value": "0",
+                      "key": "wind_light2"
+                    },
+                    {
+                      "value": "1",
+                      "key": "wind_flow"
+                    },
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "左右摆风",
+              "key": "left_right_swing"
+            },
+            "wind_smart": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_wind_invalid",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_heat_invalid",
+                  "value": "0&&4",
+                  "key": "use_type&&air_con_func"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        },
+                        {
+                          "value": "1",
+                          "key": "wind_flow"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "智享",
+              "key": "wind_smart"
+            },
+            "wind_far": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_sleep_diy_on_rule",
+                  "value": "1",
+                  "key": "sleep_mode"
+                },
+                {
+                  "toast": "common_device_control_gold_sleep_conflict",
+                  "value": "1",
+                  "key": "sleep_diy"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "5",
+                          "key": "wind_speed"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "超远风",
+              "key": "wind_far"
+            },
+            "sleep_mode": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_wind_invalid",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_auto_mode_invalid",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_gold_sleep_alert",
+                  "value": "1",
+                  "key": "sleep_diy"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "wind_far"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "eight_heat"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "25",
+                          "key": "temperature"
+                        },
+                        {
+                          "value": "0",
+                          "key": "half"
+                        }
+                      ],
+                      "value": "2",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "睡眠",
+              "key": "sleep_mode"
+            },
+            "wind_flow": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": {
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                "2": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "风随人"
+                },
+                "3": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "风避人"
+                }
+              },
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "人感",
+              "key": "wind_flow"
+            },
+            "pet_model": {
+              "toastMutex": [
+                {
+                  "toast": "空调已锁定，解锁后才可操作",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_pet_only_use_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_pet_only_use_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_pet_only_use_cool_mode",
+                  "value": "4",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_pet_only_use_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                }
+              ],
+              "specs": [],
+              "keyN": "宠物托管",
+              "key": "pet_model"
+            },
+            "electric_heating": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "1",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "8",
+                  "key": "temperature"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "辅热",
+              "key": "electric_heating"
+            },
+            "comfort_wind": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_only_support_cool_dry_wind_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_cool_dry_wind_mode",
+                  "value": "4",
+                  "key": "air_con_func"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "1&&0",
+                      "key": "air_con_func&&wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "6&&0",
+                      "key": "air_con_func&&wind_speed"
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "1",
+                          "key": "wind_flow"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "2",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "3",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "3",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "4",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "5",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "6",
+                      "key": "wind_speed"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "7",
+                      "key": "wind_speed"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "舒风",
+              "key": "comfort_wind"
+            },
+            "eight_heat": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "1",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_hot_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_ultra_silent_alert",
+                  "value": "2",
+                  "key": "ultra_silence"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "1",
+                  "key": "power_limit"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "2",
+                  "key": "power_limit"
+                },
+                {
+                  "toast": "common_device_control_power_limit_alert",
+                  "value": "3",
+                  "key": "power_limit"
+                }
+              ],
+              "specs": {
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "25",
+                          "key": "temperature"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                "2": {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "electric_heating",
+                        "ultra_silence",
+                        "power_limit"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "4",
+                          "key": "wind_speed"
+                        },
+                        {
+                          "value": "0",
+                          "key": "sleep_mode"
+                        },
+                        {
+                          "value": "0",
+                          "key": "sleep_diy"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              },
+              "keyN": "8度制热",
+              "key": "eight_heat"
+            },
+            "wind_ring": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "1",
+                          "key": "wind_flow"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "下环域"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "1",
+                          "key": "wind_flow"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "上环域"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "环域",
+              "key": "wind_ring"
+            },
+            "on_off": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "temperature",
+                        "air_con_func",
+                        "wind_speed",
+                        "up_down_swing",
+                        "left_right_swing",
+                        "electric_heating",
+                        "sleep_mode",
+                        "healthy",
+                        "eco",
+                        "ai_eco",
+                        "electric_lock",
+                        "old_comfort_wind",
+                        "comfort_wind",
+                        "zero_wind_feeling",
+                        "wind_light",
+                        "wind_light2",
+                        "wind_child",
+                        "wind_smart",
+                        "wind_ring",
+                        "wind_far",
+                        "power_limit"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "1&&0&&1",
+                      "key": "comfort_wind&&wind_speed&&air_con_func"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_speed"
+                        }
+                      ],
+                      "value": "1&&0&&6",
+                      "key": "comfort_wind&&wind_speed&&air_con_func"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "sleep_mode"
+                        },
+                        {
+                          "value": "0",
+                          "key": "electric_heating"
+                        },
+                        {
+                          "value": "0",
+                          "key": "eco"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ai_eco"
+                        },
+                        {
+                          "value": "0",
+                          "key": "healthy"
+                        },
+                        {
+                          "value": "0",
+                          "key": "power_limit"
+                        },
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light2"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "1",
+                          "key": "wind_flow"
+                        },
+                        {
+                          "value": "1",
+                          "key": "auto_eco"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ai_ctl"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "clean",
+                        "anti_fungus"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "electric_heating"
+                        }
+                      ],
+                      "value": "4",
+                      "key": "air_con_func"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "clean"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "开关",
+              "key": "on_off"
+            },
+            "clean": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_off_function_to_support",
+                  "value": "1",
+                  "key": "on_off"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_flow"
+                        },
+                        {
+                          "value": "1",
+                          "key": "auto_eco"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "清洁",
+              "key": "clean"
+            },
+            "zero_wind_feeling": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "4",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "comfort_wind"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ventilate_auxiliary"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "1",
+                          "key": "wind_flow"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "零风感",
+              "key": "zero_wind_feeling"
+            },
+            "sleep_diy": {
+              "toastMutex": [],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "sleep_mode"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "eight_heat"
+                        }
+                      ]
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "25",
+                          "key": "temperature"
+                        },
+                        {
+                          "value": "0",
+                          "key": "half"
+                        }
+                      ],
+                      "value": "2",
+                      "key": "eight_heat"
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "黄金舒睡",
+              "key": "sleep_diy"
+            },
+            "air_light": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_fresh_air_required",
+                  "value": "0",
+                  "key": "ventilate"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                }
+              ],
+              "keyN": "空气质量灯",
+              "key": "air_light"
+            },
+            "ultra_silence": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_8c_heating_alert",
+                  "value": "2",
+                  "key": "eight_heat"
+                }
+              ],
+              "specs": {
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                "2": {
+                  "toastMutex": [],
+                  "showMutex": [
+                    {
+                      "func": [
+                        "eight_heat"
+                      ]
+                    }
+                  ],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "eco"
+                        },
+                        {
+                          "value": "0",
+                          "key": "ai_eco"
+                        },
+                        {
+                          "value": "3",
+                          "key": "wind_speed"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "开启"
+                }
+              },
+              "keyN": "一键超静音",
+              "key": "ultra_silence"
+            },
+            "ventilate_auxiliary": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_fresh_air_alert",
+                  "value": "0",
+                  "key": "ventilate"
+                }
+              ],
+              "specs": {
+                "0": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "低"
+                },
+                "2": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "中"
+                },
+                "3": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "高"
+                },
+                "4": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "自动"
+                },
+                "7": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        },
+                        {
+                          "value": "2",
+                          "key": "ventilate"
+                        }
+                      ]
+                    }
+                  ],
+                  "valueN": "MAX"
+                }
+              },
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "新风速",
+              "key": "ventilate_auxiliary"
+            },
+            "healthy": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "健康",
+              "key": "healthy"
+            },
+            "old_comfort_wind": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "2",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "4",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "6",
+                  "key": "air_con_func"
+                },
+                {
+                  "toast": "common_device_control_mutexauto_wind_invalid",
+                  "value": "6",
+                  "key": "wind_speed"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                }
+              ],
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "舒风",
+              "key": "old_comfort_wind"
+            },
+            "wind_light": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                },
+                {
+                  "toast": "common_device_control_open_use_function",
+                  "value": "0",
+                  "key": "on_off"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&0",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&2",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&4",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_control_only_use_cool_mode",
+                  "value": "0&&6",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "1&&0",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "1&&2",
+                  "key": "use_type&&air_con_func"
+                },
+                {
+                  "toast": "common_device_only_support_hot_cool_mode",
+                  "value": "1&&6",
+                  "key": "use_type&&air_con_func"
+                }
+              ],
+              "specs": {
+                "0": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "关闭"
+                },
+                "1": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "1",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "0",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "轻风1"
+                },
+                "3": {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "controlMutex": [
+                    {
+                      "control": [
+                        {
+                          "value": "1",
+                          "key": "zero_wind_feeling"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        }
+                      ],
+                      "value": "0",
+                      "key": "use_type"
+                    },
+                    {
+                      "control": [
+                        {
+                          "value": "3",
+                          "key": "wind_light"
+                        },
+                        {
+                          "value": "7",
+                          "key": "up_down_swing"
+                        },
+                        {
+                          "value": "7",
+                          "key": "left_right_swing"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_far"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_ring"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_smart"
+                        },
+                        {
+                          "value": "0",
+                          "key": "wind_child"
+                        }
+                      ],
+                      "value": "1",
+                      "key": "use_type"
+                    }
+                  ],
+                  "valueN": "轻风（智慧轻风）"
+                }
+              },
+              "controlMutex": [
+                {
+                  "control": [
+                    {
+                      "value": "0",
+                      "key": "ai_ctl"
+                    }
+                  ]
+                }
+              ],
+              "keyN": "智慧沐轻风",
+              "key": "wind_light"
+            },
+            "ai_ctl": {
+              "toastMutex": [
+                {
+                  "toast": "common_device_control_lock_message",
+                  "value": "1",
+                  "key": "electric_lock"
+                }
+              ],
+              "specs": [
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "关闭"
+                },
+                {
+                  "toastMutex": [],
+                  "showMutex": [],
+                  "valueN": "开启"
+                }
+              ],
+              "keyN": "AI智控",
+              "key": "ai_ctl"
+            }
+          },
+          "configType": 1
+        }
+      }
+    },
+    {
+      "chemin": "/app/getConfig?id=deviceFunction",
+      "role": "candidate : fonctions par type d'appareil ?",
+      "http": 200,
+      "code": -1,
+      "erreur": "",
+      "forme": {
+        "code": "integer",
+        "message": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "code": -1,
+        "message": "配置不存在"
+      }
+    },
+    {
+      "chemin": "/app/getConfig?id=deviceType",
+      "role": "candidate : types d'appareil ?",
+      "http": 200,
+      "code": -1,
+      "erreur": "",
+      "forme": {
+        "code": "integer",
+        "message": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "code": -1,
+        "message": "配置不存在"
+      }
+    },
+    {
+      "chemin": "/app/getConfig?id=product",
+      "role": "candidate : catalogue produits ?",
+      "http": 200,
+      "code": -1,
+      "erreur": "",
+      "forme": {
+        "code": "integer",
+        "message": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "code": -1,
+        "message": "配置不存在"
+      }
+    },
+    {
+      "chemin": "/app/getConfig?id=all",
+      "role": "candidate : configuration complète ?",
+      "http": 200,
+      "code": -1,
+      "erreur": "",
+      "forme": {
+        "code": "integer",
+        "message": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "code": -1,
+        "message": "配置不存在"
+      }
+    },
+    {
+      "chemin": "/app/device/config?deviceId=masque:635d7a",
+      "role": "candidate : configuration DE CET appareil ?",
+      "http": 404,
+      "code": null,
+      "erreur": "",
+      "forme": {
+        "timestamp": "string",
+        "status": "integer",
+        "error": "string",
+        "path": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "timestamp": "2026-08-26T13:24:39.192+00:00",
+        "status": 404,
+        "error": "Not Found",
+        "path": "/app/device/config"
+      }
+    },
+    {
+      "chemin": "/app/device/function?deviceId=masque:635d7a",
+      "role": "candidate : fonctions DE CET appareil ?",
+      "http": 404,
+      "code": null,
+      "erreur": "",
+      "forme": {
+        "timestamp": "string",
+        "status": "integer",
+        "error": "string",
+        "path": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "timestamp": "2026-08-26T13:24:39.318+00:00",
+        "status": 404,
+        "error": "Not Found",
+        "path": "/app/device/function"
+      }
+    },
+    {
+      "chemin": "/app/device/v2/config?deviceId=masque:635d7a",
+      "role": "candidate : variante v2 ?",
+      "http": 404,
+      "code": null,
+      "erreur": "",
+      "forme": {
+        "timestamp": "string",
+        "status": "integer",
+        "error": "string",
+        "path": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "timestamp": "2026-08-26T13:24:39.436+00:00",
+        "status": 404,
+        "error": "Not Found",
+        "path": "/app/device/v2/config"
+      }
+    },
+    {
+      "chemin": "/app/user_device/config?deviceId=masque:635d7a",
+      "role": "candidate : variante sous user_device ?",
+      "http": 404,
+      "code": null,
+      "erreur": "",
+      "forme": {
+        "timestamp": "string",
+        "status": "integer",
+        "error": "string",
+        "path": "string"
+      },
+      "pistes": [],
+      "extraits": [],
+      "donnees": {
+        "timestamp": "2026-08-26T13:24:39.544+00:00",
+        "status": 404,
+        "error": "Not Found",
+        "path": "/app/user_device/config"
+      }
+    }
+  ]
+}

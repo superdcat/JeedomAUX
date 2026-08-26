@@ -61,7 +61,17 @@
         "Valeur par défaut du transport": "Transport default value",
         "Transport actif": "Active transport",
         "Dernière mise à jour": "Last update",
-        "Compte AUX Home non configuré : renseignez l'e-mail, le mot de passe et le pays": "AUX Home account not configured: enter the email, password and country"
+        "Compte AUX Home non configuré : renseignez l'e-mail, le mot de passe et le pays": "AUX Home account not configured: enter the email, password and country",
+        "Marche": "On",
+        "Arrêt": "Off",
+        "Régler la consigne": "Set the target temperature",
+        "Mode %s": "Mode %s",
+        "Vitesse %s": "Speed %s",
+        "Commande inconnue pour cet équipement": "Unknown command for this device",
+        "Valeur de consigne absente ou non numérique": "Target temperature value missing or not numeric",
+        "Consigne hors des bornes de l'équipement (%1$s à %2$s °C)": "Target temperature out of the device limits (%1$s to %2$s °C)",
+        "Cet équipement n'est pas relié à un appareil AUX Home — relancez un scan": "This device is not linked to an AUX Home appliance — run a new scan",
+        "Erreur interne lors de l'envoi de la commande — consultez les logs du plugin": "Internal error while sending the command — check the plugin logs"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",

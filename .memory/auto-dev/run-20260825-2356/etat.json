@@ -53,10 +53,10 @@
       "uc_dir": ".memory/auto-dev/run-20260825-2356/MVP-06",
       "existe": true,
       "etat": "en_cours",
-      "phase": "verif",
+      "phase": "memoire",
       "commit": null,
-      "detail": "verif-plugin RC=0, seul ecart i18n attendu",
-      "maj_le": "2026-08-26T10:22:42"
+      "detail": "CLAUDE.md: cycle commandes action + tell de reprise i18n",
+      "maj_le": "2026-08-26T18:39:13"
     },
     {
       "cle": "MVP/07",
@@ -95,5 +95,5 @@
       "maj_le": null
     }
   ],
-  "maj_le": "2026-08-26T10:22:42"
+  "maj_le": "2026-08-26T18:39:13"
 }

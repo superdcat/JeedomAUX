@@ -95,6 +95,37 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ `creerCommandesInfo()` est appelée par **`postSave()` ET `appliquerEtat()`** : un scan qui ne change
   rien n'émet aucun `save()`, donc aucun `postSave()` — sans le second appel, aucune commande
   n'apparaîtrait sur un parc déjà découvert avant UC05.
+
+  Depuis l'UC06, elle porte **symétriquement le cycle des commandes action** :
+  `definitionsCommandesAction()` (table privée dérivée du **profil de capacités**, jamais d'un catalogue
+  de modèles : `on`/`off`, `mode_<MODE_*>`, `fan_<VITESSE_*>` via `PREFIXE_CMD_MODE`/`PREFIXE_CMD_VITESSE`,
+  et `set_target_temp` en `slider`), `creerCommandesAction()` (idempotente, **même** unique lecture
+  `getCmd(null, null)`, appelée par **`postSave()` ET `appliquerEtat()`** pour la raison exacte décrite
+  ci-dessus) et `executerCommandeAction()`, sur laquelle `smartclimCmd::execute()` se contente
+  d'aiguiller.
+  ⚠️ **Une commande action est LIÉE à son info** (`setValue(<id de l'info>)`) et porte le widget
+  `smartclim::etat` : c'est ce qui fait que le bouton reflète l'état courant au lieu d'être un simple
+  déclencheur. La pose est **idempotente dans les deux branches** — création *et* commande déjà existante
+  dont le template est vide (retour volontaire au widget par défaut du core). Elle n'écrase **jamais** un
+  template posé, et n'émet un `save()` que si elle a effectivement reposé le widget.
+  ⚠️ **L'ordre envoyé est construit ENTIÈREMENT côté serveur** à partir du `logicalId`, validé contre
+  `definitionsCommandesAction()` ; `$_options` n'est lu que pour la consigne (`slider`), puis borné et
+  **quantifié** sur la grille du pas par `ordreEffectifConsigne()`. Un `execCmd()` de vieux scénario
+  visant un mode sorti du profil échoue proprement — c'est ce qui tient l'exigence « aucune valeur non
+  supportée » **hors** de l'interface, pas seulement dans l'UI.
+  ⚠️ **Tout ordre de mode ou de consigne porte TOUJOURS `power => 1`** : changer le mode d'un appareil
+  éteint l'allume, en **une** requête. Ne pas « optimiser » en retirant cette clé.
+  ⚠️ **Deux mémoires de cache, deux rôles distincts, à ne pas confondre** — aucune ne vit en
+  configuration d'équipement :
+  - `smartclim::ordre_recent::<id>` (`CLE_CACHE_DEDUP`, **10 s**) — empreinte du **contenu** de l'ordre,
+    posée **avant** l'appel réseau et supprimée en cas d'échec : anti-double-bip. La clé est le contenu,
+    **pas** l'équipement — deux ordres *différents* rapprochés passent donc bien tous les deux.
+  - `smartclim::ordres::<id>` (`CLE_CACHE_ORDRES`, `DUREE_GRACE` = **60 s**) — dernière valeur commandée
+    par concept, consommée par `filtrerEtatSelonOrdres()` **dans `appliquerEtat()`** : un état scruté plus
+    ancien qu'un ordre envoyé n'écrase pas la valeur commandée (anti-rollback). C'est là, et nulle part
+    ailleurs, que le cron d'UC07 héritera de la période de grâce — sans une ligne de plus.
+  ⚠️ L'**état optimiste** poussé après succès est celui **réellement envoyé** (après quantification), pas
+  celui demandé par l'utilisateur.
 - **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
   plugin. Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
   aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification
@@ -606,6 +637,13 @@ spec : c'est ce qui garde son contexte plat sur tout un run), et **un commit sur
   dernier run interrompu. L'état vit dans `.memory/auto-dev/<run>/etat.json` + `journal.jsonl`, écrits
   **au fil de l'eau** par les runners — et une reprise se fie d'abord au **constat sur le disque**
   (spec technique présente ? arbre sale ? commit existant ?), pas à la phase journalisée.
+  ⚠️ **Un run interrompu puis committé À LA MAIN casse ces trois indices d'un coup** (vécu le
+  2026-08-26 sur UC06) : `etat.json` annonçait `phase: verif`, `commit: null`, l'arbre était propre — et
+  pourtant le code était déjà dans `HEAD`, reviews et traduction jamais jouées. Le tell fiable est
+  ailleurs : **`python .claude/scripts/verif-plugin.py --tous` remontant des clés i18n manquantes**. La
+  traduction étant *toujours* la dernière étape d'un cycle, une UC dont le code est en place mais dont
+  l'i18n est incomplète est une UC **non terminée** — reprendre à l'étape « reviews croisées », pas
+  rejouer le plan ni l'implémentation.
 - **`recap.md` à la racine** — ⚠️ **fichier GÉNÉRÉ**, jamais édité à la main : il est réassemblé par
   `python .claude/scripts/auto-dev.py recap` depuis les `decisions.md` des runners et les révisions.
   Chaque entrée est autoportante (question, décision, alternatives écartées, portée dans le code, coût

@@ -1459,9 +1459,9 @@ class smartclim extends eqLogic {
         $cmd->setIsVisible(0);
         $cmd->save();
         $masquees++;
-        log::add('smartclim', 'info', 'Commande masquée (mode non supporté par l\'appareil) : ' . $cmd->getLogicalId() . ' sur ' . $this->getHumanName());
+        log::add('smartclim', 'info', 'Commande masquée (mode non supporté par l\'appareil) : ' . $cmd->getLogicalId() . ' sur ' . self::neutraliserPourLog($this->getHumanName()));
       } catch (Throwable $t) {
-        log::add('smartclim', 'warning', 'Masquage impossible pour ' . $cmd->getLogicalId() . ' : ' . $t->getMessage());
+        log::add('smartclim', 'warning', 'Masquage impossible pour ' . $cmd->getLogicalId() . ' : ' . self::neutraliserPourLog($t->getMessage()));
       }
     }
     return $masquees;
@@ -1684,6 +1684,17 @@ class smartclim extends eqLogic {
             $this->realignerBornesConsigne($existantes[$logicalId], $bornes);
           } catch (Throwable $t) {
             log::add('smartclim', 'error', 'Réalignement des bornes de "' . $logicalId . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+          }
+        } elseif ($existantes[$logicalId]->getTemplate('dashboard', '') === '') {
+          // Repose le widget si l'utilisateur est explicitement revenu au widget par
+          // défaut du core (§ 8.2 de la spec technique) : pose idempotente, jamais
+          // d'écrasement d'un template déjà posé (le nôtre ou celui choisi à la main).
+          try {
+            $existantes[$logicalId]->setTemplate('dashboard', 'smartclim::etat');
+            $existantes[$logicalId]->setTemplate('mobile', 'smartclim::etat');
+            $existantes[$logicalId]->save();
+          } catch (Throwable $t) {
+            log::add('smartclim', 'error', 'Repose du widget de "' . $logicalId . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
           }
         }
         continue;

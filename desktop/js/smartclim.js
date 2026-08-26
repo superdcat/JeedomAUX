@@ -86,6 +86,43 @@ function addCmdToTable(_cmd) {
   })
 }
 
+/* État de connexion (UC08, AC8). Tout le rendu de texte est SERVEUR
+   (smartclim::etatConnexionAffichable(), déjà traduit) : ce JS n'assemble AUCUN
+   libellé et ne valide rien, il injecte en .text() et dérive une classe CSS du SEUL
+   champ 'niveau' — jamais de raisonnement sur 'etat'. */
+var smartclimClassesNiveau = {
+  ok: "label-success",
+  warning: "label-warning",
+  danger: "label-danger",
+  neutre: "label-default"
+}
+
+function afficherEtatConnexion(_eqLogic) {
+  if (!isset(_eqLogic) || !isset(_eqLogic.id)) {
+    return
+  }
+  var etat = isset(smartclimEtatsConnexion) ? smartclimEtatsConnexion[_eqLogic.id] : null
+  var $etat = $("#span_etatConnexionEtat")
+  if (!isset(etat)) {
+    $etat.removeClass("label-success label-warning label-danger label-default").text("")
+    $("#span_etatConnexionIncidentLe").text("")
+    $("#span_etatConnexionDetail").text("")
+    $("#span_etatConnexionTransport").text("")
+    $("#span_etatConnexionDerniereDonnee").text("")
+    $("#span_etatConnexionFraicheur").text("")
+    return
+  }
+  var classeNiveau = isset(smartclimClassesNiveau[etat.niveau]) ? smartclimClassesNiveau[etat.niveau] : "label-default"
+  $etat.removeClass("label-success label-warning label-danger label-default").addClass(classeNiveau).text(etat.etat)
+  // AC9 : date de l'incident mémorisé, DÉJÀ formatée côté serveur (§ 4.5 de la spec
+  // technique) — affichée entre parenthèses, même convention que la fraîcheur ci-dessous.
+  $("#span_etatConnexionIncidentLe").text(etat.incidentLe ? "(" + etat.incidentLe + ")" : "")
+  $("#span_etatConnexionDetail").text(etat.detail)
+  $("#span_etatConnexionTransport").text(etat.transport)
+  $("#span_etatConnexionDerniereDonnee").text(etat.derniereDonnee)
+  $("#span_etatConnexionFraicheur").text(etat.fraicheur ? "(" + etat.fraicheur + ")" : "")
+}
+
 /* Profil de capacités détecté (UC04). Tout le rendu de texte est SERVEUR
    (smartclim::profilAffichable(), déjà traduit) : ce JS injecte uniquement en .text()
    et ne construit aucun libellé lui-même. */
@@ -93,6 +130,7 @@ function printEqLogic(_eqLogic) {
   if (!isset(_eqLogic) || !isset(_eqLogic.id)) {
     return
   }
+  afficherEtatConnexion(_eqLogic)
   var profil = isset(smartclimProfils) ? smartclimProfils[_eqLogic.id] : null
   if (!isset(profil) || !profil.detecte) {
     $("#div_profilCapacites").hide()
@@ -245,6 +283,12 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
       // que sur un tableau vide (cas "aucun équipement").
       if (resultat.profils) {
         $.extend(smartclimProfils, resultat.profils)
+      }
+      // UC08 (AC8) : même motif pour l'état de connexion — rafraîchit la variable pour
+      // que le prochain affichage d'un équipement (printEqLogic()) porte l'état à jour,
+      // sans attendre un rechargement complet de la page.
+      if (resultat.etatsConnexion) {
+        $.extend(smartclimEtatsConnexion, resultat.etatsConnexion)
       }
       $('#div_scanResultat').show()
     }

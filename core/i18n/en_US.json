@@ -72,7 +72,18 @@
         "Valeur de consigne absente ou non numérique": "Target temperature value missing or not numeric",
         "Consigne hors des bornes de l'équipement (%1$s à %2$s °C)": "Target temperature out of the device limits (%1$s to %2$s °C)",
         "Cet équipement n'est pas relié à un appareil AUX Home — relancez un scan": "This device is not linked to an AUX Home appliance — run a new scan",
-        "Erreur interne lors de l'envoi de la commande — consultez les logs du plugin": "Internal error while sending the command — check the plugin logs"
+        "Erreur interne lors de l'envoi de la commande — consultez les logs du plugin": "Internal error while sending the command — check the plugin logs",
+        "Erreur de connexion": "Connection error",
+        "État inconnu": "Unknown status",
+        "Aucun cycle de rafraîchissement n'a encore eu lieu": "No refresh cycle has occurred yet",
+        "Équipement désactivé": "Device disabled",
+        "État indisponible — consultez les logs du plugin": "Status unavailable — check the plugin logs",
+        "Inconnu": "Unknown",
+        "Jamais": "Never",
+        "à l'instant": "just now",
+        "il y a %d min": "%d min ago",
+        "il y a %1$d h %2$d min": "%1$d h %2$d min ago",
+        "il y a %d jour(s)": "%d day(s) ago"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -232,7 +243,10 @@
         "Rapport de diagnostic": "Diagnostic report",
         "Ce rapport sert à identifier ce que le cloud AUX Home expose des capacités réelles de chaque climatiseur (par exemple : cet appareil sait-il chauffer ?). Les identifiants y sont masqués, vous pouvez le partager tel quel.": "This report identifies what the AUX Home cloud exposes about the real capabilities of each air conditioner (for example: can this unit heat?). Identifiers are masked, so you can share it as is.",
         "Copier le rapport": "Copy the report",
-        "Télécharger le rapport complet": "Download the full report"
+        "Télécharger le rapport complet": "Download the full report",
+        "État de connexion": "Connection status",
+        "Transport actif": "Active transport",
+        "Dernière donnée reçue": "Last data received"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

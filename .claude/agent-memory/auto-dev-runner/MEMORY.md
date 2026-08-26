@@ -1,0 +1,1 @@
+- [execCmd() sur une commande action a un effet de bord](project-execcmd-action-effet-de-bord.md) — lire une valeur Jeedom peut actionner le matériel : filtrer `getType() === 'info'` avant tout `execCmd()`.

@@ -9,6 +9,12 @@ $eqLogics = eqLogic::byType($plugin->getId());
 // UC04 : profil de capacités de chaque équipement, DÉJÀ traduit côté serveur
 // (smartclim::profilsAffichables()) — le JS n'assemble aucun libellé, il injecte en .text().
 sendVarToJS('smartclimProfils', smartclim::profilsAffichables($eqLogics));
+// UC08 (AC8) : état de connexion de chaque équipement, DÉJÀ traduit côté serveur
+// (smartclim::etatsConnexionAffichables()) — même principe que smartclimProfils
+// ci-dessus : le JS n'assemble aucun libellé, il injecte en .text() et dérive une
+// classe CSS du seul champ 'niveau'.
+$smartclimEtatsConnexion = smartclim::etatsConnexionAffichables($eqLogics);
+sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 ?>
 
 <div class="row row-overflow">
@@ -110,6 +116,14 @@ sendVarToJS('smartclimProfils', smartclim::profilsAffichables($eqLogics));
 				echo '<img src="' . $eqLogic->getImage() . '"/>';
 				echo '<br>';
 				echo '<span class="name">' . $eqLogic->getHumanName(true, true) . '</span>';
+				// UC08 (AC8) : badge d'état de connexion, DÉJÀ traduit côté serveur
+				// (smartclim::etatsConnexionAffichables() ci-dessus, calculé une seule fois).
+				$sc_etatCarte = isset($smartclimEtatsConnexion[$eqLogic->getId()]) ? $smartclimEtatsConnexion[$eqLogic->getId()] : null;
+				if (is_array($sc_etatCarte)) {
+					$sc_classesNiveau = array('ok' => 'label-success', 'warning' => 'label-warning', 'danger' => 'label-danger', 'neutre' => 'label-default');
+					$sc_classeNiveau = isset($sc_classesNiveau[$sc_etatCarte['niveau']]) ? $sc_classesNiveau[$sc_etatCarte['niveau']] : 'label-default';
+					echo '<br><span class="label ' . $sc_classeNiveau . '">' . htmlspecialchars($sc_etatCarte['etat'], ENT_QUOTES, 'UTF-8') . '</span>';
+				}
 				echo '<span class="hiddenAsCard displayTableRight hidden">';
 				echo ($eqLogic->getIsVisible() == 1) ? '<i class="fas fa-eye" title="{{Equipement visible}}"></i>' : '<i class="fas fa-eye-slash" title="{{Equipement non visible}}"></i>';
 				echo '</span>';
@@ -238,6 +252,26 @@ sendVarToJS('smartclimProfils', smartclim::profilsAffichables($eqLogics));
 									<textarea class="form-control eqLogicAttr autogrow" data-l1key="comment"></textarea>
 								</div>
 							</div>
+							<legend><i class="fas fa-plug"></i> {{État de connexion}}</legend>
+							<div id="div_etatConnexion">
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{État}}</label>
+									<div class="col-sm-8">
+										<span class="label" id="span_etatConnexionEtat"></span>
+										<span class="text-muted" id="span_etatConnexionIncidentLe"></span>
+										<div class="text-muted" id="span_etatConnexionDetail"></div>
+									</div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Transport actif}}</label>
+									<div class="col-sm-8"><span id="span_etatConnexionTransport"></span></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Dernière donnée reçue}}</label>
+									<div class="col-sm-8"><span id="span_etatConnexionDerniereDonnee"></span> <small class="text-muted" id="span_etatConnexionFraicheur"></small></div>
+								</div>
+							</div>
+
 							<legend><i class="fas fa-list"></i> {{Profil de capacités détecté}}</legend>
 							<div id="div_profilCapacites">
 								<div class="form-group">

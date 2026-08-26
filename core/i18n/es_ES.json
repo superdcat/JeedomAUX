@@ -72,7 +72,18 @@
         "Valeur de consigne absente ou non numérique": "Valor de consigna ausente o no numérico",
         "Consigne hors des bornes de l'équipement (%1$s à %2$s °C)": "Consigna fuera de los límites del dispositivo (%1$s a %2$s °C)",
         "Cet équipement n'est pas relié à un appareil AUX Home — relancez un scan": "Este dispositivo no está vinculado a un aparato AUX Home — vuelva a lanzar un escaneo",
-        "Erreur interne lors de l'envoi de la commande — consultez les logs du plugin": "Error interno al enviar el comando — consulte los registros del plugin"
+        "Erreur interne lors de l'envoi de la commande — consultez les logs du plugin": "Error interno al enviar el comando — consulte los registros del plugin",
+        "Erreur de connexion": "Error de conexión",
+        "État inconnu": "Estado desconocido",
+        "Aucun cycle de rafraîchissement n'a encore eu lieu": "Todavía no se ha producido ningún ciclo de actualización",
+        "Équipement désactivé": "Dispositivo desactivado",
+        "État indisponible — consultez les logs du plugin": "Estado no disponible — consulte los registros del plugin",
+        "Inconnu": "Desconocido",
+        "Jamais": "Nunca",
+        "à l'instant": "ahora mismo",
+        "il y a %d min": "hace %d min",
+        "il y a %1$d h %2$d min": "hace %1$d h %2$d min",
+        "il y a %d jour(s)": "hace %d día(s)"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -232,7 +243,10 @@
         "Rapport de diagnostic": "Informe de diagnóstico",
         "Ce rapport sert à identifier ce que le cloud AUX Home expose des capacités réelles de chaque climatiseur (par exemple : cet appareil sait-il chauffer ?). Les identifiants y sont masqués, vous pouvez le partager tel quel.": "Este informe sirve para identificar qué expone la nube AUX Home sobre las capacidades reales de cada aire acondicionado (por ejemplo: ¿sabe calentar este aparato?). Los identificadores están enmascarados, puede compartirlo tal cual.",
         "Copier le rapport": "Copiar el informe",
-        "Télécharger le rapport complet": "Descargar el informe completo"
+        "Télécharger le rapport complet": "Descargar el informe completo",
+        "État de connexion": "Estado de conexión",
+        "Transport actif": "Transporte activo",
+        "Dernière donnée reçue": "Último dato recibido"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Acceso no autorizado"

@@ -40,7 +40,10 @@ try {
   $sc_paysDisponibles = smartclim::paysDisponiblesAuxHome();
   $sc_paysActuel = smartclim::paysAuxHome();
 } catch (Throwable $t) {
-  log::add('smartclim', 'error', 'Préparation de la liste des pays impossible : ' . get_class($t) . ' : ' . $t->getMessage() . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
+  // UC08, AC7 (A7-2) : $t->getMessage() neutralisé AVANT journalisation (même motif
+  // que core/ajax/smartclim.ajax.php, A7-1) : neutraliserPourLog() est PUBLIC depuis
+  // cette UC précisément pour cet appel.
+  log::add('smartclim', 'error', 'Préparation de la liste des pays impossible : ' . get_class($t) . ' : ' . smartclim::neutraliserPourLog($t->getMessage()) . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
 }
 
 // Mode « saisie libre » : le pays enregistré sort de la liste proposée (compte hors de la

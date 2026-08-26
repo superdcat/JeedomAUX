@@ -107,6 +107,14 @@ class smartclim extends eqLogic {
   const MARGE_ECHEANCE_CYCLE = 30;                            // secondes
   const CMD_RAFRAICHIR = 'refresh';                           // logicalId générique
 
+  // Mémoire du dernier incident de CONNEXION du cycle automatique (UC08, § 5 de la
+  // spec technique) : une entrée UNIQUE et GLOBALE (portée sur le compte cloud, pas sur
+  // un appareil — un appareil individuellement injoignable est déjà décrit par son
+  // `online = false`). TTL = DUREE_MEMOIRE_CYCLE, réutilisée sans constante nouvelle :
+  // au-delà, l'information n'a plus de valeur de diagnostic, et un cron arrêté ne doit
+  // pas laisser une erreur affichée indéfiniment.
+  const CLE_CACHE_DERNIER_INCIDENT = 'smartclim::dernier_incident';
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -170,6 +178,39 @@ class smartclim extends eqLogic {
       }
     }
     return $profils;
+  }
+
+  /**
+   * État de connexion AFFICHABLE (chaînes déjà traduites) de plusieurs équipements,
+   * indexé par ID d'équipement (UC08, AC8, § 4.3 de la spec technique) — miroir exact
+   * de profilsAffichables() : try/catch PAR équipement, ne lève jamais. Une lecture de
+   * cache/commande en échec sur UN équipement ne doit pas casser toute la page admin.
+   *
+   * @param smartclim[] $_eqLogics
+   * @return array<int,array>
+   */
+  public static function etatsConnexionAffichables(array $_eqLogics) {
+    $etats = array();
+    foreach ($_eqLogics as $eqLogic) {
+      if (!($eqLogic instanceof smartclim)) {
+        continue;
+      }
+      try {
+        $etats[$eqLogic->getId()] = $eqLogic->etatConnexionAffichable();
+      } catch (Throwable $t) {
+        log::add('smartclim', 'error', 'État de connexion indisponible (équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        $etats[$eqLogic->getId()] = array(
+          'niveau' => 'neutre',
+          'etat' => __('État indisponible — consultez les logs du plugin', __FILE__),
+          'detail' => '',
+          'transport' => '',
+          'fraicheur' => '',
+          'derniereDonnee' => '',
+          'incidentLe' => '',
+        );
+      }
+    }
+    return $etats;
   }
 
   /**
@@ -261,9 +302,12 @@ class smartclim extends eqLogic {
       // au diagnostic, faute de quoi 5 des 9 messages utilisateur affichés ci-dessous
       // disent « consultez les logs du plugin » alors que le log serait vide (finding
       // MAJOR de la revue croisée). AC4 reste respecté : ni secret ni trace de pile.
-      log::add('smartclim', 'error', 'Test de connexion AUX Home échoué (type ' . $e->getType() . ') : ' . $e->getMessage());
+      log::add('smartclim', 'error', 'Test de connexion AUX Home échoué (type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
       throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
     }
+    // UC08, AC9 : un test de connexion réussi vaut connexion réussie (§ 5.2 de la
+    // spec technique).
+    self::oublierIncident();
     return __('Connexion réussie au compte AUX Home', __FILE__);
   }
 
@@ -290,7 +334,7 @@ class smartclim extends eqLogic {
     try {
       $rapport = smartclimDiagnostic::rapport();
     } catch (smartclimException $e) {
-      log::add('smartclim', 'error', 'Sonde de diagnostic AUX Home échouée (type ' . $e->getType() . ') : ' . $e->getMessage());
+      log::add('smartclim', 'error', 'Sonde de diagnostic AUX Home échouée (type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
       throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
     }
     return array(
@@ -316,8 +360,10 @@ class smartclim extends eqLogic {
     config::remove('auxhome_email', 'smartclim');
     config::remove('auxhome_password', 'smartclim');
     // config::remove() ne déclenche PAS postConfig_* (cf. spec technique § 0.4) : la
-    // purge de session doit donc être explicite ici, pas déléguée au hook.
+    // purge de session doit donc être explicite ici, pas déléguée au hook. Même motif
+    // pour l'incident mémorisé (UC08, AC9, § 5.2 de la spec technique).
     smartclimAuxHomeApi::purgerSession();
+    self::oublierIncident();
     return __('Identifiants effacés', __FILE__);
   }
 
@@ -330,7 +376,7 @@ class smartclim extends eqLogic {
    * strictement : aucune smartclimCmd, aucune capacité, aucune trame HVAC, aucune
    * suppression/désactivation d'équipement (§ 0).
    *
-   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array}
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array}
    * @throws smartclimException Message DÉJÀ curaté en français (via messageErreurAuxHome()).
    */
   public static function scannerAuxHome() {
@@ -354,9 +400,11 @@ class smartclim extends eqLogic {
         // Point de bascule message TECHNIQUE -> message CURATÉ (même motif que
         // testerConnexionAuxHome()) : une smartclimException qui remonterait sans
         // curation mettrait un code métier brut dans le DOM.
-        log::add('smartclim', 'error', 'Scan AUX Home échoué (type ' . $e->getType() . ') : ' . $e->getMessage());
+        log::add('smartclim', 'error', 'Scan AUX Home échoué (type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
         throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
       }
+      // UC08, AC9 : un scan réussi vaut connexion réussie (§ 5.2 de la spec technique).
+      self::oublierIncident();
 
       $index = self::indexerEquipements();
       $compteurs = array(
@@ -485,6 +533,9 @@ class smartclim extends eqLogic {
         // UC04 : profil de capacités (affichable) des équipements créés/existants
         // touchés par ce scan, pour rafraîchir l'affichage sans recharger la page.
         'profils' => self::profilsAffichables($eqLogicsTouches),
+        // UC08 (AC8) : état de connexion des mêmes équipements, même motif — additif
+        // pur, ne change rien pour un appelant qui l'ignore.
+        'etatsConnexion' => self::etatsConnexionAffichables($eqLogicsTouches),
       );
     } finally {
       cache::delete(self::CLE_CACHE_VERROU_SCAN);
@@ -734,7 +785,7 @@ class smartclim extends eqLogic {
    * @param mixed $_valeur
    * @return string
    */
-  private static function neutraliserPourLog($_valeur) {
+  public static function neutraliserPourLog($_valeur) {
     if (!is_scalar($_valeur)) {
       return '';
     }
@@ -1029,6 +1080,69 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Mémorise le dernier échec de CONNEXION du cycle automatique (UC08, AC9, § 5 de la
+   * spec technique) : invariant en une phrase — seul le cycle automatique écrit
+   * l'incident, toute connexion réussie l'efface (oublierIncident()). Cache NON
+   * chiffré : aucun secret dedans (un type 1..4, une constante de contexte neutre, un
+   * timestamp). Appelée depuis les catch INTERNES de rafraichirAuxHome(), déjà couverte
+   * par son catch(Throwable) global : pas de try/catch propre nécessaire ici.
+   *
+   * @param int $_type Une des constantes smartclimException::TYPE_*.
+   * @param string $_contexte '' ou smartclimException::CONTEXTE_REQUETE_INITIALE.
+   */
+  private static function memoriserIncident($_type, $_contexte) {
+    cache::set(self::CLE_CACHE_DERNIER_INCIDENT, json_encode(array(
+      'type' => (int) $_type,
+      'contexte' => is_string($_contexte) ? $_contexte : '',
+      'ts' => time(),
+    )), self::DUREE_MEMOIRE_CYCLE);
+  }
+
+  /**
+   * Efface la mémoire d'incident : dès qu'une connexion RÉUSSIT (cycle automatique,
+   * scan manuel, test de connexion), et à tout changement d'identifiants (UC08, § 5.2
+   * de la spec technique).
+   */
+  private static function oublierIncident() {
+    cache::delete(self::CLE_CACHE_DERNIER_INCIDENT);
+  }
+
+  /**
+   * Dernier incident de connexion mémorisé, ou null si absent/illisible/de forme non
+   * conforme (UC08, § 5.1 de la spec technique) : aucun état forgé n'est affiché plutôt
+   * qu'un état inventé sur une entrée de cache corrompue.
+   *
+   * @return array{type:int, contexte:string, ts:int}|null
+   */
+  private static function incidentMemorise() {
+    $brut = cache::byKey(self::CLE_CACHE_DERNIER_INCIDENT)->getValue(null);
+    if (!is_string($brut) || $brut === '') {
+      return null;
+    }
+    $incident = json_decode($brut, true);
+    if (
+      !is_array($incident)
+      || !isset($incident['type'], $incident['contexte'], $incident['ts'])
+      || !is_numeric($incident['type'])
+      || !is_string($incident['contexte'])
+      || !is_numeric($incident['ts'])
+    ) {
+      return null;
+    }
+    $type = (int) $incident['type'];
+    $typesConnus = array(
+      smartclimException::TYPE_RESEAU,
+      smartclimException::TYPE_AUTH,
+      smartclimException::TYPE_PROTOCOLE,
+      smartclimException::TYPE_INTERNE,
+    );
+    if (!in_array($type, $typesConnus, true)) {
+      return null;
+    }
+    return array('type' => $type, 'contexte' => $incident['contexte'], 'ts' => (int) $incident['ts']);
+  }
+
+  /**
    * Index des équipements smartclim par identifiant d'appareil AUX Home (UC07, § 6 de
    * la spec technique) — clé UNIQUEMENT `auxhome_device_id`, jamais MAC/MAC inversée
    * (chercherEquipementExistant() n'est pas réutilisée ici : elle journalise un
@@ -1152,15 +1266,25 @@ class smartclim extends eqLogic {
         log::add('smartclim', $niveau, 'Cycle de rafraîchissement AUX Home échoué (type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
         $resultat['echecType'] = $e->getType();
         $resultat['echecContexte'] = $e->getContexte();
+        // UC08, AC9 : mémorise l'incident de CONNEXION du cycle automatique (§ 5.2 de
+        // la spec technique) — seul le cycle automatique écrit cette mémoire.
+        self::memoriserIncident($e->getType(), $e->getContexte());
         $resultat['horsLigne'] = self::basculerHorsLigne($cibles, 'appareil AUX Home injoignable au dernier cycle');
         return $resultat;
       } catch (Throwable $t) {
         log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Home : erreur inattendue lors de la lecture du compte : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
         $resultat['echecType'] = smartclimException::TYPE_INTERNE;
         $resultat['echecContexte'] = '';
+        // UC08, AC9 : même motif que ci-dessus, branche « erreur inattendue » de
+        // listerAppareils() (§ 5.2 de la spec technique).
+        self::memoriserIncident(smartclimException::TYPE_INTERNE, '');
         $resultat['horsLigne'] = self::basculerHorsLigne($cibles, 'appareil AUX Home injoignable au dernier cycle');
         return $resultat;
       }
+
+      // UC08, AC9 : un listerAppareils() réussi efface l'incident mémorisé (§ 5.2 de
+      // la spec technique) — les deux ne peuvent pas coexister.
+      self::oublierIncident();
 
       $resultat['appareils'] = count($appareils);
 
@@ -1250,6 +1374,10 @@ class smartclim extends eqLogic {
    */
   public static function postConfig_auxhome_password($value) {
     smartclimAuxHomeApi::purgerSession();
+    // UC08, AC9 : un changement d'identifiants efface aussi l'incident mémorisé (§ 5.2
+    // de la spec technique) — sans quoi une erreur affichée avant correction resterait
+    // visible jusqu'au cycle suivant.
+    self::oublierIncident();
   }
 
   /**
@@ -1258,6 +1386,8 @@ class smartclim extends eqLogic {
    */
   public static function postConfig_auxhome_email($value) {
     smartclimAuxHomeApi::purgerSession();
+    // UC08, AC9 : même motif que postConfig_auxhome_password() ci-dessus.
+    self::oublierIncident();
   }
 
   /**
@@ -1267,6 +1397,8 @@ class smartclim extends eqLogic {
    */
   public static function postConfig_auxhome_country($value) {
     smartclimAuxHomeApi::purgerSession();
+    // UC08, AC9 : même motif que postConfig_auxhome_password() ci-dessus.
+    self::oublierIncident();
   }
 
   /**
@@ -1588,6 +1720,160 @@ class smartclim extends eqLogic {
       'placeholderMax' => self::formaterDegre(isset($temperatureDetectee['max']) ? $temperatureDetectee['max'] : smartclimCapabilities::TEMP_MAX_DEFAUT),
       'placeholderPas' => self::formaterDegre(isset($temperatureDetectee['pas']) ? $temperatureDetectee['pas'] : smartclimCapabilities::TEMP_PAS_DEFAUT),
     );
+  }
+
+  /**
+   * État de connexion de CET équipement, PRÊT À L'AFFICHAGE (UC08, AC8, § 4.3/4.5 de
+   * la spec technique) : que des chaînes DÉJÀ traduites, aucun code, aucune donnée
+   * externe, aucun identifiant cloud. Table de résolution à ORDRE IMPÉRATIF (premier
+   * cas gagnant, § 4.5) : équipement désactivé -> compte non configuré -> en ligne ->
+   * incident non-réseau -> incident réseau -> hors ligne -> jamais interrogé.
+   *
+   * ⚠️ UNE seule lecture getCmd(null, null), indexée par logicalId ET FILTRÉE sur
+   * getType() === 'info' (§ 4.4 : execCmd() sur une commande ACTION l'EXÉCUTE — sans ce
+   * filtre, ouvrir la page d'un équipement pourrait allumer l'appareil).
+   *
+   * @return array{niveau:string, etat:string, detail:string, transport:string,
+   *               fraicheur:string, derniereDonnee:string, incidentLe:string}
+   */
+  public function etatConnexionAffichable() {
+    $commandesInfo = array();
+    foreach ($this->getCmd(null, null) as $cmdExistante) {
+      if ($cmdExistante->getType() === 'info') {
+        $commandesInfo[$cmdExistante->getLogicalId()] = $cmdExistante;
+      }
+    }
+
+    $cmdTransport = isset($commandesInfo[self::CMD_TRANSPORT]) ? $commandesInfo[self::CMD_TRANSPORT] : null;
+    $valeurTransport = ($cmdTransport instanceof cmd) ? (string) $cmdTransport->execCmd() : '';
+    $transport = ($valeurTransport !== '') ? $valeurTransport : __('Inconnu', __FILE__);
+
+    // 'derniereDonnee' = la valeur DÉJÀ FORMATÉE de la commande last_update (aucune
+    // migration, § 4.2 de la spec technique) ; 'fraicheur' = l'âge calculé sur SA DATE
+    // (getValueDate(), format machine), jamais un re-parsing de la chaîne affichée
+    // (strtotime() désambiguïserait un format d/m/Y en m/d/Y).
+    $cmdDerniereMaj = isset($commandesInfo[self::CMD_DERNIERE_MAJ]) ? $commandesInfo[self::CMD_DERNIERE_MAJ] : null;
+    $valeurDerniereMaj = ($cmdDerniereMaj instanceof cmd) ? (string) $cmdDerniereMaj->execCmd() : '';
+    $derniereDonnee = ($valeurDerniereMaj !== '') ? $valeurDerniereMaj : __('Jamais', __FILE__);
+    $dateDerniereMaj = ($cmdDerniereMaj instanceof cmd) ? $cmdDerniereMaj->getValueDate() : null;
+    $tsDerniereMaj = is_string($dateDerniereMaj) ? strtotime($dateDerniereMaj) : false;
+    $fraicheur = ($tsDerniereMaj !== false) ? self::dureeHumaine(max(0, time() - $tsDerniereMaj)) : __('Jamais', __FILE__);
+
+    $cmdOnline = isset($commandesInfo[smartclimCapabilities::CONCEPT_ONLINE]) ? $commandesInfo[smartclimCapabilities::CONCEPT_ONLINE] : null;
+    $valeurOnline = ($cmdOnline instanceof cmd) ? $cmdOnline->execCmd() : '';
+
+    if ($this->getIsEnable() == 0) {
+      return array(
+        'niveau' => 'neutre',
+        'etat' => __('Équipement désactivé', __FILE__),
+        'detail' => '',
+        'transport' => $transport,
+        'fraicheur' => $fraicheur,
+        'derniereDonnee' => $derniereDonnee,
+        'incidentLe' => '',
+      );
+    }
+
+    if (!self::compteConfigure()) {
+      return array(
+        'niveau' => 'danger',
+        'etat' => __('Compte AUX Home non configuré : renseignez l\'e-mail et le mot de passe', __FILE__),
+        'detail' => '',
+        'transport' => $transport,
+        'fraicheur' => $fraicheur,
+        'derniereDonnee' => $derniereDonnee,
+        'incidentLe' => '',
+      );
+    }
+
+    $online = (is_string($valeurOnline) || is_numeric($valeurOnline)) && (string) $valeurOnline !== '' ? (int) $valeurOnline === 1 : null;
+
+    if ($online === true) {
+      return array(
+        'niveau' => 'ok',
+        'etat' => self::libelleEnLigne(true),
+        'detail' => '',
+        'transport' => $transport,
+        'fraicheur' => $fraicheur,
+        'derniereDonnee' => $derniereDonnee,
+        'incidentLe' => '',
+      );
+    }
+
+    $incident = self::incidentMemorise();
+    if (is_array($incident)) {
+      $incidentLe = date('d/m/Y H:i:s', $incident['ts']);
+      if ($incident['type'] !== smartclimException::TYPE_RESEAU) {
+        return array(
+          'niveau' => 'danger',
+          'etat' => __('Erreur de connexion', __FILE__),
+          'detail' => self::messageErreurAuxHome($incident['type'], $incident['contexte']),
+          'transport' => $transport,
+          'fraicheur' => $fraicheur,
+          'derniereDonnee' => $derniereDonnee,
+          'incidentLe' => $incidentLe,
+        );
+      }
+      return array(
+        'niveau' => 'warning',
+        'etat' => self::libelleEnLigne(false),
+        'detail' => self::messageErreurAuxHome(smartclimException::TYPE_RESEAU, ''),
+        'transport' => $transport,
+        'fraicheur' => $fraicheur,
+        'derniereDonnee' => $derniereDonnee,
+        'incidentLe' => $incidentLe,
+      );
+    }
+
+    if ($online === false) {
+      return array(
+        'niveau' => 'warning',
+        'etat' => self::libelleEnLigne(false),
+        'detail' => '',
+        'transport' => $transport,
+        'fraicheur' => $fraicheur,
+        'derniereDonnee' => $derniereDonnee,
+        'incidentLe' => '',
+      );
+    }
+
+    // $online === null : la commande 'online' n'a encore jamais été poussée (équipement
+    // jamais interrogé par un cycle/scan).
+    return array(
+      'niveau' => 'warning',
+      'etat' => __('État inconnu', __FILE__),
+      'detail' => __('Aucun cycle de rafraîchissement n\'a encore eu lieu', __FILE__),
+      'transport' => $transport,
+      'fraicheur' => $fraicheur,
+      'derniereDonnee' => $derniereDonnee,
+      'incidentLe' => '',
+    );
+  }
+
+  /**
+   * Durée écoulée en français, prête à l'affichage (UC08, § 4.3 de la spec technique).
+   * __() enveloppé AVANT sprintf(), arguments POSITIONNELS dès qu'il y en a plusieurs
+   * (§ Impact i18n).
+   *
+   * @param int $_secondes
+   * @return string
+   */
+  private static function dureeHumaine($_secondes) {
+    $secondes = max(0, (int) $_secondes);
+    if ($secondes < 60) {
+      return __('à l\'instant', __FILE__);
+    }
+    $minutes = (int) floor($secondes / 60);
+    if ($minutes < 60) {
+      return sprintf(__('il y a %d min', __FILE__), $minutes);
+    }
+    $heures = (int) floor($minutes / 60);
+    $minutesRestantes = $minutes % 60;
+    if ($heures < 24) {
+      return sprintf(__('il y a %1$d h %2$d min', __FILE__), $heures, $minutesRestantes);
+    }
+    $jours = (int) floor($heures / 24);
+    return sprintf(__('il y a %d jour(s)', __FILE__), $jours);
   }
 
   /**

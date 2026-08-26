@@ -212,3 +212,38 @@ thermostats). C'est une **décision fonctionnelle**, pas une étiquette : une va
 (donnée de cloud rafraîchie en dizaines de minutes) ne doit pas être déclarée comme une sonde de pièce.
 Le laisser vide est réversible en une valeur ; le retirer après coup ne l'est pas, les intégrations
 l'ayant déjà consommé.
+
+### 8.7 ⚠️⚠️ `execCmd()` sur une commande ACTION l'EXÉCUTE — lire une valeur peut actionner le matériel
+
+**Le piège** : pour lire la valeur courante d'une commande, on écrit naturellement `$cmd->execCmd()`.
+Sur une commande **info**, c'est inoffensif — la valeur sort du cache (`getCache('value')`, cf. § 8.3),
+aucun effet de bord. Sur une commande **action**, `execCmd()` **exécute réellement l'action** : elle
+dispatche vers `cmd::execute()`, donc vers le `switch ($this->getLogicalId())` du plugin, donc vers un
+**vrai ordre envoyé à l'appareil**.
+
+**Conséquence concrète, vécue en conception au cycle UC08 de SmartClim** : une méthode d'affichage qui
+parcourt `getCmd(null, null)` pour lire l'état d'un équipement et appelle `execCmd()` sur chaque commande
+trouvée **allumerait le climatiseur en ouvrant simplement la page de configuration**. Le symptôme serait
+incompréhensible pour l'utilisateur (l'appareil démarre « tout seul » quand on consulte Jeedom) et
+invisible en relecture de code : rien ne distingue visuellement l'appel fautif de l'appel légitime.
+
+**La règle** : dès qu'on lit des valeurs depuis un ensemble de commandes non trié, **filtrer sur le type
+avant tout `execCmd()`** :
+
+```php
+foreach ($this->getCmd(null, null) as $cmd) {
+  if ($cmd->getType() === 'info') {          // garde FONCTIONNELLE, pas cosmétique
+    $index[$cmd->getLogicalId()] = $cmd;
+  }
+}
+```
+
+C'est une garde **fonctionnelle**, à traiter comme telle en review — pas un raffinement de style qu'on
+peut « simplifier ». Elle est d'autant plus nécessaire que les `logicalId` d'un plugin sont souvent
+**appariés** (une commande info `power` et une commande action `on`/`off` décrivant le même concept) :
+un index construit par `logicalId` sans filtre de type peut voir la commande action écraser l'info, et
+transformer chaque lecture en actionnement.
+
+⚠️ Corollaire pour la conception : préférer, quand c'est possible, une méthode de lecture qui **reçoit**
+les commandes info déjà filtrées plutôt qu'une méthode qui les redécouvre — le filtre oublié une seule
+fois suffit à produire l'incident.

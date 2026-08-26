@@ -72,7 +72,18 @@
         "Valeur de consigne absente ou non numérique": "Sollwert fehlt oder ist nicht numerisch",
         "Consigne hors des bornes de l'équipement (%1$s à %2$s °C)": "Sollwert außerhalb der Gerätegrenzen (%1$s bis %2$s °C)",
         "Cet équipement n'est pas relié à un appareil AUX Home — relancez un scan": "Dieses Gerät ist mit keinem AUX Home-Gerät verknüpft — starten Sie einen neuen Scan",
-        "Erreur interne lors de l'envoi de la commande — consultez les logs du plugin": "Interner Fehler beim Senden des Befehls — Plugin-Logs prüfen"
+        "Erreur interne lors de l'envoi de la commande — consultez les logs du plugin": "Interner Fehler beim Senden des Befehls — Plugin-Logs prüfen",
+        "Erreur de connexion": "Verbindungsfehler",
+        "État inconnu": "Unbekannter Status",
+        "Aucun cycle de rafraîchissement n'a encore eu lieu": "Es hat noch kein Aktualisierungszyklus stattgefunden",
+        "Équipement désactivé": "Gerät deaktiviert",
+        "État indisponible — consultez les logs du plugin": "Status nicht verfügbar — Plugin-Protokolle prüfen",
+        "Inconnu": "Unbekannt",
+        "Jamais": "Nie",
+        "à l'instant": "gerade eben",
+        "il y a %d min": "vor %d Min.",
+        "il y a %1$d h %2$d min": "vor %1$d Std. %2$d Min.",
+        "il y a %d jour(s)": "vor %d Tag(en)"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albanien",
@@ -232,7 +243,10 @@
         "Rapport de diagnostic": "Diagnosebericht",
         "Ce rapport sert à identifier ce que le cloud AUX Home expose des capacités réelles de chaque climatiseur (par exemple : cet appareil sait-il chauffer ?). Les identifiants y sont masqués, vous pouvez le partager tel quel.": "Dieser Bericht zeigt, was die AUX Home-Cloud über die tatsächlichen Fähigkeiten jedes Klimageräts offenlegt (zum Beispiel: kann dieses Gerät heizen?). Die Kennungen sind maskiert, Sie können ihn unverändert weitergeben.",
         "Copier le rapport": "Bericht kopieren",
-        "Télécharger le rapport complet": "Vollständigen Bericht herunterladen"
+        "Télécharger le rapport complet": "Vollständigen Bericht herunterladen",
+        "État de connexion": "Verbindungsstatus",
+        "Transport actif": "Aktiver Transport",
+        "Dernière donnée reçue": "Letzte empfangene Daten"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Nicht autorisierter Zugriff"

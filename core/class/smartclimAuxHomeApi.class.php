@@ -69,6 +69,14 @@ class smartclimAuxHomeApi {
   const BUDGET_COMMANDE = 18;
   const RESERVE_ORDRE = 4;
 
+  // Seuil de rejeu re-login du chemin d'ÉCRITURE (UC08, § 6 de la spec technique).
+  // Temps minimal (secondes) requis dans BUDGET_COMMANDE pour tenter re-login + rejeu.
+  // Arithmétique du pire cas : login réduit (3 + 3, ses deux planchers) + RESERVE_ORDRE (4).
+  // ⚠️ Seuil DÉDIÉ, distinct de la garde de listerAppareils() (BUDGET_LOGIN + 3 = 21 s) :
+  // celle-ci serait TOUJOURS fausse ici (BUDGET_COMMANDE == BUDGET_LOGIN == 18), donc du
+  // code mort.
+  const BUDGET_REJEU_ORDRE = 10;
+
   // Sonde de diagnostic (sondeDiagnostic()). DIAG_MAX_ROUTES borne le NOMBRE de routes
   // (la CLI accepte des chemins libres en argument : on ne martèle pas le backend d'un
   // tiers depuis une boucle mal fermée). BUDGET_SONDE borne le TEMPS TOTAL, parce que la
@@ -83,7 +91,14 @@ class smartclimAuxHomeApi {
 
   // Cache (chiffré) de la session AUX Home — cf. § 1.5 de la spec technique.
   const CLE_CACHE_SESSION = 'smartclim::session_auxhome';
-  const DUREE_CACHE_SESSION = 1800; // 30 minutes — pari documenté, à calibrer en UC08.
+  // 30 minutes. Avec le rejeu réactif présent sur les DEUX chemins (lecture depuis
+  // UC03, écriture depuis UC08), ce TTL n'est plus un paramètre de CORRECTION mais un
+  // simple réglage d'économie de requêtes : le rejeu couvre déjà l'expiration réelle,
+  // quelle qu'elle soit. Coûte environ 2 logins/heure sur l'intervalle par défaut de
+  // 5 min. Décision D-MVP08-04 : valeur INCHANGÉE (cf. spec technique UC08 § 7) — la
+  // télémétrie 'cree_le' (login()/session()) et les lignes de log de rejeu permettront
+  // de la calibrer factuellement en recette.
+  const DUREE_CACHE_SESSION = 1800;
 
   // Plausibilité de la température ambiante décodée (octet[15] de status.running - 32
   // est mathématiquement borné à [-32, 223], cf. spec technique UC05 § Contrats
@@ -240,7 +255,7 @@ class smartclimAuxHomeApi {
    * @param int $_budget Budget de temps GLOBAL des 2 requêtes de ce login, en
    *   secondes (UC06, § 5.2 de la spec technique — additif pur : BUDGET_LOGIN par
    *   défaut, comportement inchangé pour tous les appelants existants).
-   * @return array{jeton:string,uid:string,pseudo:string}
+   * @return array{jeton:string,uid:string,pseudo:string,cree_le:int}
    * @throws smartclimException Toujours une exception "propre" : recréée juste avant
    *   propagation (catch ci-dessous) pour ne jamais laisser filtrer, via la frame de
    *   requete(), le corps de requête chiffré (finding sécurité LOW de la revue croisée).
@@ -309,13 +324,18 @@ class smartclimAuxHomeApi {
       // Jeton tronqué à 6 caractères max en debug — jamais le jeton complet (§ 3.2).
       log::add('smartclim', 'debug', 'AUX Home : connexion réussie (jeton=' . substr($jeton, 0, 6) . '...)');
 
+      // UC08, § 7 : 'cree_le' est un ajout ADDITIF pur (télémétrie de calibration de
+      // DUREE_CACHE_SESSION) — les 2 clés du contrat ('jeton', 'uid') sont inchangées.
+      // Une entrée de cache d'avant cette UC reste valide, aucune migration.
+      $creeLe = time();
       cache::set(self::CLE_CACHE_SESSION, utils::encrypt(json_encode(array(
         'jeton' => $jeton,
         'uid' => $uid,
         'empreinte' => self::empreinteIdentifiants(),
+        'cree_le' => $creeLe,
       ))), self::DUREE_CACHE_SESSION);
 
-      return array('jeton' => $jeton, 'uid' => $uid, 'pseudo' => $pseudo);
+      return array('jeton' => $jeton, 'uid' => $uid, 'pseudo' => $pseudo, 'cree_le' => $creeLe);
     } catch (smartclimException $e) {
       // Recrée l'exception À CE POINT D'APPEL : sa trace d'origine peut embarquer, via
       // la frame de requete(), le corps chiffré ($_corps) envoyé au login. La reconstruire
@@ -334,7 +354,9 @@ class smartclimAuxHomeApi {
    *
    * @param int $_budgetLogin Budget PROPAGÉ à login() si un login est nécessaire
    *   (UC06, § 5.2 de la spec technique — additif pur : BUDGET_LOGIN par défaut).
-   * @return array{jeton:string,uid:string}
+   * @return array{jeton:string,uid:string,cree_le:int} 'cree_le' (UC08, § 7) : valeur
+   *   du cache si présente et numérique, sinon 0 (inconnu — entrée de cache posée
+   *   avant cette UC). TOUJOURS présent, dans les DEUX branches (cache et login frais).
    * @throws smartclimException Toujours une exception "propre" (même motif que login()
    *   ci-dessus, § 3.1 / finding sécu LOW).
    */
@@ -368,7 +390,11 @@ class smartclimAuxHomeApi {
             && $session['empreinte'] === self::empreinteIdentifiants()
           ) {
             log::add('smartclim', 'debug', 'AUX Home : session en cache valide, réutilisée');
-            return array('jeton' => $session['jeton'], 'uid' => $session['uid']);
+            // UC08, § 7 : 'cree_le' TOUJOURS présent (0 = inconnu, entrée de cache
+            // posée avant cette UC) — une présence intermittente reproduirait la panne
+            // du 'pseudo' déjà signalée en revue UC02 (cf. commentaire plus bas).
+            $creeLe = isset($session['cree_le']) && is_numeric($session['cree_le']) ? (int) $session['cree_le'] : 0;
+            return array('jeton' => $session['jeton'], 'uid' => $session['uid'], 'cree_le' => $creeLe);
           }
         }
         // Empreinte différente, jeton non conforme, ou entrée corrompue : les
@@ -393,7 +419,7 @@ class smartclimAuxHomeApi {
       // BUDGET_LOGIN (18 s) et le pire cas d'un ordre de pilotage passerait à 22 s,
       // au-delà du seuil d'AC8 — défaut silencieux signalé au tour d'advisor.
       $frais = self::login($_budgetLogin);
-      return array('jeton' => $frais['jeton'], 'uid' => $frais['uid']);
+      return array('jeton' => $frais['jeton'], 'uid' => $frais['uid'], 'cree_le' => $frais['cree_le']);
     } catch (smartclimException $e) {
       // Même motif que login() ci-dessus : recrée l'exception à ce point d'appel avant
       // de la laisser remonter, pour ne jamais dépendre de la discipline de l'appelant.
@@ -431,6 +457,10 @@ class smartclimAuxHomeApi {
           $budgetRestant = self::BUDGET_SCAN - (microtime(true) - $debut);
           if (!$rejoue && $e->getType() === smartclimException::TYPE_AUTH && $budgetRestant >= self::BUDGET_LOGIN + 3) {
             $rejoue = true;
+            // UC08, § 7 : télémétrie de calibration de DUREE_CACHE_SESSION — âge de la
+            // session refusée, 0 rendu "inconnu" (entrée de cache posée avant cette UC).
+            $ageSession = ((int) $session['cree_le'] > 0) ? (string) (time() - (int) $session['cree_le']) . ' s' : 'inconnu';
+            log::add('smartclim', 'info', 'AUX Home : rejeu apres re-login, age de la session refusee : ' . $ageSession);
             self::purgerSession();
             $session = self::login();
             continue;
@@ -568,9 +598,32 @@ class smartclimAuxHomeApi {
         throw new smartclimException('AUX Home control : intent vide, aucune requête envoyée', smartclimException::TYPE_INTERNE);
       }
 
-      $ecoule = microtime(true) - $debut;
-      $tempsRequete = (int) max(3, min(self::TIMEOUT_REQUETE, self::BUDGET_COMMANDE - $ecoule));
-      self::requeteControle($session['jeton'], $intent, $_identifiantAppareil, $tempsRequete);
+      // UC08, § 6 : rejeu re-login du chemin d'ÉCRITURE, calqué sur listerAppareils()
+      // (booléen local $rejoue, JAMAIS de récursion). Le try entoure UNIQUEMENT
+      // requeteControle() : un TYPE_AUTH levé par session() ci-dessus (compte non
+      // configuré, login en échec) reste HORS boucle et ne déclenche jamais de rejeu —
+      // c'est précisément la rafale qu'AC2 interdit.
+      $rejoue = false;
+      while (true) {
+        $ecoule = microtime(true) - $debut;
+        $tempsRequete = (int) max(3, min(self::TIMEOUT_REQUETE, self::BUDGET_COMMANDE - $ecoule));
+        try {
+          self::requeteControle($session['jeton'], $intent, $_identifiantAppareil, $tempsRequete);
+          break;
+        } catch (smartclimException $e) {
+          $budgetRestant = self::BUDGET_COMMANDE - (microtime(true) - $debut);
+          if (!$rejoue && $e->getType() === smartclimException::TYPE_AUTH && $budgetRestant >= self::BUDGET_REJEU_ORDRE) {
+            $rejoue = true;
+            // Aucun purgerSession() ici : requeteControle() l'a déjà fait pour tout
+            // code classé TYPE_AUTH, et login() réécrit le cache de toute façon.
+            $ageSession = ((int) $session['cree_le'] > 0) ? (string) (time() - (int) $session['cree_le']) . ' s' : 'inconnu';
+            log::add('smartclim', 'info', 'AUX Home : rejeu apres re-login, age de la session refusee : ' . $ageSession);
+            $session = self::login((int) max(6, $budgetRestant - self::RESERVE_ORDRE));
+            continue;
+          }
+          throw $e;
+        }
+      }
 
       return $ordreApplique;
     } catch (smartclimException $e) {
@@ -582,9 +635,9 @@ class smartclimAuxHomeApi {
 
   /**
    * POST /app/device/v2/control : corps intent + dst:1 + deviceId, vérification
-   * code == 200 (UC06, § 3/5.2 de la spec technique). Aucun rejeu d'authentification
-   * ici (hors périmètre UC06, § 3.4) : une TYPE_AUTH purge simplement la session, pour
-   * que la TENTATIVE SUIVANTE de l'utilisateur reparte sur un login frais.
+   * code == 200 (UC06, § 3/5.2 de la spec technique). Aucun rejeu d'authentification ICI
+   * (le rejeu vit dans l'appelant, appliquerOrdre(), depuis UC08 § 6) : une TYPE_AUTH se
+   * contente de purger la session, c'est l'APPELANT qui décide de rejouer ou non.
    *
    * @param string $_jeton Jeton de session UTILISATEUR (pas STATIC_APP_TOKEN).
    * @param array $_intent Clés AUX déjà traduites (ex. array('on_off' => 1)).
@@ -602,8 +655,9 @@ class smartclimAuxHomeApi {
     $code = self::codeMetierVersInt($donnees);
     if ($code !== 200) {
       // Purge la session en cache SEULEMENT quand classerCodeMetier() classera ce code
-      // en TYPE_AUTH (tout code hors 9023/64033, cf. sa propre logique) — aucun rejeu
-      // ici (hors périmètre UC08, § 3.4 de la spec technique) : c'est la TENTATIVE
+      // en TYPE_AUTH (tout code hors 9023/64033, cf. sa propre logique). Le rejeu
+      // proprement dit est décidé par l'APPELANT (appliquerOrdre(), UC08 § 6) : à défaut
+      // de rejeu (budget insuffisant, ou déjà rejoué une fois), c'est la TENTATIVE
       // SUIVANTE de l'utilisateur qui repartira sur un login frais.
       if ($code !== 9023 && $code !== 64033) {
         self::purgerSession();

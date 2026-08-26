@@ -115,7 +115,7 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   supportée » **hors** de l'interface, pas seulement dans l'UI.
   ⚠️ **Tout ordre de mode ou de consigne porte TOUJOURS `power => 1`** : changer le mode d'un appareil
   éteint l'allume, en **une** requête. Ne pas « optimiser » en retirant cette clé.
-  ⚠️ **Trois mémoires de cache, trois rôles distincts, à ne pas confondre** — aucune ne vit en
+  ⚠️ **Quatre mémoires de cache, quatre rôles distincts, à ne pas confondre** — aucune ne vit en
   configuration d'équipement :
   - `smartclim::ordre_recent::<id>` (`CLE_CACHE_DEDUP`, **10 s**) — empreinte du **contenu** de l'ordre,
     posée **avant** l'appel réseau et supprimée en cas d'échec : anti-double-bip. La clé est le contenu,
@@ -129,6 +129,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   - `smartclim::dernier_cycle` (`CLE_CACHE_DERNIER_CYCLE`, `DUREE_MEMOIRE_CYCLE` = 48 h) — horodatage du
     dernier cycle de rafraîchissement (UC07), **globale au plugin** et non par équipement, contrairement
     aux deux précédentes. Lue par `cycleEchu()`, écrite par `marquerCycle()`.
+  - `smartclim::dernier_incident` (`CLE_CACHE_DERNIER_INCIDENT`, `DUREE_MEMOIRE_CYCLE` = 48 h) — dernier
+    échec de connexion du **cycle automatique** (UC08), également **globale au compte** et non par
+    équipement : l'incident porte sur le compte cloud, pas sur un appareil (un appareil individuellement
+    injoignable est déjà décrit par son `online = false`). Seul cache **non chiffré** des quatre, parce
+    qu'il ne contient qu'un type d'exception, une constante de contexte et un horodatage — jamais de
+    donnée d'origine backend. Écrite par `memoriserIncident()`, effacée par `oublierIncident()`, relue par
+    `incidentMemorise()` (qui **valide sa forme** et renvoie `null` plutôt qu'un état forgé).
+    ⚠️ **Invariant en une phrase** : *seul le cycle automatique l'écrit ; toute connexion réussie
+    l'effface.* Un scan ou un test de connexion en échec ne l'écrit **pas** — ce sont des chemins
+    interactifs, dont l'erreur est déjà affichée à l'utilisateur.
   ⚠️ L'**état optimiste** poussé après succès est celui **réellement envoyé** (après quantification), pas
   celui demandé par l'utilisateur.
 
@@ -398,13 +408,23 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   à la saisie côté JS).
 - **Jetons de session** : cache **chiffré** via la classe `cache` (`cache::set/byKey/delete`), purgé au
   changement d'identifiants. **En place depuis l'UC02** : clé `smartclim::session_auxhome`, **30 min**
-  (durée de vie réelle du jeton inconnue jusqu'à UC08), contenu `utils::encrypt(json_encode(...))` avec
-  `jeton`, `uid` et une **empreinte `sha1(email|pays)`** — invalidée si l'empreinte diverge, ce qui
+  (la durée de vie réelle du jeton reste **inconnue** : UC08 a tranché de garder 30 min et d'instrumenter
+  plutôt que de deviner — cf. ci-dessous), contenu `utils::encrypt(json_encode(...))` avec
+  `jeton`, `uid`, `cree_le` (horodatage de création, **télémétrie UC08**) et une **empreinte
+  `sha1(email|pays)`** — invalidée si l'empreinte diverge, ce qui
   rattrape les changements d'identifiants qui ne passent pas par `config::save` (restauration, SQL
   direct). 🚫 **Jamais le mot de passe dans l'empreinte** : cela le remettrait sur la pile d'appel.
   La purge est câblée sur `postConfig_auxhome_password/email/country` **et** explicitement dans l'action
   d'effacement (`config::remove()` ne déclenche **pas** les hooks). ⚠️ Le cloud AUX Home n'expose **aucun refresh token** : la stratégie est
   re-login réactif, avec anti-boucle (une seule tentative par cycle).
+  Depuis l'UC08, ce rejeu couvre les **deux** chemins authentifiés, avec un seuil de budget **dédié** à
+  chacun : la **lecture** (`listerAppareils()`, garde `BUDGET_LOGIN + 3`) et l'**écriture**
+  (`appliquerOrdre()`, garde `BUDGET_REJEU_ORDRE` = 10 s). ⚠️ Le seuil d'écriture ne peut **pas** être
+  celui de la lecture : `BUDGET_COMMANDE` et `BUDGET_LOGIN` valant tous deux 18 s, la garde de lecture
+  serait ici du **code mort**. ⚠️ Dans les deux cas le `try` n'entoure **que** la requête métier, jamais
+  `session()` : un `TYPE_AUTH` levé par l'ouverture de session ne doit jamais déclencher de rejeu —
+  c'est précisément la rafale que l'UC08 interdit. **Aucun backoff** après échecs répétés en revanche :
+  non-objectif assumé, journalisé en dette (D-MVP08-05), candidat `/change` de premier rang.
 - ⚠️ **Jamais** de secret/token/mot de passe en clair dans les logs (y compris dans une trace
   d'exception), le DOM, les réponses AJAX ou les commentaires. Au plus un préfixe tronqué.
   **Unique exception, nommée et délibérée** : le mécanisme **`configKey` du core**. `config.ajax.php`

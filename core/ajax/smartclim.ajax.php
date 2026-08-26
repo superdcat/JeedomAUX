@@ -78,7 +78,12 @@ catch (smartclimException $e) {
     ajax::error($e->getMessage(), $e->getType());
 }
 catch (Exception $e) {
-    ajax::error(displayException($e), $e->getCode());
+    // UC08, AC7 (A7-4) : displayException() met la TRACE dans le DOM dès que
+    // log::level <= 100. Une Exception née PENDANT executerRequete() (ex. un
+    // log::add() en échec) porterait dans sa trace le jeton complet et le corps
+    // chiffré (frame executerRequete($m, $c, $corps, $t, $jeton)). On perd le lien
+    // "Show traces" en mode debug ; on garde le message, donc la diagnosticabilité.
+    ajax::error($e->getMessage(), $e->getCode());
 }
 catch (Throwable $t) {
     // Toute Error PHP 7+/8 (TypeError, ValueError...) qui échapperait aux deux catch
@@ -99,6 +104,10 @@ catch (Throwable $t) {
     $actionRecue = init('action');
     $actionRecue = is_scalar($actionRecue) ? (string) $actionRecue : 'Array';
     $actionRecue = substr(preg_replace('/[^\x20-\x7E]/', ' ', $actionRecue), 0, 40);
-    log::add('smartclim', 'error', 'Erreur interne inattendue dans smartclim.ajax.php (action=' . $actionRecue . ') : ' . get_class($t) . ' : ' . $t->getMessage() . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
+    // UC08, AC7 (A7-1) : $t->getMessage() neutralisé AVANT journalisation, seul
+    // endroit du plugin où un message de Throwable échappait à ce filtre (injection de
+    // log par retour à la ligne forgé) — cohérence avec smartclim::neutraliserPourLog(),
+    // rendue publique à cette fin.
+    log::add('smartclim', 'error', 'Erreur interne inattendue dans smartclim.ajax.php (action=' . $actionRecue . ') : ' . get_class($t) . ' : ' . smartclim::neutraliserPourLog($t->getMessage()) . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
     ajax::error(__('Erreur interne du plugin — consultez les logs', __FILE__), 0);
 }

@@ -1,0 +1,16 @@
+{"ts": "2026-08-26T22:33:15", "uc": "MVP/08", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T22:50:51", "uc": "MVP/08", "phase": "plan", "etat": "ok", "detail": "plan produit, 9 AC couverts, 0 question ouverte", "commit": ""}
+{"ts": "2026-08-26T22:50:51", "uc": "MVP/08", "phase": "spec-tech", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-27T00:12:52", "uc": "MVP/08", "phase": "spec-tech", "etat": "reprise", "detail": "spec tech trouvee complete 481 lignes, premisses code verifiees", "commit": ""}
+{"ts": "2026-08-27T00:12:53", "uc": "MVP/08", "phase": "spec-tech", "etat": "ok", "detail": "14 sections coherentes, 8 arbitrages deja journalises", "commit": ""}
+{"ts": "2026-08-27T00:12:53", "uc": "MVP/08", "phase": "impl", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-27T00:26:07", "uc": "MVP/08", "phase": "impl", "etat": "ok", "detail": "6 fichiers modifies, AC8/AC9/AC1-ecriture/AC7 implementes", "commit": ""}
+{"ts": "2026-08-27T00:26:07", "uc": "MVP/08", "phase": "verif", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-27T00:26:45", "uc": "MVP/08", "phase": "verif", "etat": "ok", "detail": "verif-plugin OK hors 14 cles i18n differees, 3 pieges fatals verifies", "commit": ""}
+{"ts": "2026-08-27T00:26:45", "uc": "MVP/08", "phase": "review", "etat": "debut", "detail": "tour 1", "commit": ""}
+{"ts": "2026-08-27T00:34:26", "uc": "MVP/08", "phase": "review", "etat": "ok", "detail": "tour 1: securite pass 0 high, qualite pass 0 major, 1 minor en dette", "commit": ""}
+{"ts": "2026-08-27T00:34:26", "uc": "MVP/08", "phase": "correctifs", "etat": "ok", "detail": "aucun finding au-dessus de la gate, aucun lot envoye", "commit": ""}
+{"ts": "2026-08-27T00:35:29", "uc": "MVP/08", "phase": "traduction", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-27T00:36:57", "uc": "MVP/08", "phase": "traduction", "etat": "ok", "detail": "14 cles x 3 langues, verif-plugin sans probleme", "commit": ""}
+{"ts": "2026-08-27T00:39:06", "uc": "MVP/08", "phase": "memoire", "etat": "ok", "detail": "analyse 8.7 execCmd + INDEX + memoire agent", "commit": ""}
+{"ts": "2026-08-27T00:39:06", "uc": "MVP/08", "phase": "commit", "etat": "debut", "detail": "", "commit": ""}

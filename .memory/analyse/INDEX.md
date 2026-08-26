@@ -15,14 +15,15 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-08-26** (création de
+> **Dernière mise à jour de cet index : 2026-08-27** (création de
 > `jeedom-config-plugin-et-cycle-de-vie.md` au cycle UC01, étendu de 4 sections au cycle UC02 ;
 > révision des timeouts dans `smartclim-transport-aux-home.md` § 8 ; au cycle UC04, fermeture de l'incertitude
 > « détection des capacités AUX Home » dans `smartclim-modele-abstrait-capacites.md` §§ 4.1, 4.3 et 6 ; au cycle UC05, ajout de la
 > section 8 « Créer et alimenter des commandes INFO » à `jeedom-widgets-commandes.md` ; au cycle UC07,
 > réécriture du § 6 « Cycle de vie et crons » de `smartclim-architecture-jeedom.md` — **un seul hook
 > `cron()`**, l'ancien montage `cron5()` + `cron()` y était devenu faux — et précision du § 7 sur la
-> période de grâce, qui est une **constante** et non une clé de configuration).
+> période de grâce, qui est une **constante** et non une clé de configuration) ; au cycle UC08, ajout de
+> la section 8.7 « `execCmd()` sur une commande ACTION l'EXÉCUTE » à `jeedom-widgets-commandes.md`.
 
 ---
 
@@ -38,6 +39,7 @@
 | Appliquer un **template de widget sans écraser** le choix utilisateur (« si vide ») | `jeedom-widgets-commandes.md` § 6 |
 | **CSP Jeedom bloque tout média/image EXTERNE** → proxy same-origin (ex. tuile carte) | `jeedom-widgets-commandes.md` § 7 |
 | ⚠️ **Nom de commande ampute silencieusement** par `cleanComponanteName()` (`/`, `'`, `"`, `&`…) — traductions comprises | `jeedom-widgets-commandes.md` § 8.1 |
+| ⚠️⚠️ **Lire la valeur d'une commande** (`execCmd()`) : inoffensif sur une **info**, **exécute un ordre réel** sur une **action** → filtrer `getType() === 'info'` | `jeedom-widgets-commandes.md` § 8.7 |
 | **Détecter qu'un cycle de scrutation a rapporté du neuf** : le booléen de `checkAndUpdateCmd()`, et son échappatoire `repeatEventManagement` | `jeedom-widgets-commandes.md` § 8.2 |
 | **`collectDate` vs `valueDate`** : âge réel d'une donnée d'API lente ; l'état d'une commande vit dans le **cache**, pas en base | `jeedom-widgets-commandes.md` § 8.3 |
 | ⚠️ **`cmd::event()` jette silencieusement** une valeur `numeric` hors `minValue`/`maxValue` | `jeedom-widgets-commandes.md` § 8.4 |

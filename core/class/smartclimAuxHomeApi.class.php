@@ -60,6 +60,20 @@ class smartclimAuxHomeApi {
   // budget restant permet encore un login complet.
   const BUDGET_SCAN = 25;
 
+  // Budget de temps GLOBAL d'un ordre de pilotage (UC06, § 5.2 de la spec technique),
+  // login compris — AC8 : échec en moins d'une vingtaine de secondes. Plus serré que
+  // BUDGET_SCAN parce qu'un ordre est INTERACTIF (l'utilisateur attend un retour
+  // immédiat). RESERVE_ORDRE = temps réservé à la requête de contrôle elle-même
+  // quand un login a dû être rejoué avant. Arithmétique du pire cas (§ 5.2) :
+  // login (10 + 4) + requête de contrôle (4) = 18 s.
+  const BUDGET_COMMANDE = 18;
+  const RESERVE_ORDRE = 4;
+
+  // Plafond de routes sondées en un passage de diagnostic() (outillage CLI de reverse
+  // engineering, cf. cette méthode) : le script appelant accepte des chemins libres en
+  // argument, cette borne évite de marteler le backend d'un tiers.
+  const DIAG_MAX_ROUTES = 20;
+
   // Cache (chiffré) de la session AUX Home — cf. § 1.5 de la spec technique.
   const CLE_CACHE_SESSION = 'smartclim::session_auxhome';
   const DUREE_CACHE_SESSION = 1800; // 30 minutes — pari documenté, à calibrer en UC08.
@@ -216,23 +230,30 @@ class smartclimAuxHomeApi {
    * lit config::byKey('auxhome_password', ...) elle-même, au plus près de l'usage (cf.
    * § 3.1 de la spec technique — une trace PHP expose les arguments de chaque frame).
    *
+   * @param int $_budget Budget de temps GLOBAL des 2 requêtes de ce login, en
+   *   secondes (UC06, § 5.2 de la spec technique — additif pur : BUDGET_LOGIN par
+   *   défaut, comportement inchangé pour tous les appelants existants).
    * @return array{jeton:string,uid:string,pseudo:string}
    * @throws smartclimException Toujours une exception "propre" : recréée juste avant
    *   propagation (catch ci-dessous) pour ne jamais laisser filtrer, via la frame de
    *   requete(), le corps de requête chiffré (finding sécurité LOW de la revue croisée).
    */
-  public static function login() {
+  public static function login($_budget = self::BUDGET_LOGIN) {
     try {
       if (config::byKey('auxhome_password', 'smartclim') == '') {
         throw new smartclimException('Mot de passe AUX Home vide en base', smartclimException::TYPE_AUTH);
       }
 
       $debut = microtime(true);
-      $derBase64 = self::clePublique();
+      // ⚠️ Budget PROPAGÉ à la 1ère requête (UC06, § 5.2 : sans ce calcul, la 1ère
+      // requête retomberait sur TIMEOUT_REQUETE fixe et le budget GLOBAL ne serait
+      // plus respecté). Même arrondi que listerAppareils().
+      $tempsPremiereRequete = (int) max(3, min(self::TIMEOUT_REQUETE, $_budget - 4));
+      $derBase64 = self::clePublique($tempsPremiereRequete);
       $ecoule = microtime(true) - $debut;
       // CURLOPT_TIMEOUT attend un entier : arrondi au SUPÉRIEUR (jamais tronqué vers
       // le bas, ce qui grignoterait le temps réellement disponible pour la 2e requête).
-      $tempsRestant = (int) ceil(max(3, self::BUDGET_LOGIN - $ecoule));
+      $tempsRestant = (int) ceil(max(3, $_budget - $ecoule));
 
       $pem = self::derVersPem($derBase64);
       $motDePasseChiffre = self::chiffrerMotDePasse($pem);
@@ -304,11 +325,13 @@ class smartclimAuxHomeApi {
    * nouvelle session en cache (§ 1.5). Cette fonction ne fait donc plus qu'une chose :
    * LIRE le cache, jamais y écrire elle-même. Premier consommateur réel : UC03+.
    *
+   * @param int $_budgetLogin Budget PROPAGÉ à login() si un login est nécessaire
+   *   (UC06, § 5.2 de la spec technique — additif pur : BUDGET_LOGIN par défaut).
    * @return array{jeton:string,uid:string}
    * @throws smartclimException Toujours une exception "propre" (même motif que login()
    *   ci-dessus, § 3.1 / finding sécu LOW).
    */
-  public static function session() {
+  public static function session($_budgetLogin = self::BUDGET_LOGIN) {
     // Garde-fou explicite : sans elle, un appelant qui l'oublierait (ex. un futur cron
     // d'UC03) verrait login() échouer sur le mot de passe vide avec TYPE_AUTH -- message
     // correct -- mais SANS cette garde ici, un compte/pays vide (pas seulement le mot de
@@ -359,7 +382,10 @@ class smartclimAuxHomeApi {
       // puis lèverait une erreur "undefined array key" pendant les 30 min suivantes dès
       // que le cache redevient valide — panne intermittente signalée pour UC03 par la
       // revue croisée.
-      $frais = self::login();
+      // ⚠️ Budget PROPAGÉ (UC06, § 5.2) : sans ce paramètre, login() retomberait sur
+      // BUDGET_LOGIN (18 s) et le pire cas d'un ordre de pilotage passerait à 22 s,
+      // au-delà du seuil d'AC8 — défaut silencieux signalé au tour d'advisor.
+      $frais = self::login($_budgetLogin);
       return array('jeton' => $frais['jeton'], 'uid' => $frais['uid']);
     } catch (smartclimException $e) {
       // Même motif que login() ci-dessus : recrée l'exception à ce point d'appel avant
@@ -445,6 +471,138 @@ class smartclimAuxHomeApi {
       throw new smartclimException('AUX Home user_device : champ data absent ou non tableau', smartclimException::TYPE_PROTOCOLE);
     }
     return $donnees;
+  }
+
+  /**
+   * Concept générique -> clé de l'intent AUX + nature de conversion (UC06, § 5.2 de la
+   * spec technique). SEUL endroit du plugin où vivent les noms de champs "on_off",
+   * "air_con_func", "wind_speed", "temperature" (CLAUDE.md § Conventions : "aucun code
+   * propriétaire hors des adaptateurs de transport"). 'nature' vaut 'booleen',
+   * 'table' (colonne 'intent' de smartclimCapabilities) ou 'temperature'.
+   *
+   * @return array<string, array{cle:string, nature:string}>
+   */
+  private static function intentionsAuxHome() {
+    return array(
+      smartclimCapabilities::CONCEPT_POWER => array('cle' => 'on_off', 'nature' => 'booleen'),
+      smartclimCapabilities::CONCEPT_MODE => array('cle' => 'air_con_func', 'nature' => 'table'),
+      smartclimCapabilities::CONCEPT_FAN_SPEED => array('cle' => 'wind_speed', 'nature' => 'table'),
+      smartclimCapabilities::CONCEPT_TARGET_TEMP => array('cle' => 'temperature', 'nature' => 'temperature'),
+    );
+  }
+
+  /**
+   * Envoie UN ordre (UNE requête POST /app/device/v2/control) pour CET appareil
+   * (UC06, § 3/5.2 de la spec technique). $_ordre est une map GÉNÉRIQUE concept =>
+   * valeur générique (aucun code AUX en entrée) : traduit via intentionsAuxHome() et
+   * smartclimCapabilities::versTransport()/echelleTemperature(), envoie, vérifie
+   * code == 200, puis RENVOIE l'ordre RÉELLEMENT appliqué (valeurs après
+   * quantification) — c'est cette valeur, jamais celle demandée, que l'appelant doit
+   * pousser en état optimiste (AC3 ne doit pas afficher une valeur qui n'a pas été
+   * envoyée).
+   *
+   * Budget de temps GLOBAL (BUDGET_COMMANDE = 18 s), login compris, § 5.2 : réserve
+   * RESERVE_ORDRE (4 s) à la requête de contrôle elle-même.
+   *
+   * ⚠️ Recrée l'exception À CE POINT D'APPEL (même motif que login()/session()/
+   * listerAppareils() : la frame de requete() porte le JETON) — obligatoire, sinon
+   * core/ajax/cmd.ajax.php (qui affiche $e->getMessage() via displayException())
+   * fuiterait le jeton dans le navigateur (§ 10.1 de la spec technique).
+   *
+   * @param string $_identifiantAppareil auxhome_device_id de l'équipement ciblé.
+   * @param array $_ordre Map GÉNÉRIQUE concept => valeur générique.
+   * @return array Map générique EFFECTIVEMENT envoyée.
+   * @throws smartclimException TYPE_RESEAU|TYPE_AUTH|TYPE_PROTOCOLE|TYPE_INTERNE (message TECHNIQUE).
+   */
+  public static function appliquerOrdre($_identifiantAppareil, array $_ordre) {
+    try {
+      $debut = microtime(true);
+      $session = self::session(self::BUDGET_COMMANDE - self::RESERVE_ORDRE);
+
+      $intentions = self::intentionsAuxHome();
+      $intent = array();
+      $ordreApplique = array();
+      $echelle = smartclimCapabilities::echelleTemperature(smartclimCapabilities::TRANSPORT_AUX_HOME);
+
+      foreach ($_ordre as $concept => $valeurGenerique) {
+        if (!isset($intentions[$concept])) {
+          throw new smartclimException('AUX Home control : concept générique sans correspondance d\'intent (' . $concept . ')', smartclimException::TYPE_INTERNE);
+        }
+        $definition = $intentions[$concept];
+
+        if ($definition['nature'] === 'booleen') {
+          $valeurIntent = $valeurGenerique ? 1 : 0;
+          $ordreApplique[$concept] = $valeurIntent;
+        } elseif ($definition['nature'] === 'table') {
+          $valeurIntent = smartclimCapabilities::versTransport(smartclimCapabilities::TRANSPORT_AUX_HOME, $concept, $valeurGenerique);
+          if ($valeurIntent === null) {
+            throw new smartclimException('AUX Home control : valeur générique sans correspondance d\'intent (' . $concept . '=' . $valeurGenerique . ')', smartclimException::TYPE_INTERNE);
+          }
+          $ordreApplique[$concept] = $valeurGenerique;
+        } elseif ($definition['nature'] === 'temperature') {
+          if (!isset($echelle['facteur'])) {
+            throw new smartclimException('AUX Home control : échelle de température inconnue pour ce transport', smartclimException::TYPE_INTERNE);
+          }
+          $valeurIntent = (int) round(((float) $valeurGenerique) * $echelle['facteur']);
+          // La valeur RÉELLEMENT appliquée est celle qui RESSORT de l'arrondi
+          // d'écriture (§ 5.2 de la spec technique — "le second arrondi... reste SEUL
+          // autoritaire sur la valeur réellement envoyée"), pas la valeur demandée
+          // telle quelle : sans cette division inverse, l'état optimiste afficherait
+          // une consigne que le cloud n'a pas forcément appliquée à ce degré près.
+          $ordreApplique[$concept] = ($echelle['facteur'] != 0) ? ($valeurIntent / $echelle['facteur']) : (float) $valeurGenerique;
+        } else {
+          throw new smartclimException('AUX Home control : nature d\'intent inconnue (' . $definition['nature'] . ')', smartclimException::TYPE_INTERNE);
+        }
+
+        $intent[$definition['cle']] = $valeurIntent;
+      }
+
+      if (empty($intent)) {
+        throw new smartclimException('AUX Home control : intent vide, aucune requête envoyée', smartclimException::TYPE_INTERNE);
+      }
+
+      $ecoule = microtime(true) - $debut;
+      $tempsRequete = (int) max(3, min(self::TIMEOUT_REQUETE, self::BUDGET_COMMANDE - $ecoule));
+      self::requeteControle($session['jeton'], $intent, $_identifiantAppareil, $tempsRequete);
+
+      return $ordreApplique;
+    } catch (smartclimException $e) {
+      // Recrée l'exception À CE POINT D'APPEL : sa trace d'origine peut embarquer, via
+      // la frame de requete(), le jeton de session (§ 10.1 de la spec technique).
+      throw new smartclimException($e->getMessage(), $e->getType(), $e->getContexte());
+    }
+  }
+
+  /**
+   * POST /app/device/v2/control : corps intent + dst:1 + deviceId, vérification
+   * code == 200 (UC06, § 3/5.2 de la spec technique). Aucun rejeu d'authentification
+   * ici (hors périmètre UC06, § 3.4) : une TYPE_AUTH purge simplement la session, pour
+   * que la TENTATIVE SUIVANTE de l'utilisateur reparte sur un login frais.
+   *
+   * @param string $_jeton Jeton de session UTILISATEUR (pas STATIC_APP_TOKEN).
+   * @param array $_intent Clés AUX déjà traduites (ex. array('on_off' => 1)).
+   * @param string $_identifiantAppareil auxhome_device_id de l'équipement ciblé.
+   * @param int $_tempsRequete Timeout de cette requête, en secondes.
+   * @throws smartclimException classement délégué à classerCodeMetier('control', …, TYPE_AUTH).
+   */
+  private static function requeteControle($_jeton, array $_intent, $_identifiantAppareil, $_tempsRequete) {
+    $corps = array(
+      'intent' => $_intent,
+      'dst' => 1,
+      'deviceId' => $_identifiantAppareil,
+    );
+    $donnees = self::requete('POST', '/app/device/v2/control', $corps, $_tempsRequete, $_jeton);
+    $code = self::codeMetierVersInt($donnees);
+    if ($code !== 200) {
+      // Purge la session en cache SEULEMENT quand classerCodeMetier() classera ce code
+      // en TYPE_AUTH (tout code hors 9023/64033, cf. sa propre logique) — aucun rejeu
+      // ici (hors périmètre UC08, § 3.4 de la spec technique) : c'est la TENTATIVE
+      // SUIVANTE de l'utilisateur qui repartira sur un login frais.
+      if ($code !== 9023 && $code !== 64033) {
+        self::purgerSession();
+      }
+      self::classerCodeMetier('control', $donnees, smartclimException::TYPE_AUTH);
+    }
   }
 
   /**
@@ -820,11 +978,13 @@ class smartclimAuxHomeApi {
    * (§ 0.2 : une clé réutilisée est rejetée par le backend cousin CN, comportement
    * supposé identique en EU).
    *
+   * @param int $_tempsRequete Timeout de CETTE requête, en secondes (UC06, § 5.2 de
+   *   la spec technique — additif pur : TIMEOUT_REQUETE par défaut).
    * @return string DER base64, tel que renvoyé par le backend.
    * @throws smartclimException
    */
-  private static function clePublique() {
-    $donnees = self::requete('GET', '/app/auth/getPubkey', null, self::TIMEOUT_REQUETE);
+  private static function clePublique($_tempsRequete = self::TIMEOUT_REQUETE) {
+    $donnees = self::requete('GET', '/app/auth/getPubkey', null, $_tempsRequete);
     // Même cast que login(), via codeMetierVersInt() (finding sécurité LOW de la revue
     // croisée, 2e tour : les deux expressions inline restaient divergentes malgré la
     // factorisation de classerCodeMetier()).
@@ -993,10 +1153,10 @@ class smartclimAuxHomeApi {
   }
 
   /**
-   * Seul point cURL du plugin (CLAUDE.md : "centraliser les accès externes"). Impose
-   * TLS vérifié, les en-têtes attendus par le backend (§ 0.1) et le budget de temps
-   * (§ 1.3). 🚫 CURLOPT_VERBOSE / CURLOPT_STDERR / CURLOPT_DEBUGFUNCTION sont INTERDITS
-   * (§ 3.2) : le mode verbose écrirait l'en-tête Authorization en clair sur stderr.
+   * Requête AUX Home CONTRACTUELLE : délègue le cURL à executerRequete() (le seul
+   * point cURL du plugin, CLAUDE.md : "centraliser les accès externes"), puis exige une
+   * enveloppe AUX valide. Tout appel de PRODUCTION passe par ici — seul diagnostic()
+   * descend d'un cran, parce qu'il sonde des routes sans contrat connu.
    *
    * Ordre de classement des erreurs (§ 1.1 de la spec technique, impératif) :
    * 1. erreur cURL -> TYPE_RESEAU ; 2. HTTP >= 500 ou 429 -> TYPE_RESEAU ; 3. corps
@@ -1013,13 +1173,53 @@ class smartclimAuxHomeApi {
    * @throws smartclimException TYPE_RESEAU ou TYPE_PROTOCOLE.
    */
   private static function requete($_methode, $_chemin, $_corps, $_tempsRequete, $_jeton = null) {
+    // Découpage volontaire : executerRequete() ci-dessous porte le cURL et le SEUL
+    // classement d'erreur RÉSEAU ; requete() garde le classement HTTP puis JSON. Les
+    // deux ensemble conservent EXACTEMENT l'ordre imposé par le § 1.1 de la spec
+    // technique UC02 (cURL, puis 5xx/429, puis enveloppe). Ce découpage existe pour
+    // que diagnostic() puisse lire le code HTTP d'une route INCONNUE — dont le corps
+    // n'est justement pas garanti être une enveloppe AUX valide.
+    $brute = self::executerRequete($_methode, $_chemin, $_corps, $_tempsRequete, $_jeton);
+    $codeHttp = $brute['http'];
+    $reponse = $brute['corps'];
+
+    if ($codeHttp >= 500 || $codeHttp === 429) {
+      throw new smartclimException('HTTP ' . $codeHttp, smartclimException::TYPE_RESEAU);
+    }
+    $donnees = json_decode($reponse, true);
+    if (!is_array($donnees) || !isset($donnees['code'])) {
+      throw new smartclimException('Enveloppe JSON invalide ou absente', smartclimException::TYPE_PROTOCOLE);
+    }
+    return $donnees;
+  }
+
+  /**
+   * Exécution BRUTE d'une requête : cURL, journalisation, classement de la seule
+   * erreur RÉSEAU (étape 1 du § 1.1 de la spec technique UC02). Ne juge NI le code
+   * HTTP, NI la forme du corps — c'est requete() qui le fait, et diagnostic() qui s'en
+   * dispense pour pouvoir sonder une route dont le contrat est inconnu.
+   *
+   * Seul point cURL du plugin avec la même règle qu'avant l'extraction : TLS vérifié,
+   * en-têtes du backend, budget de temps. 🚫 CURLOPT_VERBOSE / CURLOPT_STDERR /
+   * CURLOPT_DEBUGFUNCTION restent INTERDITS (§ 3.2) : le mode verbose écrirait
+   * l'en-tête Authorization en clair sur stderr.
+   *
+   * @param string $_methode 'GET' ou 'POST'.
+   * @param string $_chemin Chemin de l'API, ex. '/app/auth/login/pwd'.
+   * @param array|null $_corps Corps JSON (POST uniquement) ; null si GET.
+   * @param int $_tempsRequete Timeout de CETTE requête, en secondes (§ 1.3).
+   * @param string|null $_jeton Jeton "Authorization: bearer" ; STATIC_APP_TOKEN si null.
+   * @return array{http:int, corps:string}
+   * @throws smartclimException TYPE_RESEAU (erreur cURL) ou TYPE_PROTOCOLE (jeton non conforme).
+   */
+  private static function executerRequete($_methode, $_chemin, $_corps, $_tempsRequete, $_jeton = null) {
     // Tous les appelants ACTUELS sont sûrs (null, ou un jeton déjà passé par
     // jetonConforme() dans login()/session()) — mais UC03 passera un jeton en
     // paramètre pour les appels authentifiés (listDevices, etc.) : cette validation
     // rend l'invariant CONTRACTUEL plutôt que local aux seuls appelants d'aujourd'hui
     // (durcissement signalé pour UC03 par la revue croisée).
     if ($_jeton !== null && !self::jetonConforme($_jeton)) {
-      throw new smartclimException('Jeton fourni à requete() non conforme', smartclimException::TYPE_PROTOCOLE);
+      throw new smartclimException('Jeton fourni à executerRequete() non conforme', smartclimException::TYPE_PROTOCOLE);
     }
     $entetes = array(
       'Accept: */*',
@@ -1064,14 +1264,98 @@ class smartclimAuxHomeApi {
     if ($reponse === false || $erreurCurl !== '') {
       throw new smartclimException('Erreur cURL : ' . $erreurCurl, smartclimException::TYPE_RESEAU);
     }
-    if ($codeHttp >= 500 || $codeHttp === 429) {
-      throw new smartclimException('HTTP ' . $codeHttp, smartclimException::TYPE_RESEAU);
+
+    return array('http' => $codeHttp, 'corps' => (string) $reponse);
+  }
+
+  /**
+   * SONDE DE DIAGNOSTIC — outillage de reverse engineering, jamais appelée par le
+   * plugin en fonctionnement. Exécute une série de GET AUTHENTIFIÉS sur les chemins
+   * demandés et renvoie leur réponse BRUTE décodée, sans rien normaliser : c'est
+   * précisément ce que capacitesAppareil() ne peut pas faire (elle ne laisse sortir que
+   * des codes génériques), et c'est ce qu'il faut pour découvrir OÙ le backend expose
+   * les capacités RÉELLES d'un appareil donné (question ouverte de
+   * .memory/analyse/smartclim-transport-aux-home.md § 8 : le catalogue de modes du
+   * transport n'est pas le catalogue de CET appareil).
+   *
+   * Trois gardes, dans cet ordre :
+   * 1. CLI UNIQUEMENT (php_sapi_name). Cette méthode prend un chemin en paramètre :
+   *    atteignable depuis le web, ce serait un SSRF authentifié vers le cloud AUX. La
+   *    garde SAPI la rend inatteignable depuis core/ajax, une page desktop ou un cron
+   *    déclenché par le serveur web — aucune revue n'a alors à raisonner sur l'appelant.
+   * 2. Chemin en liste blanche par FORME : doit commencer par '/app/', jeu de caractères
+   *    restreint (ni '@', ni ':', ni '\' — donc pas de changement d'hôte via une URL
+   *    complète), et aucun '..'.
+   * 3. Plafond DIAG_MAX_ROUTES : le script CLI accepte des chemins libres en argument,
+   *    on ne martèle pas le backend d'un tiers depuis une boucle mal fermée.
+   *
+   * 🚫 Ne journalise AUCUN corps de réponse (il contient deviceId/mac) : c'est
+   * l'appelant CLI qui masque puis écrit le rapport. executerRequete() journalise déjà
+   * la ligne 'GET <chemin> : http=...' habituelle, sans corps ni en-tête.
+   *
+   * @param array<int,string> $_chemins Chemins à sonder, ex. '/app/getConfig?id=deviceMutex'.
+   * @return array<int, array{chemin:string, http:int, code:int|null, donnees:array|null, erreur:string}>
+   * @throws smartclimException Uniquement si la SESSION échoue (login) ou hors CLI : une
+   *         route en erreur est RENDUE dans le résultat, elle n'interrompt pas la sonde.
+   */
+  public static function diagnostic(array $_chemins) {
+    if (php_sapi_name() !== 'cli') {
+      throw new smartclimException('diagnostic() est réservée à la ligne de commande', smartclimException::TYPE_INTERNE);
     }
-    $donnees = json_decode($reponse, true);
-    if (!is_array($donnees) || !isset($donnees['code'])) {
-      throw new smartclimException('Enveloppe JSON invalide ou absente', smartclimException::TYPE_PROTOCOLE);
+
+    $session = self::session();
+    $resultats = array();
+    $sondees = 0;
+    foreach ($_chemins as $chemin) {
+      $forme = is_string($chemin)
+        && preg_match('#^/app/[A-Za-z0-9._/-]*(\?[A-Za-z0-9._=&%-]*)?\z#', $chemin) === 1
+        && strpos($chemin, '..') === false;
+      if (!$forme) {
+        $resultats[] = array(
+          'chemin' => is_string($chemin) ? self::nettoyerTexteExterne($chemin, 120) : '(chemin non textuel)',
+          'http' => 0,
+          'code' => null,
+          'donnees' => null,
+          'erreur' => 'chemin refusé par la liste blanche de forme',
+        );
+        continue;
+      }
+      if ($sondees >= self::DIAG_MAX_ROUTES) {
+        $resultats[] = array('chemin' => $chemin, 'http' => 0, 'code' => null, 'donnees' => null, 'erreur' => 'non sondée : plafond de ' . self::DIAG_MAX_ROUTES . ' routes atteint');
+        continue;
+      }
+      $sondees++;
+
+      try {
+        $brute = self::executerRequete('GET', $chemin, null, self::TIMEOUT_REQUETE, $session['jeton']);
+        $donnees = json_decode($brute['corps'], true);
+        $resultats[] = array(
+          'chemin' => $chemin,
+          'http' => $brute['http'],
+          'code' => (is_array($donnees) && isset($donnees['code']) && is_scalar($donnees['code'])) ? (int) $donnees['code'] : null,
+          'donnees' => is_array($donnees) ? $donnees : null,
+          // Un corps non-JSON est une INFORMATION (route inexistante servie en HTML,
+          // portail d'erreur) : on rend sa taille, jamais son contenu.
+          'erreur' => is_array($donnees) ? '' : 'corps non JSON (' . strlen($brute['corps']) . ' octets)',
+        );
+      } catch (smartclimException $e) {
+        // Le message d'une exception levée par une brique de transport est TECHNIQUE et
+        // n'est jamais affiché à un utilisateur (CLAUDE.md § smartclimException) : ici
+        // le lecteur EST le développeur, et le type est rendu en clair — un « 1 » nu
+        // n'apprend rien à qui relit un rapport de sonde.
+        $etiquettes = array(
+          smartclimException::TYPE_RESEAU => 'réseau',
+          smartclimException::TYPE_AUTH => 'auth',
+          smartclimException::TYPE_PROTOCOLE => 'protocole',
+          smartclimException::TYPE_INTERNE => 'interne',
+        );
+        $type = $e->getType();
+        $etiquette = isset($etiquettes[$type]) ? $etiquettes[$type] : ('type ' . (int) $type);
+        $resultats[] = array('chemin' => $chemin, 'http' => 0, 'code' => null, 'donnees' => null, 'erreur' => $etiquette . ' : ' . $e->getMessage());
+      }
     }
-    return $donnees;
+
+    return $resultats;
   }
 
   /**

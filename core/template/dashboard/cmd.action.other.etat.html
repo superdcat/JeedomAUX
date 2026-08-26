@@ -1,0 +1,58 @@
+<div class="cmd action other" data-cmd_id="#id#">
+  <a class="cmdAction btn btn-default btn-sm" data-cmd_id="#id#" style="width:100%;">
+    <span class="name">#name_display#</span>
+  </a>
+</div>
+<script>
+(function () {
+  var cmdId = '#id#'
+  var logicalId = '#logicalId#'
+  // Déduit la valeur générique représentée par CE bouton de son propre logicalId
+  // (§ 8.2 de la spec technique UC06 — aucune clé de configuration nouvelle, aucun
+  // jeton n'exposant "configuration" pour une commande action, cf. § 8.1 point 5).
+  var valeurAttendue = null
+  if (logicalId === 'on') {
+    valeurAttendue = '1'
+  } else if (logicalId === 'off') {
+    valeurAttendue = '0'
+  } else if (logicalId.indexOf('mode_') === 0) {
+    valeurAttendue = logicalId.substring(5).toUpperCase()
+  } else if (logicalId.indexOf('fan_') === 0) {
+    valeurAttendue = logicalId.substring(4).toUpperCase()
+  }
+
+  function majEtat(_options) {
+    if (valeurAttendue === null) {
+      return
+    }
+    // Tous les champs du payload sont optionnels (§ 8.1 point 4 de la spec technique) :
+    // pas de raw_unit/alertLevel sur une commande action liée.
+    var valeur = (isset(_options) && _options.value != undefined) ? String(_options.value) : ''
+    var actif
+    if (logicalId === 'on' || logicalId === 'off') {
+      actif = (parseInt(valeur, 10) === parseInt(valeurAttendue, 10))
+    } else {
+      actif = (valeur.toUpperCase() === valeurAttendue)
+    }
+    var $bouton = $('.cmd[data-cmd_id="' + cmdId + '"] .cmdAction')
+    $bouton.toggleClass('btn-primary', actif)
+    $bouton.toggleClass('btn-default', !actif)
+  }
+
+  // API OFFICIELLE : jeedom.cmd.addUpdateFunction('#id#', fn), l'id de la commande
+  // ACTION — jamais '#value_id#' (§ 8.1 point 1 de la spec technique : aucun
+  // re-routage de l'info vers les widgets d'action n'existe côté core).
+  jeedom.cmd.addUpdateFunction(cmdId, majEtat)
+
+  // Amorçage EXPLICITE obligatoire (§ 8.1 point 2) : le core n'appelle rien au rendu,
+  // sans cet appel le bouton reste sans état jusqu'au premier événement temps réel.
+  jeedom.cmd.refreshValue([{
+    cmd_id: cmdId,
+    value: '#state#',
+    display_value: '#state#',
+    valueDate: '#valueDate#',
+    collectDate: '#collectDate#',
+    unit: '#unite#'
+  }])
+})()
+</script>

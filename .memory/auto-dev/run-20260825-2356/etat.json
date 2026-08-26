@@ -34,11 +34,11 @@
       "predecesseur_implemente": false,
       "uc_dir": ".memory/auto-dev/run-20260825-2356/MVP-05",
       "existe": true,
-      "etat": "en_cours",
+      "etat": "termine",
       "phase": "commit",
-      "commit": null,
-      "detail": "analyse section 8 + INDEX deja ecrits, CLAUDE.md corrige (smartclimFrame ajournee)",
-      "maj_le": "2026-08-26T09:21:31"
+      "commit": "46447a8",
+      "detail": "16 fichiers, pluginVersion 0.6 -> 0.7 par le hook",
+      "maj_le": "2026-08-26T09:21:56"
     },
     {
       "cle": "MVP/06",
@@ -52,11 +52,11 @@
       "predecesseur_implemente": false,
       "uc_dir": ".memory/auto-dev/run-20260825-2356/MVP-06",
       "existe": true,
-      "etat": "a_faire",
-      "phase": null,
+      "etat": "en_cours",
+      "phase": "verif",
       "commit": null,
-      "detail": null,
-      "maj_le": null
+      "detail": "verif-plugin RC=0, seul ecart i18n attendu",
+      "maj_le": "2026-08-26T10:22:42"
     },
     {
       "cle": "MVP/07",
@@ -95,5 +95,5 @@
       "maj_le": null
     }
   ],
-  "maj_le": "2026-08-26T09:21:31"
+  "maj_le": "2026-08-26T10:22:42"
 }

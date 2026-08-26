@@ -141,6 +141,46 @@ Home). Il expose la **table générique** des concepts (`on_off`, `temperature`,
 les réglages possibles du climatiseur : vitesses de ventilation, modes, oscillations, minuteries* ».
 ❓ **Schéma exact et lien avec les capacités d'un appareil donné à établir en recette.**
 
+### 3.1 Capacités PAR APPAREIL — trou identifié en recette le 2026-08-26
+
+Constat de recette sur le matériel de test : une unité **qui ne chauffe pas** se voit afficher
+« Modes disponibles : Automatique, Refroidissement, Déshumidification, Chauffage, Ventilation », et
+UC06 lui crée un bouton « Chauffage ». Ce n'est pas un défaut de la table de correspondance mais
+**l'absence de source par appareil** : `smartclimAuxHomeApi::capacitesAppareil()` déduit des trames HVAC
+les **concepts lisibles** (la longueur de `status.control` dit si le mode est décodable), puis retourne,
+pour les modes et les vitesses, le **catalogue du transport** — donc le même profil pour toutes les
+unités. C'est un écart à l'objectif d'UC04 (« l'utilisateur ne doit jamais se voir proposer une commande
+que son appareil ne sait pas exécuter ») et à son **AC6**.
+
+Ce qui est acquis, et qui ne suffit pas :
+
+| Source | Ce qu'elle donne | Pourquoi elle ne répond pas |
+|---|---|---|
+| Longueur des trames `status.control` / `status.running` | les **concepts** décodables (mode, consigne, vitesse, ambiante) | dit qu'un champ *mode* existe, pas **quelles** valeurs l'appareil accepte |
+| `getConfig?id=deviceMutex` | table **générique** des concepts | générique par construction (`.memory/brief.md` : « ne signifie pas que chaque appareil supporte toutes ces fonctions ») |
+| Trame HVAC (LAN comme cloud) | état courant | aucun octet de capacité connu — cf. `smartclim-transport-broadlink-lan.md` § 5.2, aucune information de modèle exploitable |
+| Observation des états successifs | les modes **effectivement utilisés** | un mode jamais utilisé serait déclaré absent : profil trop étroit, pas plus juste |
+
+L'application AUX Home masque le chauffage sur une unité froid-seul : **l'information existe côté
+backend**. Elle se trouve donc dans un champ de `/app/user_device` que le plugin jette à la
+normalisation (candidats plausibles : `productId`, `deviceType`, un drapeau de fonctions), ou derrière
+une route non encore identifiée.
+
+**Comment trancher** (outillage livré le 2026-08-26) :
+
+```bash
+cd /var/www/html/plugins/smartclim
+php core/php/diagnostic-auxhome.php
+```
+
+`core/php/diagnostic-auxhome.php` (CLI uniquement) sonde en **GET** la route de référence et une liste de
+routes candidates via `smartclimAuxHomeApi::diagnostic()`, et rend leur réponse **brute** — identifiants
+masqués par jetons stables, donc le rapport se partage tel quel. Les deux sections à relire d'abord :
+`resume` (quelle route répond) et `pistes` (les clés dont le nom évoque une capacité, un modèle ou un
+type). Le champ trouvé devra ensuite **remplacer** le catalogue plutôt que s'y unir : l'union de
+`smartclim::appliquerCapacites()` ne retire jamais rien, un `HEAT` déjà stocké survivrait à la
+correction — la migration du profil déjà en base fait partie du travail.
+
 > Le backend cousin CN utilise `GET /app/device_bindings?configId=…&getStatus=1` au lieu de
 > `/app/user_device` (`ha-aux-a-plus/README.md`). Les deux backends partagent l'espace de noms `/app/…`
 > mais **pas toutes les routes** : ne pas transposer une route de l'un à l'autre sans vérification.
@@ -327,6 +367,10 @@ l'application officielle. Conséquences pour SmartClim :
 - [ ] Table `wind_speed` réelle de l'appareil (8 valeurs ?) et correspondance avec l'afficheur.
 - [ ] Noms et valeurs exacts des intentions de confort (`screen`/`screen_on_off`, `sleep_mode`, `eco`,
       `clean`, `healthy`, `anti_fungus`, `ultra_silence`).
+- [ ] **Où le backend expose-t-il les capacités RÉELLES d'un appareil donné** (l'unité de test ne chauffe
+      pas, le profil affiche « Chauffage ») : champ inexploité de `/app/user_device` (`productId`,
+      `deviceType`, drapeau de fonctions), route dédiée, ou rien du tout ? → sonde
+      `php core/php/diagnostic-auxhome.php`, cf. § 3.1.
 - [ ] Schéma de `GET /app/getConfig?id=deviceMutex` et **façon d'en dériver les capacités d'un appareil
       donné** (par `modelId` ? par un champ de `/app/user_device` ?).
 - [ ] `POST /app/device/control` (sans `v2`) existe-t-il en EU ?

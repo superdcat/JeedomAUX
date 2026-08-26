@@ -29,3 +29,10 @@
 {"ts": "2026-08-26T09:18:40", "uc": "MVP/05", "phase": "memoire", "etat": "reprise", "detail": "spec tech + code + i18n modifies, aucun commit, reprise en verif finale", "commit": ""}
 {"ts": "2026-08-26T09:21:31", "uc": "MVP/05", "phase": "memoire", "etat": "ok", "detail": "analyse section 8 + INDEX deja ecrits, CLAUDE.md corrige (smartclimFrame ajournee)", "commit": ""}
 {"ts": "2026-08-26T09:21:31", "uc": "MVP/05", "phase": "commit", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T09:21:56", "uc": "MVP/05", "phase": "commit", "etat": "ok", "detail": "16 fichiers, pluginVersion 0.6 -> 0.7 par le hook", "commit": "46447a8"}
+{"ts": "2026-08-26T09:23:03", "uc": "MVP/06", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T09:45:45", "uc": "MVP/06", "phase": "plan", "etat": "ok", "detail": "plan planner recu, 1 question ouverte AC9", "commit": ""}
+{"ts": "2026-08-26T09:59:19", "uc": "MVP/06", "phase": "spec-tech", "etat": "ok", "detail": "spec technique ecrite, 9 decisions journalisees", "commit": ""}
+{"ts": "2026-08-26T10:11:41", "uc": "MVP/06", "phase": "spec-tech", "etat": "ok", "detail": "advisor: 1 blocker corrige (creation dans appliquerEtat), 6 mineurs appliques", "commit": ""}
+{"ts": "2026-08-26T10:11:49", "uc": "MVP/06", "phase": "impl", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T10:22:42", "uc": "MVP/06", "phase": "verif", "etat": "ok", "detail": "verif-plugin RC=0, seul ecart i18n attendu", "commit": ""}

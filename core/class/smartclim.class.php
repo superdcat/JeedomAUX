@@ -81,6 +81,26 @@ class smartclim extends eqLogic {
   const CMD_TRANSPORT = 'transport';
   const CMD_DERNIERE_MAJ = 'last_update';
 
+  // logicalId des commandes ACTION (UC06, § 5.3 de la spec technique). Les entrées
+  // mode_ / fan_ sont dérivées mécaniquement du profil de capacités : préfixe +
+  // strtolower(<valeur générique>) (cf. § 6 — 'mode_cool', 'fan_turbo'...).
+  const CMD_ON = 'on';
+  const CMD_OFF = 'off';
+  const CMD_CONSIGNE = 'set_target_temp';
+  const PREFIXE_CMD_MODE = 'mode_';
+  const PREFIXE_CMD_VITESSE = 'fan_';
+
+  // Déduplication d'ordre (AC7) : clé de cache = CLE_CACHE_DEDUP + id d'équipement +
+  // empreinte du CONTENU de l'ordre (jamais l'équipement seul, § 7 — sinon AC10
+  // échouerait). DUREE_DEDUP_ORDRE = fenêtre anti-double-bip.
+  const CLE_CACHE_DEDUP = 'smartclim::ordre_recent::';
+  const DUREE_DEDUP_ORDRE = 10;
+
+  // Mémoire des valeurs COMMANDÉES (dette D-MVP05-07, § 9 de la spec technique) : une
+  // entrée de cache par équipement, purgée dès expiration de la période de grâce.
+  const CLE_CACHE_ORDRES = 'smartclim::ordres::';
+  const DUREE_GRACE = 60;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -1190,8 +1210,14 @@ class smartclim extends eqLogic {
   public function postSave() {
     try {
       $this->creerCommandesInfo();
+      // UC06, § 4.1 : DOIT être appelée ici ET dans appliquerEtat() (garde
+      // if (!$_optimiste)) — un équipement déjà scanné et inchangé ne redéclenche ni
+      // save() ni postSave() à un scan identique, donc aucune commande action ne
+      // serait jamais créée sans ce second point d'appel (même piège que UC05 pour
+      // creerCommandesInfo()).
+      $this->creerCommandesAction();
     } catch (Throwable $t) {
-      log::add('smartclim', 'error', 'Création des commandes info impossible après sauvegarde (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      log::add('smartclim', 'error', 'Création des commandes info/action impossible après sauvegarde (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
     }
   }
 
@@ -1452,6 +1478,437 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Définition Jeedom des commandes ACTION de CET équipement (UC06, § 5.3/6 de la
+   * spec technique). MÉTHODE D'INSTANCE (contrairement à definitionsCommandesInfo()) :
+   * les entrées mode_ / fan_ sont DÉRIVÉES du profil de capacités, jamais d'un
+   * catalogue de modèles. Une valeur dont versTransport() renvoie null est ABSENTE de
+   * la liste (AC6). La colonne intent_confirme n'est JAMAIS lue (D-MVP04-02).
+   *
+   * @return array<string, array{name:string, subType:string, infoLiee:string, ordre:array, ordreCmd:int}>
+   */
+  private function definitionsCommandesAction() {
+    $profil = $this->getConfiguration(self::CLE_CONF_CAPACITES);
+    $concepts = (is_array($profil) && isset($profil['concepts']) && is_array($profil['concepts'])) ? $profil['concepts'] : array();
+    $modes = (is_array($profil) && isset($profil['modes']) && is_array($profil['modes'])) ? $profil['modes'] : array();
+    $vitesses = (is_array($profil) && isset($profil['vitesses']) && is_array($profil['vitesses'])) ? $profil['vitesses'] : array();
+
+    $definitions = array();
+
+    if (in_array(smartclimCapabilities::CONCEPT_POWER, $concepts, true)) {
+      $definitions[self::CMD_ON] = array(
+        'name' => __('Marche', __FILE__),
+        'subType' => 'other',
+        'infoLiee' => smartclimCapabilities::CONCEPT_POWER,
+        'ordre' => array(smartclimCapabilities::CONCEPT_POWER => 1),
+        'ordreCmd' => 10,
+      );
+      $definitions[self::CMD_OFF] = array(
+        'name' => __('Arrêt', __FILE__),
+        'subType' => 'other',
+        'infoLiee' => smartclimCapabilities::CONCEPT_POWER,
+        'ordre' => array(smartclimCapabilities::CONCEPT_POWER => 0),
+        'ordreCmd' => 11,
+      );
+    }
+
+    if (in_array(smartclimCapabilities::CONCEPT_TARGET_TEMP, $concepts, true)) {
+      // 'ordre' non renseigné ici : construit dynamiquement par ordreEffectifConsigne()
+      // au moment de l'exécution (§ 5.3 de la spec technique).
+      $definitions[self::CMD_CONSIGNE] = array(
+        'name' => __('Régler la consigne', __FILE__),
+        'subType' => 'slider',
+        'infoLiee' => smartclimCapabilities::CONCEPT_TARGET_TEMP,
+        'ordre' => array(),
+        'ordreCmd' => 12,
+      );
+    }
+
+    $ordreCmd = 13;
+    if (in_array(smartclimCapabilities::CONCEPT_MODE, $concepts, true)) {
+      foreach ($modes as $mode) {
+        if (smartclimCapabilities::versTransport(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE, $mode) === null) {
+          continue;
+        }
+        $libelle = smartclimCapabilities::libelle(smartclimCapabilities::CONCEPT_MODE, $mode);
+        if ($libelle === '') {
+          continue;
+        }
+        $logicalId = self::PREFIXE_CMD_MODE . strtolower($mode);
+        $definitions[$logicalId] = array(
+          'name' => sprintf(__('Mode %s', __FILE__), $libelle),
+          'subType' => 'other',
+          'infoLiee' => smartclimCapabilities::CONCEPT_MODE,
+          'ordre' => array(smartclimCapabilities::CONCEPT_POWER => 1, smartclimCapabilities::CONCEPT_MODE => $mode),
+          'ordreCmd' => $ordreCmd++,
+        );
+      }
+    }
+
+    if (in_array(smartclimCapabilities::CONCEPT_FAN_SPEED, $concepts, true)) {
+      foreach ($vitesses as $vitesse) {
+        if (smartclimCapabilities::versTransport(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_FAN_SPEED, $vitesse) === null) {
+          continue;
+        }
+        $libelle = smartclimCapabilities::libelle(smartclimCapabilities::CONCEPT_FAN_SPEED, $vitesse);
+        if ($libelle === '') {
+          continue;
+        }
+        $logicalId = self::PREFIXE_CMD_VITESSE . strtolower($vitesse);
+        $definitions[$logicalId] = array(
+          'name' => sprintf(__('Vitesse %s', __FILE__), $libelle),
+          'subType' => 'other',
+          'infoLiee' => smartclimCapabilities::CONCEPT_FAN_SPEED,
+          // Pas d'allumage implicite sur un simple réglage de ventilation (§ 3.3 de la
+          // spec technique) : AC2 ne le demande que pour le mode et la consigne.
+          'ordre' => array(smartclimCapabilities::CONCEPT_FAN_SPEED => $vitesse),
+          'ordreCmd' => $ordreCmd++,
+        );
+      }
+    }
+
+    return $definitions;
+  }
+
+  /**
+   * Crée les commandes action MANQUANTES, pose le widget si aucun n'est choisi, et
+   * réaligne minValue/maxValue/step de set_target_temp (UC06, § 4.1/5.3/8 de la spec
+   * technique). Appelée APRÈS creerCommandesInfo() (besoin des id d'info pour
+   * setValue()). try/catch PAR COMMANDE, ne lève JAMAIS.
+   *
+   * @return int Nombre de commandes créées.
+   */
+  private function creerCommandesAction() {
+    $definitions = $this->definitionsCommandesAction();
+
+    $existantes = array();
+    foreach ($this->getCmd(null, null) as $cmdExistante) {
+      $existantes[$cmdExistante->getLogicalId()] = $cmdExistante;
+    }
+
+    $bornes = $this->bornesTemperature();
+    $crees = 0;
+
+    foreach ($definitions as $logicalId => $definition) {
+      if (isset($existantes[$logicalId])) {
+        if ($logicalId === self::CMD_CONSIGNE) {
+          try {
+            $this->realignerBornesConsigne($existantes[$logicalId], $bornes);
+          } catch (Throwable $t) {
+            log::add('smartclim', 'error', 'Réalignement des bornes de "' . $logicalId . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+          }
+        }
+        continue;
+      }
+      if ($definition['name'] === '') {
+        continue;
+      }
+      try {
+        $cmd = new smartclimCmd();
+        $cmd->setEqLogic_id($this->getId());
+        $cmd->setLogicalId($logicalId);
+        $cmd->setName($definition['name']);
+        $cmd->setType('action');
+        $cmd->setSubType($definition['subType']);
+        $cmd->setIsVisible(1);
+        $cmd->setOrder($definition['ordreCmd']);
+
+        if (isset($existantes[$definition['infoLiee']])) {
+          $cmd->setValue($existantes[$definition['infoLiee']]->getId());
+        } else {
+          // Le pilotage ne doit pas dépendre d'une info que l'utilisateur aurait
+          // supprimée (§ 10 de la spec technique) : la commande action est créée quand
+          // même, simplement sans lien de modèle.
+          log::add('smartclim', 'debug', 'Commande action "' . $logicalId . '" créée sans commande info liée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '")');
+        }
+
+        if ($logicalId === self::CMD_CONSIGNE) {
+          $cmd->setConfiguration('minValue', $bornes['min']);
+          $cmd->setConfiguration('maxValue', $bornes['max']);
+          $cmd->setConfiguration('step', $bornes['pas']);
+          $cmd->setDisplay('parameters', array_merge((array) $cmd->getDisplay('parameters'), array('step' => $bornes['pas'])));
+        } elseif ($cmd->getTemplate('dashboard', '') === '') {
+          // Pose idempotente (§ 8.2 de la spec technique) : n'écrase jamais un widget
+          // choisi à la main.
+          $cmd->setTemplate('dashboard', 'smartclim::etat');
+          $cmd->setTemplate('mobile', 'smartclim::etat');
+        }
+
+        $cmd->save();
+        $crees++;
+      } catch (Throwable $t) {
+        log::add('smartclim', 'error', 'Création de la commande action "' . $logicalId . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      }
+    }
+    return $crees;
+  }
+
+  /**
+   * Réaligne minValue/maxValue/step (configuration ET display.parameters, § 8.3 de la
+   * spec technique) de la commande de consigne sur les bornes EFFECTIVES courantes.
+   * Comparaison NUMÉRIQUE À TOLÉRANCE (R6) : sans elle, la chaîne '16' issue du
+   * formulaire diffère du float 16.0 et chaque cycle de cron émettrait un cmd::save().
+   * Le tableau display.parameters existant est FUSIONNÉ, jamais remplacé (R6).
+   *
+   * @param cmd $_cmd Commande action set_target_temp déjà existante.
+   * @param array{min:float,max:float,pas:float} $_bornes
+   */
+  private function realignerBornesConsigne($_cmd, array $_bornes) {
+    $modifie = false;
+    if (!self::bornesEgales((float) $_cmd->getConfiguration('minValue'), $_bornes['min'])) {
+      $_cmd->setConfiguration('minValue', $_bornes['min']);
+      $modifie = true;
+    }
+    if (!self::bornesEgales((float) $_cmd->getConfiguration('maxValue'), $_bornes['max'])) {
+      $_cmd->setConfiguration('maxValue', $_bornes['max']);
+      $modifie = true;
+    }
+    if (!self::bornesEgales((float) $_cmd->getConfiguration('step'), $_bornes['pas'])) {
+      $_cmd->setConfiguration('step', $_bornes['pas']);
+      $modifie = true;
+    }
+    $parametres = $_cmd->getDisplay('parameters');
+    if (!is_array($parametres)) {
+      $parametres = array();
+    }
+    if (!isset($parametres['step']) || !self::bornesEgales((float) $parametres['step'], $_bornes['pas'])) {
+      $parametres['step'] = $_bornes['pas'];
+      $_cmd->setDisplay('parameters', $parametres);
+      $modifie = true;
+    }
+    if ($modifie) {
+      $_cmd->save();
+    }
+  }
+
+  /**
+   * Comparaison NUMÉRIQUE À TOLÉRANCE (0,001) dédiée à realignerBornesConsigne() (R6) —
+   * distincte de memeValeur() ci-dessous (tolérance 0,01, usage grâce/optimiste).
+   *
+   * @return bool
+   */
+  private static function bornesEgales($_a, $_b) {
+    return abs($_a - $_b) < 0.001;
+  }
+
+  /**
+   * Point d'entrée UNIQUE du pilotage, appelé par smartclimCmd::execute() (UC06, §
+   * 5.3/10 de la spec technique). Recrée une exception CURATÉE en français à chaque
+   * point de sortie en échec (contrat @throws) : jamais un message technique affiché
+   * tel quel côté navigateur.
+   *
+   * 1. session_write_close() gardé (§ 10.1 — n'affecte jamais un contexte cron/scénario)
+   * 2. gardes (compteConfigure, auxhome_device_id, commande connue)
+   * 3. construction de l'ordre GÉNÉRIQUE (+ power => 1 pour mode et consigne)
+   * 4. validation de la consigne
+   * 5. déduplication (AC7/AC10, § 7 de la spec technique)
+   * 6. appliquerOrdre()
+   * 7. enregistrerOrdre() + appliquerEtat(..., true)
+   *
+   * @param string $_logicalId
+   * @param array $_options
+   * @throws smartclimException Message DÉJÀ CURATÉ en français (affiché par displayException()).
+   */
+  public function executerCommandeAction($_logicalId, array $_options = array()) {
+    // § 10.1 : cmd.ajax.php n'appelle jamais session_write_close() lui-même, et un
+    // ordre de 3 à 18 s figerait sinon toute l'interface (session fichier).
+    if (session_status() === PHP_SESSION_ACTIVE) {
+      session_write_close();
+    }
+
+    if (!self::compteConfigure()) {
+      throw new smartclimException(__('Compte AUX Home non configuré : renseignez l\'e-mail et le mot de passe', __FILE__), smartclimException::TYPE_AUTH);
+    }
+
+    $identifiantAppareil = $this->getConfiguration('auxhome_device_id');
+    if (!is_string($identifiantAppareil) || $identifiantAppareil === '') {
+      throw new smartclimException(__('Cet équipement n\'est pas relié à un appareil AUX Home — relancez un scan', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+
+    $definitions = $this->definitionsCommandesAction();
+    if (!isset($definitions[$_logicalId])) {
+      throw new smartclimException(__('Commande inconnue pour cet équipement', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $definition = $definitions[$_logicalId];
+
+    if ($_logicalId === self::CMD_CONSIGNE) {
+      $ordre = array(
+        smartclimCapabilities::CONCEPT_POWER => 1,
+        smartclimCapabilities::CONCEPT_TARGET_TEMP => $this->ordreEffectifConsigne($_options),
+      );
+    } else {
+      $ordre = $definition['ordre'];
+    }
+
+    $ordreTrie = $ordre;
+    ksort($ordreTrie);
+    $empreinte = sha1(json_encode($ordreTrie));
+    $cleDedup = self::CLE_CACHE_DEDUP . $this->getId() . '::' . $empreinte;
+    if (cache::byKey($cleDedup)->getValue(null) !== null) {
+      // Retour SILENCIEUX (§ 10 de la spec technique) : aucune exception, aucun réseau,
+      // aucune écriture d'état — le premier ordre l'a déjà fait.
+      log::add('smartclim', 'debug', 'Ordre dédupliqué (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", commande "' . $_logicalId . '")');
+      return;
+    }
+    // Marqueur posé AVANT l'appel réseau (§ 7) : couvre le double-clic pendant que le
+    // 1er ordre est en vol.
+    cache::set($cleDedup, '1', self::DUREE_DEDUP_ORDRE);
+
+    try {
+      $ordreApplique = smartclimAuxHomeApi::appliquerOrdre($identifiantAppareil, $ordre);
+    } catch (smartclimException $e) {
+      // Un ordre échoué doit rester rejouable immédiatement (§ 7).
+      cache::delete($cleDedup);
+      log::add('smartclim', 'error', 'Commande action "' . $_logicalId . '" échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+      if ($e->getType() == smartclimException::TYPE_INTERNE) {
+        // Littéral DÉDIÉ (§ 10 de la spec technique) : le message existant de
+        // messageErreurAuxHome() pour TYPE_INTERNE parle de "préparation de la
+        // connexion", faux dans ce contexte.
+        throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), $e->getType());
+      }
+      throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
+    } catch (Throwable $t) {
+      // catch(Throwable) en DERNIER bloc (§ 10 de la spec technique) : une Error PHP 8
+      // traverserait sinon catch(Exception), et core/ajax/cmd.ajax.php cesserait de
+      // renvoyer du JSON.
+      cache::delete($cleDedup);
+      log::add('smartclim', 'error', 'Commande action "' . $_logicalId . '" échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+
+    $this->enregistrerOrdre($ordreApplique);
+    // État OPTIMISTE (AC3) : la valeur poussée est celle RÉELLEMENT envoyée (après
+    // quantification par appliquerOrdre()), jamais celle demandée.
+    $this->appliquerEtat($ordreApplique, true);
+  }
+
+  /**
+   * Valeur de consigne EFFECTIVE (UC06, § 5.3/10 de la spec technique) : lit
+   * $_options['slider'], rejette si non numérique ou hors bornes (bornesTemperature(),
+   * UC04), puis quantifie sur la grille de bornesTemperature()['pas'] ancrée sur le
+   * minimum — c'est le pas AFFICHÉ au curseur (AC4), pas le pas d'écriture du
+   * transport. Le second arrondi, celui de smartclimCapabilities::echelleTemperature(),
+   * est appliqué par appliquerOrdre() et reste SEUL autoritaire sur la valeur
+   * réellement envoyée puis poussée en état optimiste.
+   *
+   * @param array $_options
+   * @return float
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  private function ordreEffectifConsigne(array $_options) {
+    if (!isset($_options['slider']) || !is_scalar($_options['slider']) || !is_numeric($_options['slider'])) {
+      throw new smartclimException(__('Valeur de consigne absente ou non numérique', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $valeur = (float) $_options['slider'];
+    $bornes = $this->bornesTemperature();
+    if ($valeur < $bornes['min'] || $valeur > $bornes['max']) {
+      throw new smartclimException(sprintf(__('Consigne hors des bornes de l\'équipement (%1$s à %2$s °C)', __FILE__), $bornes['min'], $bornes['max']), smartclimException::TYPE_INTERNE);
+    }
+    $pas = ($bornes['pas'] > 0) ? $bornes['pas'] : smartclimCapabilities::TEMP_PAS_DEFAUT;
+    return $bornes['min'] + round(($valeur - $bornes['min']) / $pas) * $pas;
+  }
+
+  /**
+   * Mémoire des valeurs COMMANDÉES (dette D-MVP05-07, § 9 de la spec technique) : lit
+   * le cache et purge les concepts EXPIRÉS (TTL individuel par concept, indépendant du
+   * TTL de l'entrée de cache elle-même). JSON NON chiffré : aucun secret, un mode de
+   * climatisation n'est pas une donnée sensible.
+   *
+   * @return array<string, array{valeur:mixed, ts:int}>
+   */
+  private function memoireOrdres() {
+    $brut = cache::byKey(self::CLE_CACHE_ORDRES . $this->getId())->getValue(null);
+    if (!is_string($brut) || $brut === '') {
+      return array();
+    }
+    $memoire = json_decode($brut, true);
+    if (!is_array($memoire)) {
+      return array();
+    }
+    $maintenant = time();
+    $valide = array();
+    foreach ($memoire as $concept => $entree) {
+      if (!is_array($entree) || !array_key_exists('valeur', $entree) || !isset($entree['ts']) || !is_numeric($entree['ts'])) {
+        continue;
+      }
+      if (($maintenant - (int) $entree['ts']) > self::DUREE_GRACE) {
+        continue;
+      }
+      $valide[$concept] = $entree;
+    }
+    return $valide;
+  }
+
+  /**
+   * Fusionne l'ordre RÉELLEMENT appliqué (renvoyé par
+   * smartclimAuxHomeApi::appliquerOrdre()) dans la mémoire des valeurs commandées (§ 9
+   * de la spec technique). Relit l'entrée, purge les concepts expirés (via
+   * memoireOrdres()), écrit/écrase les concepts commandés, réécrit l'entrée : un
+   * nouvel ordre n'efface donc jamais la mémoire d'un autre concept encore sous grâce.
+   *
+   * @param array $_ordre Map générique EFFECTIVEMENT envoyée.
+   */
+  private function enregistrerOrdre(array $_ordre) {
+    $memoire = $this->memoireOrdres();
+    $maintenant = time();
+    foreach ($_ordre as $concept => $valeur) {
+      $memoire[$concept] = array('valeur' => $valeur, 'ts' => $maintenant);
+    }
+    cache::set(self::CLE_CACHE_ORDRES . $this->getId(), json_encode($memoire), self::DUREE_GRACE);
+  }
+
+  /**
+   * Filtre un état scruté selon la mémoire des valeurs commandées (§ 9 de la spec
+   * technique — anti-rollback) : pour chaque concept mémorisé et non expiré, valeur
+   * mémorisée ÉGALE à la valeur scrutée -> le cloud a confirmé, le concept est retiré
+   * de la mémoire (fin de grâce anticipée) ; valeur DIFFÉRENTE -> la clé est retirée de
+   * $_etat (commande info non touchée, valueDate intact) + log debug.
+   *
+   * @param array $_etat
+   * @return array
+   */
+  private function filtrerEtatSelonOrdres(array $_etat) {
+    $memoire = $this->memoireOrdres();
+    if (empty($memoire)) {
+      return $_etat;
+    }
+    $modifie = false;
+    foreach ($memoire as $concept => $entree) {
+      if (!array_key_exists($concept, $_etat)) {
+        continue;
+      }
+      if (self::memeValeur($entree['valeur'], $_etat[$concept])) {
+        unset($memoire[$concept]);
+        $modifie = true;
+      } else {
+        log::add('smartclim', 'debug', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : valeur commandée ' . self::neutraliserPourLog((string) $entree['valeur']) . ', valeur relue ' . self::neutraliserPourLog((string) $_etat[$concept]) . ', période de grâce');
+        unset($_etat[$concept]);
+      }
+    }
+    if ($modifie) {
+      if (empty($memoire)) {
+        cache::delete(self::CLE_CACHE_ORDRES . $this->getId());
+      } else {
+        cache::set(self::CLE_CACHE_ORDRES . $this->getId(), json_encode($memoire), self::DUREE_GRACE);
+      }
+    }
+    return $_etat;
+  }
+
+  /**
+   * Comparaison GÉNÉRIQUE (grâce/optimiste, § 9 de la spec technique) : numérique à
+   * 0,01 près si les deux valeurs sont numériques, sinon comparaison de chaînes.
+   * Tolérance DISTINCTE de bornesEgales() ci-dessus (0,001, dédiée à R6).
+   *
+   * @return bool
+   */
+  private static function memeValeur($_a, $_b) {
+    if (is_numeric($_a) && is_numeric($_b)) {
+      return abs((float) $_a - (float) $_b) < 0.01;
+    }
+    return (string) $_a === (string) $_b;
+  }
+
+  /**
    * Applique un état NORMALISÉ (clés = codes de concept, cf.
    * smartclimAuxHomeApi::etatAppareil()) aux commandes info : garantit d'abord
    * l'existence des commandes (creerCommandesInfo()), puis pousse les seules clés
@@ -1480,10 +1937,26 @@ class smartclim extends eqLogic {
    *
    * @param array $_etat Renvoyé par smartclimAuxHomeApi::etatAppareil() (ou un état
    *   PARTIEL construit par UC06).
+   * @param bool $_optimiste UC06, § 4.1/9 de la spec technique. true (juste après un
+   *   ordre réussi) : AUCUN filtrage de grâce (on ne filtre pas son propre ordre) et
+   *   AUCUNE recréation des commandes action (celle qu'on vient d'exécuter existe déjà
+   *   forcément). false (défaut : UC05, et UC07 par héritage) : filtrage de grâce
+   *   (filtrerEtatSelonOrdres()) et recréation des commandes action manquantes.
    * @return bool true si au moins une valeur de CONCEPT a changé.
    */
-  public function appliquerEtat(array $_etat) {
+  public function appliquerEtat(array $_etat, $_optimiste = false) {
+    if (!$_optimiste) {
+      $_etat = $this->filtrerEtatSelonOrdres($_etat);
+    }
+
     $this->creerCommandesInfo();
+    if (!$_optimiste) {
+      // Cf. § 4.1 de la spec technique : creerCommandesAction() DOIT être appelée ici
+      // ET dans postSave() — postSave() seul ne suffit pas sur un équipement déjà
+      // scanné et inchangé (aucun save() -> aucun postSave()), panne silencieuse sans
+      // ce second point d'appel.
+      $this->creerCommandesAction();
+    }
 
     $change = false;
     // conceptsConnus() = les 6 concepts du modèle générique, 'online' INCLUS : une
@@ -1511,7 +1984,12 @@ class smartclim extends eqLogic {
   }
 
   // Fonction exécutée automatiquement avant la suppression de l'équipement
+  //
+  // UC06, § 5.3 : hygiène — purge la mémoire des valeurs commandées de cet équipement,
+  // sans quoi l'entrée de cache resterait orpheline jusqu'à expiration naturelle (60 s,
+  // sans conséquence fonctionnelle, mais évite un déchet inutile).
   public function preRemove() {
+    cache::delete(self::CLE_CACHE_ORDRES . $this->getId());
   }
 
   // Fonction exécutée automatiquement après la suppression de l'équipement
@@ -1556,8 +2034,18 @@ class smartclimCmd extends cmd {
   }
   */
 
-  // Exécution d'une commande
+  // Exécution d'une commande (UC06, § 5.3 de la spec technique) : délégation PURE,
+  // aucune logique métier, aucun catch — la curation du message vit dans smartclim::
+  // (messageErreurAuxHome() y est private) et l'exception curatée remonte au core.
   public function execute($_options = array()) {
+    if ($this->getType() !== 'action') {
+      return;
+    }
+    $eqLogic = $this->getEqLogic();
+    if (!($eqLogic instanceof smartclim)) {
+      return;
+    }
+    $eqLogic->executerCommandeAction($this->getLogicalId(), $_options);
   }
 
   /*     * **********************Getteur Setteur*************************** */

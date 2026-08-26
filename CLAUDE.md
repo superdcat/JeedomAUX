@@ -151,6 +151,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   annexes (+ constantes internes). Incluse en tête de `core/class/smartclim.class.php`, c'est elle
   qui rend les classes annexes chargeables — l'autoload du core ne le fait pas (cf. Conventions →
   Autoload Jeedom).
+- **`core/php/diagnostic-auxhome.php`** — **sonde de reverse engineering, jamais appelée par le plugin en
+  fonctionnement** : `php core/php/diagnostic-auxhome.php` (sur le Jeedom de recette) sonde en **GET** une
+  liste de routes AUX Home avec le compte configuré et rend leur réponse **brute**, identifiants masqués
+  par jetons stables — le rapport se partage tel quel. Elle existe pour trancher les « À confirmer » de
+  contrat externe contre le matériel réel, la première étant **où le backend expose les capacités d'un
+  appareil donné** (cf. `.memory/analyse/smartclim-transport-aux-home.md` § 3.1 : le profil UC04 affiche
+  aujourd'hui le catalogue du transport, donc « Chauffage » sur une unité froid-seul).
+  ⚠️ Son unique point d'entrée réseau, `smartclimAuxHomeApi::diagnostic()`, prend un **chemin en
+  paramètre** : elle est gardée par `php_sapi_name() !== 'cli'` **et** par une liste blanche de forme.
+  Ne jamais l'exposer à un point d'entrée web — ce serait un SSRF authentifié vers le cloud AUX.
 - **`core/template/{dashboard,mobile}/cmd.<type>.<subType>.<nom>.html`** — widgets de commande
   personnalisés (dashboard + mobile = **deux fichiers synchronisés**). ⚠️ Le dossier s'appelle bien
   `core/template/` : c'est le **nom standard Jeedom** du dossier de widgets, il ne se renomme pas avec l'id

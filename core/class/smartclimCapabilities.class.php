@@ -76,6 +76,15 @@ class smartclimCapabilities {
   const TEMP_ENVELOPPE_MIN = 5;
   const TEMP_ENVELOPPE_MAX = 35;
 
+  // Échelle de température en ÉCRITURE du transport AUX Home (UC06, § 3.2/5.1 de la
+  // spec technique) : intent "temperature" = degré Celsius entier (référence EU,
+  // vérifiée en direct sur getPubkey dès UC02) — DISTINCTE du pas de LECTURE (0,5°C,
+  // TEMP_PAS_DEFAUT ci-dessus), qui reste inchangé. Ne pas confondre les deux : seul
+  // le pas d'ÉCRITURE vaut 1,0°C. Si la recette révèle un backend en ×10 (risque R2),
+  // ces deux littéraux suffisent à corriger.
+  const FACTEUR_TEMP_AUX_HOME = 1;
+  const PAS_ECRITURE_AUX_HOME = 1.0;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -296,5 +305,24 @@ class smartclimCapabilities {
       'max' => self::TEMP_ENVELOPPE_MAX,
       'pasAutorises' => array('0.5', '1'),
     );
+  }
+
+  /**
+   * Échelle de température d'ÉCRITURE d'un transport (UC06, § 5.1 de la spec
+   * technique) : facteur d'échelle de l'intent + pas d'écriture. Renvoie array() si le
+   * transport est inconnu — jamais de repli silencieux (même contrat que
+   * versTransport()/depuisTransport() ci-dessus).
+   *
+   * @param string $_transport
+   * @return array{facteur:int,pas_ecriture:float}|array
+   */
+  public static function echelleTemperature($_transport) {
+    if ($_transport === self::TRANSPORT_AUX_HOME) {
+      return array(
+        'facteur' => self::FACTEUR_TEMP_AUX_HOME,
+        'pas_ecriture' => self::PAS_ECRITURE_AUX_HOME,
+      );
+    }
+    return array();
   }
 }

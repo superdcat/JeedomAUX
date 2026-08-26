@@ -1,0 +1,13 @@
+{"ts": "2026-08-26T19:04:41", "uc": "MVP/07", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T19:21:39", "uc": "MVP/07", "phase": "plan", "etat": "ok", "detail": "plan planner recu, 8 AC couverts, aucune question ouverte", "commit": ""}
+{"ts": "2026-08-26T19:32:15", "uc": "MVP/07", "phase": "spec-tech", "etat": "debut", "detail": "4 arbitrages journalises, plan auto-valide", "commit": ""}
+{"ts": "2026-08-26T19:34:34", "uc": "MVP/07", "phase": "spec-tech", "etat": "ok", "detail": "spec technique ecrite, 16 sections", "commit": ""}
+{"ts": "2026-08-26T19:34:34", "uc": "MVP/07", "phase": "impl", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T19:39:07", "uc": "MVP/07", "phase": "impl", "etat": "ok", "detail": "2 fichiers modifies, 6 methodes + 4 constantes + cmd refresh", "commit": ""}
+{"ts": "2026-08-26T19:39:07", "uc": "MVP/07", "phase": "verif", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-26T19:39:40", "uc": "MVP/07", "phase": "verif", "etat": "ok", "detail": "verif-plugin OK sur le code, 3 problemes i18n differes au translator", "commit": ""}
+{"ts": "2026-08-26T19:39:40", "uc": "MVP/07", "phase": "review", "etat": "debut", "detail": "tour 1", "commit": ""}
+{"ts": "2026-08-26T22:16:28", "uc": "MVP/07", "phase": "review", "etat": "ok", "detail": "tour 1 joue en /feature supervise : 0 critical/high, 0 blocker/major", "commit": ""}
+{"ts": "2026-08-26T22:16:29", "uc": "MVP/07", "phase": "correctifs", "etat": "ok", "detail": "1 lot de finition (try/catch global rafraichirAuxHome + echecType), agent neuf", "commit": ""}
+{"ts": "2026-08-26T22:16:29", "uc": "MVP/07", "phase": "traduction", "etat": "ok", "detail": "cle Rafraichir ajoutee en/de/es, 3 cles orphelines retirees, verif --tous verte", "commit": ""}
+{"ts": "2026-08-26T22:16:29", "uc": "MVP/07", "phase": "memoire", "etat": "ok", "detail": "CLAUDE.md, analyse architecture SS 6-7, INDEX.md, spec tech SS 6+16, 1 memoire agent", "commit": ""}

@@ -212,9 +212,18 @@ Jeedom affiche l'état sur le bouton.
 |---|---|
 | `postSave()` | (re)création des commandes depuis le profil de capacités ; **jamais** d'appel réseau bloquant |
 | `preRemove()` | purge du cache d'état de l'équipement |
-| `cron5()` | **rafraîchissement principal** (défaut) : un seul appel `/app/user_device?getStatus=1` pour tous les équipements AUX Home, puis distribution |
-| `cron()` (chaque minute) | uniquement si l'utilisateur choisit un intervalle d'1 min |
-| `cronDaily()` | re-détection des capacités, nettoyage du cache |
+| `cron()` (chaque minute) | **SEUL hook de rafraîchissement**, depuis UC07 : garde d'échéance en cache (`smartclim::dernier_cycle`, marge de 30 s) puis, si l'échéance est atteinte, un seul appel `/app/user_device?getStatus=1` pour tous les équipements AUX Home, puis distribution |
+| `cron5()` … `cronDaily()` | **non implémentés** — restent commentés dans la classe, donc invisibles du core |
+
+⚠️ **Un seul hook, décidé en UC07** (D-MVP07-01, `.memory/auto-dev/run-20260826-1904/MVP-07/decisions.md`) —
+cette section prévoyait à l'origine `cron5()` comme hook principal plus `cron()` en renfort à 1 minute. Ce
+montage ne peut **structurellement pas** honorer un intervalle réglé sur 1 min (critère AC8 d'UC07), et il
+crée deux interrupteurs core désynchronisables (`functionality::cron::enable` et
+`functionality::cron5::enable`, réglables indépendamment dans l'onglet « Fonctionnalités ») donc un risque
+de double exécution du cycle. Le coût d'un tick non échu est d'**une lecture de cache**, sans aucune requête
+SQL. La re-détection des capacités **n'est pas** portée par un cron : le vecteur de migration du parc est le
+**scan manuel** (UC03) — le cycle de rafraîchissement est en **lecture d'état seule** et n'émet aucun
+`save()` d'équipement.
 
 ⚠️ **Robustesse cron** (`CLAUDE.md`) : `try/catch` **par équipement**. Un climatiseur en erreur ne doit
 jamais interrompre la boucle. L'appel réseau global (liste) est lui aussi en `try/catch` : en cas d'échec,
@@ -229,7 +238,8 @@ Le push est traité en post-MVP, avec démon.
 
 1. Après une commande : appliquer immédiatement l'**état optimiste** sur les commandes info (retour visuel
    instantané) et l'horodater.
-2. Pendant une **période de grâce** (≈ 60 s, configurable), un état scruté ne remplace pas les champs
+2. Pendant une **période de grâce** (`smartclim::DUREE_GRACE` = **60 s**, constante — pas une clé de
+   configuration, à recalibrer en recette si besoin), un état scruté ne remplace pas les champs
    commandés. Sans cela : consigne qui « revient » à sa valeur précédente, arrêt qui repasse en marche,
    oscillation d'état ⚠️ (`ha-aux-a-plus/docs/RESEARCH_PLAYBOOK.md` § 4 ; `fparrav/src/platform.ts`
    `pendingCommands`).

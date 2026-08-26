@@ -115,7 +115,7 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   supportée » **hors** de l'interface, pas seulement dans l'UI.
   ⚠️ **Tout ordre de mode ou de consigne porte TOUJOURS `power => 1`** : changer le mode d'un appareil
   éteint l'allume, en **une** requête. Ne pas « optimiser » en retirant cette clé.
-  ⚠️ **Deux mémoires de cache, deux rôles distincts, à ne pas confondre** — aucune ne vit en
+  ⚠️ **Trois mémoires de cache, trois rôles distincts, à ne pas confondre** — aucune ne vit en
   configuration d'équipement :
   - `smartclim::ordre_recent::<id>` (`CLE_CACHE_DEDUP`, **10 s**) — empreinte du **contenu** de l'ordre,
     posée **avant** l'appel réseau et supprimée en cas d'échec : anti-double-bip. La clé est le contenu,
@@ -123,9 +123,39 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   - `smartclim::ordres::<id>` (`CLE_CACHE_ORDRES`, `DUREE_GRACE` = **60 s**) — dernière valeur commandée
     par concept, consommée par `filtrerEtatSelonOrdres()` **dans `appliquerEtat()`** : un état scruté plus
     ancien qu'un ordre envoyé n'écrase pas la valeur commandée (anti-rollback). C'est là, et nulle part
-    ailleurs, que le cron d'UC07 héritera de la période de grâce — sans une ligne de plus.
+    ailleurs, que le cron d'UC07 hérite de la période de grâce — il n'a effectivement pas coûté une ligne :
+    le cycle appelle `appliquerEtat($etat)` **sans** second argument, donc `$_optimiste = false`, donc
+    filtrage actif.
+  - `smartclim::dernier_cycle` (`CLE_CACHE_DERNIER_CYCLE`, `DUREE_MEMOIRE_CYCLE` = 48 h) — horodatage du
+    dernier cycle de rafraîchissement (UC07), **globale au plugin** et non par équipement, contrairement
+    aux deux précédentes. Lue par `cycleEchu()`, écrite par `marquerCycle()`.
   ⚠️ L'**état optimiste** poussé après succès est celui **réellement envoyé** (après quantification), pas
   celui demandé par l'utilisateur.
+
+  Depuis l'UC07, elle porte enfin le **cadencement** : `cron()` — **seul hook cron implémenté**, appelé
+  chaque minute par le core, `cron5()`…`cronDaily()` restant **commentées donc inexistantes** — ouvre par
+  la garde d'échéance `cycleEchu()` (cache `smartclim::dernier_cycle`, marge de 30 s) puis appelle
+  `rafraichirAuxHome()` : **un seul** `listerAppareils()`, puis distribution via
+  `equipementsParIdentifiant()` et `appliquerEtat()`, et `basculerHorsLigne()` sur les équipements dont
+  l'appareil n'a pas été renvoyé. La commande d'action `refresh` (`CMD_RAFRAICHIR`, libellé
+  « Rafraîchir ») déclenche le **même cycle complet** via `rafraichirMaintenant()`.
+  ⚠️ **Un seul hook, et c'est un arbitrage, pas une simplification** : `cron5()` ne peut structurellement
+  pas honorer un intervalle réglé sur 1 minute, et deux hooks exposeraient deux interrupteurs core
+  (`functionality::cron::enable`, `functionality::cron5::enable`) désynchronisables — donc un risque de
+  double exécution. Détail : `.memory/analyse/smartclim-architecture-jeedom.md` § 6.
+  ⚠️ **Le marqueur d'échéance est posé AVANT l'appel réseau**, et après la garde `compteConfigure()` :
+  sinon un cloud en panne serait re-sollicité chaque minute dans le processus `plugin::cron`, qui exécute
+  séquentiellement les crons de **tous** les plugins. C'est aussi ce qui tient lieu de sérialisation entre
+  cycle automatique et « Rafraîchir » — il n'y a **volontairement aucun verrou**, un verrou dégraderait
+  l'exigence de mise à jour immédiate du bouton.
+  ⚠️ **Le cycle est en LECTURE D'ÉTAT SEULE** : il ne touche jamais les capacités et n'émet aucun `save()`
+  d'équipement, alors que la réponse contient bien `capacites_brutes`. Le vecteur de migration du parc
+  reste le **scan** (UC03). Un `appliquerCapacites()` ici produirait une écriture SQL par cycle.
+  ⚠️ **`rafraichirAuxHome()` ne lève JAMAIS** — `try/catch (Throwable)` global, plus un `try/catch` par
+  équipement dans la distribution (un climatiseur en erreur n'interrompt pas la boucle). Un échec interne
+  se signale par `echecType` dans le tableau de retour, **jamais** par une exception : c'est ce qui évite
+  qu'un clic sur « Rafraîchir » rende un succès silencieux. `setStatus()` n'est **pas** utilisé — la
+  commande info `online` est le seul porteur de l'état de joignabilité.
 - **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
   plugin. Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
   aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification

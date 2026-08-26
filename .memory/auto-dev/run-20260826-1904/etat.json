@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "run_id": "run-20260826-1904",
+  "cree_le": "2026-08-26T19:04:13",
+  "demande": "MVP 07, MVP 08",
+  "uc": [
+    {
+      "cle": "MVP/07",
+      "dossier": "MVP",
+      "numero": "07",
+      "spec_nom": "07-rafraichissement-cron",
+      "spec_path": ".memory/specs/MVP/07-rafraichissement-cron.md",
+      "tech_path": ".memory/specs/MVP/07-rafraichissement-cron-tech.md",
+      "tech_existe": false,
+      "predecesseur": "MVP/06",
+      "predecesseur_implemente": true,
+      "uc_dir": ".memory/auto-dev/run-20260826-1904/MVP-07",
+      "existe": true,
+      "etat": "en_cours",
+      "phase": "memoire",
+      "commit": null,
+      "detail": "CLAUDE.md, analyse architecture SS 6-7, INDEX.md, spec tech SS 6+16, 1 memoire agent",
+      "maj_le": "2026-08-26T22:16:29"
+    },
+    {
+      "cle": "MVP/08",
+      "dossier": "MVP",
+      "numero": "08",
+      "spec_nom": "08-robustesse-et-etat-connexion",
+      "spec_path": ".memory/specs/MVP/08-robustesse-et-etat-connexion.md",
+      "tech_path": ".memory/specs/MVP/08-robustesse-et-etat-connexion-tech.md",
+      "tech_existe": false,
+      "predecesseur": "MVP/07",
+      "predecesseur_implemente": false,
+      "uc_dir": ".memory/auto-dev/run-20260826-1904/MVP-08",
+      "existe": true,
+      "etat": "a_faire",
+      "phase": null,
+      "commit": null,
+      "detail": null,
+      "maj_le": null
+    }
+  ],
+  "maj_le": "2026-08-26T22:16:29"
+}

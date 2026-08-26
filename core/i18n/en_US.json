@@ -30,6 +30,7 @@
         "Aucune méthode correspondante à": "No matching method for"
     },
     "plugins/smartclim/core/class/smartclim.class.php": {
+        "Rafraîchir": "Refresh",
         "Connexion réussie au compte AUX Home": "Successfully connected to the AUX Home account",
         "Échec de la connexion — vérifiez vos identifiants et le pays sélectionné": "Connection failed — check your credentials and the selected country",
         "Service AUX Home injoignable, réessayez plus tard": "AUX Home service unreachable, please try again later",
@@ -206,9 +207,6 @@
         "Nom du paramètre n°1": "Name of parameter #1",
         "Renseignez le paramètre n°1 de l'équipement": "Enter parameter #1 of the device",
         "Paramètre n°1": "Parameter #1",
-        "Auto-actualisation": "Auto-refresh",
-        "Fréquence de rafraîchissement des commandes infos de l'équipement": "Refresh frequency of the device's info commands",
-        "Cliquer sur ? pour afficher l'assistant cron": "Click on ? to display the cron wizard",
         "Informations": "Information",
         "Description": "Description",
         "Ajouter une commande": "Add a command",

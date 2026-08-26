@@ -30,6 +30,7 @@
         "Aucune méthode correspondante à": "Ningún método correspondiente a"
     },
     "plugins/smartclim/core/class/smartclim.class.php": {
+        "Rafraîchir": "Actualizar",
         "Connexion réussie au compte AUX Home": "Conexión correcta con la cuenta AUX Home",
         "Échec de la connexion — vérifiez vos identifiants et le pays sélectionné": "Error de conexión — compruebe sus credenciales y el país seleccionado",
         "Service AUX Home injoignable, réessayez plus tard": "Servicio AUX Home no disponible, inténtelo de nuevo más tarde",
@@ -206,9 +207,6 @@
         "Nom du paramètre n°1": "Nombre del parámetro n.º 1",
         "Renseignez le paramètre n°1 de l'équipement": "Introduzca el parámetro n.º 1 del equipo",
         "Paramètre n°1": "Parámetro n.º 1",
-        "Auto-actualisation": "Actualización automática",
-        "Fréquence de rafraîchissement des commandes infos de l'équipement": "Frecuencia de actualización de los comandos de información del equipo",
-        "Cliquer sur ? pour afficher l'assistant cron": "Haga clic en ? para mostrar el asistente cron",
         "Informations": "Información",
         "Description": "Descripción",
         "Ajouter une commande": "Añadir un comando",

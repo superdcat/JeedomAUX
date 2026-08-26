@@ -101,6 +101,12 @@ class smartclim extends eqLogic {
   const CLE_CACHE_ORDRES = 'smartclim::ordres::';
   const DUREE_GRACE = 60;
 
+  // Cadencement du cycle de rafraîchissement (UC07, § 5 de la spec technique).
+  const CLE_CACHE_DERNIER_CYCLE = 'smartclim::dernier_cycle';
+  const DUREE_MEMOIRE_CYCLE = self::INTERVALLE_MAX * 60 * 2;  // 48 h, > intervalle max
+  const MARGE_ECHEANCE_CYCLE = 30;                            // secondes
+  const CMD_RAFRAICHIR = 'refresh';                           // logicalId générique
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -940,10 +946,27 @@ class smartclim extends eqLogic {
     );
   }
 
-  /*
-  * Fonction exécutée automatiquement toutes les minutes par Jeedom
-  public static function cron() {}
-  */
+  /**
+   * Fonction exécutée automatiquement toutes les minutes par Jeedom (UC07, § 5 de la
+   * spec technique). SEUL hook cron utilisé par le plugin : cron5()...cronDaily()
+   * restent vides.
+   *
+   * ⚠️ Ce try/catch(Throwable) n'est PAS redondant avec celui de plugin::cron() : le
+   * core journalise via log::exception(), qui imprime la TRACE DE PILE — or une trace
+   * née dans la brique de transport peut porter le jeton de session en argument de
+   * frame. C'est une garde de SÉCURITÉ, pas de confort. Ne jamais y appeler
+   * getTraceAsString().
+   */
+  public static function cron() {
+    try {
+      if (!self::cycleEchu()) {
+        return;
+      }
+      self::rafraichirAuxHome();
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Home : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+    }
+  }
 
   /*
   * Fonction exécutée automatiquement toutes les 5 minutes par Jeedom
@@ -974,6 +997,210 @@ class smartclim extends eqLogic {
   * Fonction exécutée automatiquement tous les jours par Jeedom
   public static function cronDaily() {}
   */
+
+  /**
+   * Garde d'échéance du cycle automatique (UC07, § 5 de la spec technique) : lit le
+   * marqueur de dernier cycle en cache. Marge de MARGE_ECHEANCE_CYCLE secondes : les
+   * ticks de cron ne sont pas espacés d'exactement 60 s ; sans cette marge, un
+   * intervalle de N minutes dégénère en N+1 dès qu'un tick arrive en retard.
+   *
+   * @return bool
+   */
+  private static function cycleEchu() {
+    $dernier = cache::byKey(self::CLE_CACHE_DERNIER_CYCLE)->getValue(null);
+    if (!is_numeric($dernier)) {
+      // Jamais tourné, ou cache purgé.
+      return true;
+    }
+    $ecoule = time() - (int) $dernier;
+    if ($ecoule < 0) {
+      // Horloge reculée (Jeedom sans RTC, resynchro NTP au démarrage) : neutralisé.
+      return true;
+    }
+    return $ecoule >= (self::intervalleRafraichissement() * 60 - self::MARGE_ECHEANCE_CYCLE);
+  }
+
+  /**
+   * Pose le marqueur de dernier cycle (UC07). Valeur stockée en CHAÎNE, relue via
+   * is_numeric() (même prudence que memoireOrdres() vis-à-vis du moteur de cache).
+   */
+  private static function marquerCycle() {
+    cache::set(self::CLE_CACHE_DERNIER_CYCLE, (string) time(), self::DUREE_MEMOIRE_CYCLE);
+  }
+
+  /**
+   * Index des équipements smartclim par identifiant d'appareil AUX Home (UC07, § 6 de
+   * la spec technique) — clé UNIQUEMENT `auxhome_device_id`, jamais MAC/MAC inversée
+   * (chercherEquipementExistant() n'est pas réutilisée ici : elle journalise un
+   * warning à chaque rapprochement par MAC inversée, acceptable une fois par SCAN,
+   * insupportable des centaines de fois par jour en cron). Valeur = LISTE (un
+   * device_id peut être partagé par un équipement dupliqué dans Jeedom).
+   *
+   * @param array $_equipements
+   * @return array<string, smartclim[]>
+   */
+  private static function equipementsParIdentifiant(array $_equipements) {
+    $index = array();
+    foreach ($_equipements as $eqLogic) {
+      if (!($eqLogic instanceof smartclim)) {
+        continue;
+      }
+      $identifiant = $eqLogic->getConfiguration('auxhome_device_id');
+      if (!is_string($identifiant) || $identifiant === '') {
+        continue;
+      }
+      if (!isset($index[$identifiant])) {
+        $index[$identifiant] = array();
+      }
+      $index[$identifiant][] = $eqLogic;
+    }
+    return $index;
+  }
+
+  /**
+   * Pousse `online = false` sur chaque équipement des groupes passés (UC07, § 6 de la
+   * spec technique — AC7). AC7 tenu par le mécanisme d'UC05 : seule la clé `online`
+   * étant présente dans le tableau, aucune autre commande n'est écrite. Le warning
+   * n'est journalisé QU'À LA TRANSITION (retour de appliquerEtat()), pas à chaque
+   * cycle d'une panne longue.
+   *
+   * ⚠️ setStatus() n'est volontairement PAS utilisé ici : cmd::event() force
+   * timeout => 0 à chaque poussée de valeur (le badge "timeout" du core ne peut donc
+   * pas signaler notre hors-ligne), checkAlive() est propriétaire de `timeout` côté
+   * core, et warning/danger appartiennent au calcul de niveau d'alerte des commandes.
+   * La commande info `online` reste le seul porteur de l'état de joignabilité.
+   *
+   * @param array<string, smartclim[]> $_groupes
+   * @param string $_motif Fragment de log français NON traduit (convention du dépôt).
+   * @return int Nombre d'équipements réellement BASCULÉS (transition).
+   */
+  private static function basculerHorsLigne(array $_groupes, $_motif) {
+    $bascules = 0;
+    foreach ($_groupes as $groupe) {
+      foreach ($groupe as $eqLogic) {
+        if (!($eqLogic instanceof smartclim)) {
+          continue;
+        }
+        try {
+          if ($eqLogic->appliquerEtat(array(smartclimCapabilities::CONCEPT_ONLINE => false))) {
+            log::add('smartclim', 'warning', 'Équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" : ' . $_motif);
+            $bascules++;
+          }
+        } catch (Throwable $t) {
+          log::add('smartclim', 'error', 'Bascule hors ligne impossible (équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        }
+      }
+    }
+    return $bascules;
+  }
+
+  /**
+   * Cycle de rafraîchissement AUX Home (UC07, § 6 de la spec technique) : UN SEUL
+   * appel réseau (listerAppareils()), puis distribution vers les équipements ciblés.
+   * NE LÈVE JAMAIS — tout échec (global ou par équipement) est absorbé et journalisé ;
+   * un échec INTERNE imprévu (hors appel réseau/distribution, ex. incident ORM sur
+   * eqLogic::byType()) est signalé via $resultat['echecType'] = TYPE_INTERNE, seul
+   * canal consommé par rafraichirMaintenant() pour distinguer un cycle qui a
+   * réellement tourné d'un succès silencieux.
+   * Appelée par cron() (automatique) et smartclim::rafraichirMaintenant() (manuel, §
+   * 7 de la spec technique).
+   *
+   * ⚠️ Ne touche JAMAIS les capacités ni le profil (aucun appliquerCapacites(), aucun
+   * eqLogic->save()) : c'est un cycle de LECTURE D'ÉTAT SEULE — la migration du parc
+   * reste le rôle exclusif du scan (UC03).
+   *
+   * @return array{lance:bool, appareils:int, rafraichis:int, horsLigne:int, erreurs:int, echecType:int|null, echecContexte:string}
+   */
+  private static function rafraichirAuxHome() {
+    $resultat = array(
+      'lance' => false,
+      'appareils' => 0,
+      'rafraichis' => 0,
+      'horsLigne' => 0,
+      'erreurs' => 0,
+      'echecType' => null,
+      'echecContexte' => '',
+    );
+
+    try {
+      // Zéro requête réseau, et AUCUN marqueur posé (§ 6, étape 1 de la spec
+      // technique) : dès que l'utilisateur configure son compte, le tick suivant
+      // lance un cycle sans attendre un intervalle complet.
+      if (!self::compteConfigure()) {
+        log::add('smartclim', 'debug', 'Cycle de rafraîchissement AUX Home ignoré : compte non configuré');
+        return $resultat;
+      }
+
+      // Marqueur posé AVANT l'appel réseau (D-MVP07-02) : sinon un cloud en panne
+      // serait re-sollicité CHAQUE minute, jusqu'à consommer une part notable du
+      // budget du processus plugin::cron, qui exécute séquentiellement les crons de
+      // TOUS les plugins.
+      self::marquerCycle();
+      $resultat['lance'] = true;
+
+      $cibles = self::equipementsParIdentifiant(eqLogic::byType('smartclim', true));
+      if (empty($cibles)) {
+        return $resultat;
+      }
+
+      try {
+        $appareils = smartclimAuxHomeApi::listerAppareils();
+      } catch (smartclimException $e) {
+        // 'warning' si transitoire (attendu, évite d'inonder le journal pendant une
+        // coupure), 'error' sinon (actionnable). Message TECHNIQUE, jamais affiché.
+        $niveau = ($e->getType() == smartclimException::TYPE_RESEAU) ? 'warning' : 'error';
+        log::add('smartclim', $niveau, 'Cycle de rafraîchissement AUX Home échoué (type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+        $resultat['echecType'] = $e->getType();
+        $resultat['echecContexte'] = $e->getContexte();
+        $resultat['horsLigne'] = self::basculerHorsLigne($cibles, 'appareil AUX Home injoignable au dernier cycle');
+        return $resultat;
+      } catch (Throwable $t) {
+        log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Home : erreur inattendue lors de la lecture du compte : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        $resultat['echecType'] = smartclimException::TYPE_INTERNE;
+        $resultat['echecContexte'] = '';
+        $resultat['horsLigne'] = self::basculerHorsLigne($cibles, 'appareil AUX Home injoignable au dernier cycle');
+        return $resultat;
+      }
+
+      $resultat['appareils'] = count($appareils);
+
+      foreach ($appareils as $appareil) {
+        $identifiant = is_string($appareil['identifiant']) ? $appareil['identifiant'] : '';
+        if ($identifiant === '' || !isset($cibles[$identifiant])) {
+          // Appareil du cloud inconnu de Jeedom (découverte hors périmètre) : ignoré
+          // silencieusement.
+          continue;
+        }
+        foreach ($cibles[$identifiant] as $eqLogic) {
+          try {
+            $eqLogic->appliquerEtat(smartclimAuxHomeApi::etatAppareil($appareil));
+            $resultat['rafraichis']++;
+          } catch (Throwable $t) {
+            // Une Error PHP 8 ne doit pas traverser : la boucle continue (AC4).
+            $resultat['erreurs']++;
+            log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Home : équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" en erreur : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+          }
+        }
+        unset($cibles[$identifiant]);
+      }
+
+      // Ce qui reste dans $cibles : équipements Jeedom dont l'appareil n'est plus
+      // renvoyé par le compte (AC4). Jamais de suppression, jamais de désactivation.
+      $resultat['horsLigne'] = self::basculerHorsLigne($cibles, 'appareil absent de la réponse du compte AUX Home');
+
+      log::add('smartclim', 'debug', 'Cycle de rafraîchissement AUX Home : ' . $resultat['appareils'] . ' appareil(s) reçu(s), ' . $resultat['rafraichis'] . ' rafraîchi(s), ' . $resultat['horsLigne'] . ' basculé(s) hors ligne, ' . $resultat['erreurs'] . ' erreur(s)');
+
+      return $resultat;
+    } catch (Throwable $t) {
+      // Filet de sécurité INTERNE (hors appel réseau/distribution, déjà gardés
+      // ci-dessus) : ex. incident ORM sur eqLogic::byType()/equipementsParIdentifiant().
+      // Ne bascule PAS les équipements hors ligne ici : une erreur interne ne dit
+      // rien de leur joignabilité, et l'index des cibles peut ne même pas exister.
+      log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Home : erreur interne inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      $resultat['echecType'] = smartclimException::TYPE_INTERNE;
+      return $resultat;
+    }
+  }
 
   /**
    * Normalise l'e-mail du compte AUX Home avant enregistrement — délègue à
@@ -1655,6 +1882,19 @@ class smartclim extends eqLogic {
       }
     }
 
+    // Commande méta hors profil de capacités (UC07, § 7 de la spec technique) —
+    // inconditionnelle, comme les commandes méta d'UC05 : rafraîchir a du sens même
+    // sur un équipement au profil vide. ordreCmd = 40 > maximum atteignable par les
+    // boucles ci-dessus (13 + 5 modes + 8 vitesses = 26) : le bouton se place APRÈS
+    // les autres actions.
+    $definitions[self::CMD_RAFRAICHIR] = array(
+      'name' => __('Rafraîchir', __FILE__),
+      'subType' => 'other',
+      'infoLiee' => '',
+      'ordre' => array(),
+      'ordreCmd' => 40,
+    );
+
     return $definitions;
   }
 
@@ -1712,12 +1952,14 @@ class smartclim extends eqLogic {
         $cmd->setIsVisible(1);
         $cmd->setOrder($definition['ordreCmd']);
 
-        if (isset($existantes[$definition['infoLiee']])) {
+        if ($definition['infoLiee'] !== '' && isset($existantes[$definition['infoLiee']])) {
           $cmd->setValue($existantes[$definition['infoLiee']]->getId());
-        } else {
+        } elseif ($definition['infoLiee'] !== '') {
           // Le pilotage ne doit pas dépendre d'une info que l'utilisateur aurait
           // supprimée (§ 10 de la spec technique) : la commande action est créée quand
-          // même, simplement sans lien de modèle.
+          // même, simplement sans lien de modèle. Micro-correctif UC07 : une infoLiee
+          // VOLONTAIREMENT vide (ex. CMD_RAFRAICHIR) n'est pas une info supprimée, ce
+          // log ne doit donc pas se déclencher pour elle.
           log::add('smartclim', 'debug', 'Commande action "' . $logicalId . '" créée sans commande info liée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '")');
         }
 
@@ -1830,6 +2072,15 @@ class smartclim extends eqLogic {
     }
     $definition = $definitions[$_logicalId];
 
+    if ($_logicalId === self::CMD_RAFRAICHIR) {
+      // UC07, § 7 de la spec technique : sort AVANT le calcul d'empreinte de
+      // déduplication, AVANT le cache::set du marqueur de dédup et AVANT
+      // appliquerOrdre() — un rafraîchissement est en lecture seule et AC6 exige une
+      // mise à jour IMMÉDIATE, avaler un second clic contredirait le critère.
+      $this->rafraichirMaintenant();
+      return;
+    }
+
     if ($_logicalId === self::CMD_CONSIGNE) {
       $ordre = array(
         smartclimCapabilities::CONCEPT_POWER => 1,
@@ -1879,6 +2130,26 @@ class smartclim extends eqLogic {
     // État OPTIMISTE (AC3) : la valeur poussée est celle RÉELLEMENT envoyée (après
     // quantification par appliquerOrdre()), jamais celle demandée.
     $this->appliquerEtat($ordreApplique, true);
+  }
+
+  /**
+   * Rafraîchissement manuel (AC6, § 7 de la spec technique) : exécute le CYCLE
+   * GLOBAL (smartclim::rafraichirAuxHome(), tous les équipements ciblés — pas
+   * seulement celui-ci) et ré-ancre l'échéance du cron au passage (marquerCycle()) —
+   * conséquence mécanique du fait que le cloud ne sait renvoyer que la liste
+   * complète des appareils, pas un seul.
+   *
+   * ⚠️ Seul point de bascule "message technique -> message curaté" de cette UC : le
+   * message d'une smartclimException née dans la brique de transport n'est jamais
+   * affiché tel quel.
+   *
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function rafraichirMaintenant() {
+    $resultat = self::rafraichirAuxHome();
+    if ($resultat['echecType'] !== null) {
+      throw new smartclimException(self::messageErreurAuxHome($resultat['echecType'], $resultat['echecContexte']), $resultat['echecType']);
+    }
   }
 
   /**

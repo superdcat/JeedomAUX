@@ -1,0 +1,19 @@
+{"ts": "2026-08-27T10:09:25", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-27T10:35:12", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "plan", "etat": "ok", "detail": "plan planner recu, contrats tranches contre python-broadlink MIT", "commit": ""}
+{"ts": "2026-08-27T10:46:28", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "plan", "etat": "debut", "detail": "relance planner: blocker advisor so_broadcast vs socket_* (analyse interne S9)", "commit": ""}
+{"ts": "2026-08-27T10:54:40", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "plan", "etat": "ok", "detail": "10 decisions journalisees, F1-F7 tranches", "commit": ""}
+{"ts": "2026-08-27T10:58:37", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "spec-tech", "etat": "ok", "detail": "spec technique ecrite, 12 sections", "commit": ""}
+{"ts": "2026-08-27T10:58:45", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "impl", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-28T02:16:54", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "impl", "etat": "reprise", "detail": "impl en vol: classe LAN 43ko + 387 lignes smartclim, aucun commit", "commit": ""}
+{"ts": "2026-08-28T02:18:14", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "impl", "etat": "debut", "detail": "completion: adresseLan/macEquipement/preSave/etatConnexion + JS 5.6 manquants", "commit": ""}
+{"ts": "2026-08-28T02:26:28", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "impl", "etat": "ok", "detail": "completion faite: adresseLan, macEquipement, preSave, etatConnexion x6, JS 5.6", "commit": ""}
+{"ts": "2026-08-28T02:26:28", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "verif", "etat": "ok", "detail": "verif-plugin: struct/meta/CRLF OK, reste i18n 21 cles (etape traduction)", "commit": ""}
+{"ts": "2026-08-28T02:26:28", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "review", "etat": "debut", "detail": "tour 1: securite + qualite en parallele", "commit": ""}
+{"ts": "2026-08-28T02:37:59", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "review", "etat": "ok", "detail": "tour 1: 1 high, 2 major, 1 medium, 6 minor", "commit": ""}
+{"ts": "2026-08-28T02:37:59", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "correctifs", "etat": "debut", "detail": "lot unique tour 1, agent neuf, 9 points", "commit": ""}
+{"ts": "2026-08-28T02:41:43", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "correctifs", "etat": "ok", "detail": "9/9 points appliques, aucun ecart", "commit": ""}
+{"ts": "2026-08-28T02:41:43", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "review", "etat": "debut", "detail": "tour 2 sur delta, plafond du cycle", "commit": ""}
+{"ts": "2026-08-28T02:46:19", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "review", "etat": "ok", "detail": "tour 2: gate passee, 0 high 0 major, 1 low", "commit": ""}
+{"ts": "2026-08-28T02:46:19", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "correctifs", "etat": "debut", "detail": "passe de finition: ip2long 32 bits + portee catch Throwable", "commit": ""}
+{"ts": "2026-08-28T02:49:17", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "correctifs", "etat": "ok", "detail": "finition: ip2long remplace par octets (2 copies identiques), catch Throwable elargi", "commit": ""}
+{"ts": "2026-08-28T02:49:17", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "traduction", "etat": "debut", "detail": "", "commit": ""}

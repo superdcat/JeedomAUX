@@ -83,7 +83,19 @@
         "à l'instant": "ahora mismo",
         "il y a %d min": "hace %d min",
         "il y a %1$d h %2$d min": "hace %1$d h %2$d min",
-        "il y a %d jour(s)": "hace %d día(s)"
+        "il y a %d jour(s)": "hace %d día(s)",
+        "%d appareil(s) Broadlink détecté(s) sur le réseau local": "%d dispositivo(s) Broadlink detectado(s) en la red local",
+        "%d appareil(s) non sondé(s) faute de budget": "%d dispositivo(s) no sondeado(s) por falta de tiempo",
+        "Adresse locale incohérente : l'appareil joint n'est pas celui attendu": "Dirección local incoherente: el dispositivo alcanzado no es el esperado",
+        "Aucun climatiseur détecté sur le réseau local": "No se ha detectado ningún aire acondicionado en la red local",
+        "Découverte automatique indisponible sur cet hôte (extension PHP « sockets » absente) — renseignez l'adresse IP locale de chaque climatiseur.": "Detección automática no disponible en este host (falta la extensión PHP «sockets») — indique la dirección IP local de cada aire acondicionado.",
+        "Jamais détecté sur le réseau local": "Nunca detectado en la red local",
+        "LAN disponible": "LAN disponible",
+        "LAN disponible (session existante)": "LAN disponible (sesión existente)",
+        "LAN indisponible": "LAN no disponible",
+        "LAN indisponible — appareil déjà sollicité": "LAN no disponible — dispositivo ya ocupado",
+        "LAN indisponible — appareil verrouillé": "LAN no disponible — dispositivo bloqueado",
+        "LAN indisponible — authentification refusée": "LAN no disponible — autenticación rechazada"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -179,7 +191,8 @@
         "Sonde en cours…": "Sondeo en curso…",
         "La sonde n'a pas répondu à temps": "El sondeo no respondió a tiempo",
         "Rapport copié dans le presse-papiers": "Informe copiado en el portapapeles",
-        "Copie impossible : sélectionnez le texte du rapport et copiez-le à la main": "No se pudo copiar: seleccione el texto del informe y cópielo manualmente"
+        "Copie impossible : sélectionnez le texte du rapport et copiez-le à la main": "No se pudo copiar: seleccione el texto del informe y cópielo manualmente",
+        "Adresses réseau local corrigées : vérifiez les valeurs saisies": "Direcciones de red local corregidas: compruebe los valores introducidos"
     },
     "plugins/smartclim/desktop/php/smartclim.php": {
         "401 - Accès non autorisé": "401 - Acceso no autorizado",
@@ -246,7 +259,15 @@
         "Télécharger le rapport complet": "Descargar el informe completo",
         "État de connexion": "Estado de conexión",
         "Transport actif": "Transporte activo",
-        "Dernière donnée reçue": "Último dato recibido"
+        "Dernière donnée reçue": "Último dato recibido",
+        "Adresse IP": "Dirección IP",
+        "Adresse IP locale": "Dirección IP local",
+        "Adresse MAC locale": "Dirección MAC local",
+        "Adresse détectée": "Dirección detectada",
+        "Climatiseurs détectés sur le réseau local": "Aires acondicionados detectados en la red local",
+        "Renseignez l'adresse locale si la diffusion réseau n'atteint pas l'appareil (VLAN, réseau segmenté)": "Indique la dirección local si la difusión de red no llega al dispositivo (VLAN, red segmentada)",
+        "Réseau local": "Red local",
+        "Type d'appareil": "Tipo de dispositivo"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Acceso no autorizado"

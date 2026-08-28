@@ -56,6 +56,11 @@ class smartclimCapabilities {
   /*     * *************************Attributs****************************** */
 
   const TRANSPORT_AUX_HOME = 'AUX_HOME';
+  // UC01 du domaine post-mvp/01-transport-broadlink-lan : identifiant du transport LAN.
+  // Aucune entrée dans tables() pour l'instant (§ 5.3 de la spec technique — les
+  // correspondances mode/vitesse du LAN relèvent d'UC02, une entrée vide serait de la
+  // donnée morte).
+  const TRANSPORT_BROADLINK_LAN = 'BROADLINK_LAN';
 
   const CONCEPT_ONLINE = 'online';
   const CONCEPT_POWER = 'power';
@@ -270,6 +275,9 @@ class smartclimCapabilities {
   public static function libelleTransport($_transport) {
     if ($_transport === self::TRANSPORT_AUX_HOME) {
       return 'AUX Home';
+    }
+    if ($_transport === self::TRANSPORT_BROADLINK_LAN) {
+      return 'Broadlink LAN';
     }
     return '';
   }

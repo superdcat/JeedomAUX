@@ -1097,6 +1097,8 @@ class smartclimAuxHomeApi {
    * un Jeedom minimal — même arbitrage que cleDeTri()). Volontairement DISTINCTE de
    * journaliserErreurBackend() (qui ajoute la neutralisation base64, propre aux
    * messages backend d'erreur) : on ne refactore pas du code UC02 déjà livré.
+   * Jumeau côté transport LAN : smartclimBroadlinkLan::nettoyerNomExterne() (même
+   * frontière d'assainissement, pour le transport Broadlink LAN).
    *
    * @param mixed $_valeur
    * @param int $_longueurMax

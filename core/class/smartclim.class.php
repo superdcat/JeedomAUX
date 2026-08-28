@@ -115,6 +115,26 @@ class smartclim extends eqLogic {
   // pas laisser une erreur affichée indéfiniment.
   const CLE_CACHE_DERNIER_INCIDENT = 'smartclim::dernier_incident';
 
+  // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.2/D-POSTMVP0101-08/09) :
+  // clés PERSONNALISÉES par équipement (config, chaîne vide = "non personnalisé") pour
+  // l'adresse LAN saisie à la main — espace de nommage DISJOINT de la mémoire de sonde
+  // ci-dessous, même invariant que CLE_CONF_TEMP_* / CLE_CONF_CAPACITES : une redétection
+  // n'écrase jamais une saisie manuelle.
+  const CLE_CONF_LAN_IP = 'lan_ip';
+  const CLE_CONF_LAN_MAC = 'lan_mac';
+
+  // Mémoire de sonde LAN DÉTECTÉE (cache, jetable), indexée par MAC normalisée. Support
+  // DISTINCT de CLE_CONF_LAN_* ci-dessus — c'est cette séparation par SUPPORT, pas une
+  // convention de nommage, qui garantit qu'un scan n'écrase jamais une saisie manuelle.
+  const CLE_CACHE_LAN = 'smartclim::lan_appareil::';
+  const DUREE_MEMOIRE_LAN = 86400; // 24 h
+
+  // Budget de temps GLOBAL de la phase LAN d'un scan (D-POSTMVP0101-04) : arrêt DUR
+  // évalué avant chaque appareil, dans les deux phases de scannerReseauLocal() — jamais un
+  // budget seulement indicatif (cf. smartclimAuxHomeApi § 8.3 pour le précédent qui a
+  // motivé cette exigence).
+  const BUDGET_LAN = 18;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -207,6 +227,12 @@ class smartclim extends eqLogic {
           'fraicheur' => '',
           'derniereDonnee' => '',
           'incidentLe' => '',
+          // ⚠️ UC01 du domaine post-mvp/01-transport-broadlink-lan, § 5.2 de la spec
+          // technique : ces 2 clés DOIVENT figurer aussi dans ce repli — piège jQuery
+          // .text(undefined) (accesseur, pas mutateur) : un champ omis conserverait le
+          // texte de l'équipement précédemment consulté.
+          'lan' => '',
+          'lanAdresse' => '',
         );
       }
     }
@@ -365,6 +391,43 @@ class smartclim extends eqLogic {
     smartclimAuxHomeApi::purgerSession();
     self::oublierIncident();
     return __('Identifiants effacés', __FILE__);
+  }
+
+  /**
+   * Point d'entrée du bouton "Scanner les climatiseurs" DEPUIS UC01 du domaine
+   * post-mvp/01-transport-broadlink-lan (D-POSTMVP0101-10) : COMPOSE la découverte LAN
+   * (jamais levée) et le scan AUX Home existant (peut lever). Un utilisateur SANS compte
+   * cloud configuré voit quand même ses résultats LAN — l'exception cloud est CAPTURÉE et
+   * placée dans 'cloudErreur' (message DÉJÀ curaté), jamais propagée : sans cela, AC1 de
+   * cette UC serait cassé pour tout utilisateur purement LAN. ⚠️ scannerAuxHome() reste
+   * PUBLIQUE et INCHANGÉE (contrat) : ce changement est LOCAL à cette méthode.
+   *
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, cloudErreur:string}
+   */
+  public static function scannerClimatiseurs() {
+    $lan = self::scannerReseauLocal();
+
+    $resultatCloud = array(
+      'resume' => '',
+      'compteurs' => array(),
+      'appareils' => array(),
+      'disparus' => array(),
+      'profils' => array(),
+      'etatsConnexion' => array(),
+    );
+    $cloudErreur = '';
+    try {
+      $resultatCloud = self::scannerAuxHome();
+    } catch (smartclimException $e) {
+      // Message déjà curaté en français (scannerAuxHome() journalise déjà le technique
+      // avant de lever) : niveau warning côté JS, pas une panne (D-POSTMVP0101-10).
+      $cloudErreur = $e->getMessage();
+    }
+
+    return array_merge($resultatCloud, array(
+      'lan' => $lan,
+      'cloudErreur' => $cloudErreur,
+    ));
   }
 
   /**
@@ -540,6 +603,346 @@ class smartclim extends eqLogic {
     } finally {
       cache::delete(self::CLE_CACHE_VERROU_SCAN);
     }
+  }
+
+  /**
+   * Phase LAN du scan (UC01 du domaine post-mvp/01-transport-broadlink-lan) : compose la
+   * DÉCOUVERTE par diffusion (phase 1) et la sonde des équipements déjà connus porteurs
+   * d'une adresse LAN, jamais rencontrés en phase 1 (phase 2, AC3). Budget GLOBAL
+   * BUDGET_LAN, arrêt DUR évalué AVANT chaque appareil dans les DEUX phases
+   * (D-POSTMVP0101-04). NE LÈVE JAMAIS (AC4) : toute anomalie devient un statut/compteur.
+   *
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array}
+   */
+  private static function scannerReseauLocal() {
+    $debut = microtime(true);
+    $compteurs = array(
+      'trouves' => 0,
+      'etablies' => 0,
+      'reutilisees' => 0,
+      'refusees' => 0,
+      'injoignables' => 0,
+      'occupees' => 0,
+      'verrouillees' => 0,
+      'mac_divergentes' => 0,
+      'non_sondes' => 0,
+    );
+    $appareils = array();
+    $rencontres = array(); // MAC (imprimable) déjà traitées, phases 1 et 2 confondues.
+    $diffusionIndisponible = false;
+
+    try {
+      $decouverts = smartclimBroadlinkLan::decouvrir();
+    } catch (smartclimException $e) {
+      // TYPE_INTERNE = aucun chemin de diffusion disponible sur cet hôte
+      // (D-POSTMVP0101-03) : dégradation documentée, jamais un niveau 'error' (AC4).
+      log::add('smartclim', 'warning', 'Broadlink LAN : découverte indisponible sur cet hôte : ' . self::neutraliserPourLog($e->getMessage()));
+      $decouverts = array();
+      $diffusionIndisponible = true;
+    } catch (Throwable $t) {
+      log::add('smartclim', 'warning', 'Broadlink LAN : découverte impossible : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      $decouverts = array();
+    }
+    $compteurs['trouves'] = count($decouverts);
+
+    foreach ($decouverts as $appareil) {
+      if ((microtime(true) - $debut) >= self::BUDGET_LAN) {
+        $compteurs['non_sondes'] += (count($decouverts) - count($rencontres));
+        break;
+      }
+      try {
+        $mac = $appareil['mac'];
+        $rencontres[$mac] = true;
+        $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
+        $statut = smartclimBroadlinkLan::ouvrirSession($appareil, $budgetRestant);
+        self::compterStatutLan($compteurs, $statut);
+        self::memoriserSondeLan($mac, array(
+          'ip' => $appareil['ip'],
+          'port' => $appareil['port'],
+          'type_appareil' => $appareil['type_appareil'],
+          'nom' => $appareil['nom'],
+          'verrouille' => $appareil['verrouille'],
+          'statut' => $statut,
+          'vu_le' => $appareil['vu_le'],
+          'echec_le' => self::statutEnEchec($statut) ? time() : 0,
+        ));
+        $appareils[] = self::ligneResultatLan($appareil['nom'], $mac, $appareil['ip'], $appareil['type_appareil'], $statut, self::libelleStatutLan($statut));
+      } catch (Throwable $t) {
+        log::add('smartclim', 'warning', 'Broadlink LAN : traitement d\'un appareil découvert en échec : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      }
+    }
+
+    $eqLogics = eqLogic::byType('smartclim');
+    foreach ($eqLogics as $eqLogic) {
+      if (!($eqLogic instanceof smartclim)) {
+        continue;
+      }
+      if ((microtime(true) - $debut) >= self::BUDGET_LAN) {
+        $compteurs['non_sondes']++;
+        continue;
+      }
+
+      $adresse = $eqLogic->adresseLan();
+      if ($adresse['ip'] === '') {
+        continue;
+      }
+      $macAttendue = $adresse['mac'];
+      $macAttendueInversee = self::macInversee($macAttendue);
+      if (($macAttendue !== '' && isset($rencontres[$macAttendue])) || ($macAttendueInversee !== '' && isset($rencontres[$macAttendueInversee]))) {
+        continue;
+      }
+
+      try {
+        $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
+        $trouve = smartclimBroadlinkLan::interroger($adresse['ip'], max(1, min(smartclimBroadlinkLan::TIMEOUT_ECHANGE, $budgetRestant)));
+
+        if ($trouve === null) {
+          $statut = smartclimBroadlinkLan::STATUT_INJOIGNABLE;
+          self::compterStatutLan($compteurs, $statut);
+          self::memoriserSondeLan($macAttendue !== '' ? $macAttendue : $eqLogic->macEquipement(), array(
+            'ip' => '', 'port' => 0, 'type_appareil' => '', 'nom' => '', 'verrouille' => false,
+            'statut' => $statut, 'vu_le' => 0, 'echec_le' => time(),
+          ));
+          continue;
+        }
+
+        $macTrouvee = $trouve['mac'];
+        $macTrouveeInversee = self::macInversee($macTrouvee);
+        $correspond = ($macAttendue === '') || ($macAttendue === $macTrouvee) || ($macAttendue === $macTrouveeInversee);
+
+        if (!$correspond) {
+          // D-POSTMVP0101-05 : l'appareil répondant n'est PAS celui visé -> jamais
+          // adopté, aucune session ouverte avec lui.
+          log::add('smartclim', 'warning', 'Broadlink LAN : adresse locale déclarée pour l\'équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" répond avec une MAC différente de celle attendue (' . $macTrouvee . ')');
+          $statut = smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE;
+          self::compterStatutLan($compteurs, $statut);
+          self::memoriserSondeLan($macAttendue !== '' ? $macAttendue : $eqLogic->macEquipement(), array(
+            'ip' => '', 'port' => 0, 'type_appareil' => '', 'nom' => '', 'verrouille' => false,
+            'statut' => $statut, 'vu_le' => 0, 'echec_le' => time(),
+          ));
+          continue;
+        }
+
+        $rencontres[$macTrouvee] = true;
+        $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
+        $statut = smartclimBroadlinkLan::ouvrirSession($trouve, $budgetRestant);
+        self::compterStatutLan($compteurs, $statut);
+        self::memoriserSondeLan($macTrouvee, array(
+          'ip' => $trouve['ip'],
+          'port' => $trouve['port'],
+          'type_appareil' => $trouve['type_appareil'],
+          'nom' => $trouve['nom'],
+          'verrouille' => $trouve['verrouille'],
+          'statut' => $statut,
+          'vu_le' => $trouve['vu_le'],
+          'echec_le' => self::statutEnEchec($statut) ? time() : 0,
+        ));
+      } catch (Throwable $t) {
+        log::add('smartclim', 'warning', 'Broadlink LAN : sonde d\'adresse manuelle en échec (équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      }
+    }
+
+    return array(
+      'resume' => self::resumeScanLan($compteurs, $diffusionIndisponible),
+      'compteurs' => $compteurs,
+      'appareils' => $appareils,
+    );
+  }
+
+  /**
+   * true si un statut LAN correspond à un échec (utilisé pour dater 'echec_le' de la
+   * mémoire de sonde) — succès = STATUT_ETABLIE ou STATUT_REUTILISEE uniquement.
+   *
+   * @param string $_statut
+   * @return bool
+   */
+  private static function statutEnEchec($_statut) {
+    return !in_array($_statut, array(smartclimBroadlinkLan::STATUT_ETABLIE, smartclimBroadlinkLan::STATUT_REUTILISEE), true);
+  }
+
+  /**
+   * Incrémente le compteur du scan LAN correspondant à un statut (une seule table,
+   * jamais un switch dupliqué).
+   *
+   * @param array $_compteurs Par référence.
+   * @param string $_statut
+   */
+  private static function compterStatutLan(array &$_compteurs, $_statut) {
+    $correspondance = array(
+      smartclimBroadlinkLan::STATUT_ETABLIE => 'etablies',
+      smartclimBroadlinkLan::STATUT_REUTILISEE => 'reutilisees',
+      smartclimBroadlinkLan::STATUT_REFUSEE => 'refusees',
+      smartclimBroadlinkLan::STATUT_INJOIGNABLE => 'injoignables',
+      smartclimBroadlinkLan::STATUT_OCCUPE => 'occupees',
+      smartclimBroadlinkLan::STATUT_VERROUILLE => 'verrouillees',
+      smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE => 'mac_divergentes',
+    );
+    if (isset($correspondance[$_statut]) && isset($_compteurs[$correspondance[$_statut]])) {
+      $_compteurs[$correspondance[$_statut]]++;
+    }
+  }
+
+  /**
+   * Construit une ligne du tableau "appareils" LAN (D-POSTMVP0101-09) : liste BLANCHE de
+   * champs, jamais une clé de session.
+   *
+   * @return array{nom:string, mac:string, ip:string, typeAppareil:string, statut:string, statutLibelle:string}
+   */
+  private static function ligneResultatLan($_nom, $_mac, $_ip, $_typeAppareil, $_statut, $_statutLibelle) {
+    return array(
+      'nom' => $_nom,
+      'mac' => $_mac,
+      'ip' => $_ip,
+      'typeAppareil' => $_typeAppareil,
+      'statut' => $_statut,
+      'statutLibelle' => $_statutLibelle,
+    );
+  }
+
+  /**
+   * Libellé français d'un statut LAN (AC1/AC4, D-POSTMVP0101-05/09). SEUL endroit du
+   * plugin où vivent ces __() (même règle que libelleStatut()/messageErreurAuxHome()).
+   *
+   * @param string $_statut
+   * @return string
+   */
+  private static function libelleStatutLan($_statut) {
+    if ($_statut === smartclimBroadlinkLan::STATUT_ETABLIE) {
+      return __('LAN disponible', __FILE__);
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_REUTILISEE) {
+      return __('LAN disponible (session existante)', __FILE__);
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_REFUSEE) {
+      return __('LAN indisponible — authentification refusée', __FILE__);
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_INJOIGNABLE) {
+      return __('LAN indisponible', __FILE__);
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_OCCUPE) {
+      return __('LAN indisponible — appareil déjà sollicité', __FILE__);
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_VERROUILLE) {
+      return __('LAN indisponible — appareil verrouillé', __FILE__);
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE) {
+      return __('Adresse locale incohérente : l\'appareil joint n\'est pas celui attendu', __FILE__);
+    }
+    return __('Jamais détecté sur le réseau local', __FILE__);
+  }
+
+  /**
+   * Résumé français du scan LAN (AC1/AC4/AC7), mentionnant les appareils NON SONDÉS faute
+   * de budget (D-POSTMVP0101-04) et le message de dégradation si la diffusion est
+   * indisponible sur cet hôte (D-POSTMVP0101-03, § 8 de la spec technique).
+   *
+   * @param array $_compteurs
+   * @param bool $_diffusionIndisponible
+   * @return string
+   */
+  private static function resumeScanLan(array $_compteurs, $_diffusionIndisponible = false) {
+    $fragments = array();
+    if ($_compteurs['trouves'] === 0) {
+      $fragments[] = __('Aucun climatiseur détecté sur le réseau local', __FILE__);
+    } else {
+      $fragments[] = sprintf(__('%d appareil(s) Broadlink détecté(s) sur le réseau local', __FILE__), $_compteurs['trouves']);
+    }
+    if ($_compteurs['non_sondes'] > 0) {
+      $fragments[] = sprintf(__('%d appareil(s) non sondé(s) faute de budget', __FILE__), $_compteurs['non_sondes']);
+    }
+    $resume = implode('. ', $fragments);
+    if ($_diffusionIndisponible) {
+      $resume .= ' ' . __('Découverte automatique indisponible sur cet hôte (extension PHP « sockets » absente) — renseignez l\'adresse IP locale de chaque climatiseur.', __FILE__);
+    }
+    return $resume;
+  }
+
+  /**
+   * Mémorise le résultat d'une sonde LAN (détecté ou saisi à la main), indexé par MAC
+   * normalisée (D-POSTMVP0101-08/09). Cache JETABLE, NON chiffré : aucun secret (IP et MAC
+   * n'en sont pas) — la clé de session vit dans une entrée DISTINCTE et chiffrée
+   * (smartclimBroadlinkLan::CLE_CACHE_SESSION).
+   *
+   * @param string $_macNorm
+   * @param array $_resultat
+   */
+  private static function memoriserSondeLan($_macNorm, array $_resultat) {
+    if ($_macNorm === '') {
+      return;
+    }
+    $donnees = array(
+      'ip' => isset($_resultat['ip']) && is_string($_resultat['ip']) ? $_resultat['ip'] : '',
+      'port' => isset($_resultat['port']) ? (int) $_resultat['port'] : 0,
+      'type_appareil' => isset($_resultat['type_appareil']) && is_string($_resultat['type_appareil']) ? $_resultat['type_appareil'] : '',
+      'nom' => isset($_resultat['nom']) && is_string($_resultat['nom']) ? $_resultat['nom'] : '',
+      'verrouille' => !empty($_resultat['verrouille']),
+      'statut' => isset($_resultat['statut']) && is_string($_resultat['statut']) ? $_resultat['statut'] : '',
+      'vu_le' => isset($_resultat['vu_le']) && is_numeric($_resultat['vu_le']) ? (int) $_resultat['vu_le'] : 0,
+      'echec_le' => isset($_resultat['echec_le']) && is_numeric($_resultat['echec_le']) ? (int) $_resultat['echec_le'] : 0,
+    );
+    cache::set(self::CLE_CACHE_LAN . $_macNorm, json_encode($donnees), self::DUREE_MEMOIRE_LAN);
+  }
+
+  /**
+   * Relit la mémoire de sonde LAN d'une MAC normalisée, ou null si absente/corrompue.
+   * ⚠️ N'essaie PAS la MAC inversée elle-même : c'est aux appelants (adresseLan(),
+   * lanAffichable()) de le faire, comme chercherEquipementExistant() le fait déjà pour le
+   * rapprochement cloud — cohérence d'un seul endroit qui connaît la règle "essayer aussi
+   * l'inverse".
+   *
+   * @param string $_macNorm
+   * @return array|null
+   */
+  private static function sondeLanMemorisee($_macNorm) {
+    if ($_macNorm === '') {
+      return null;
+    }
+    $brut = cache::byKey(self::CLE_CACHE_LAN . $_macNorm)->getValue(null);
+    if ($brut === null) {
+      return null;
+    }
+    $donnees = json_decode($brut, true);
+    return is_array($donnees) ? $donnees : null;
+  }
+
+  /**
+   * Valide/normalise une IPv4 saisie par l'utilisateur (lan_ip, § 4.1 de la spec
+   * technique) : rejette les adresses PUBLIQUEMENT ROUTABLES (dont le CGNAT
+   * 100.64.0.0/10, exclu explicitement) — le plugin envoie de l'UDP vers cette adresse, la
+   * restreindre aux plages privées/réservées empêche qu'une faute de frappe (ou une
+   * saisie malveillante sur une surface admin) ne transforme le plugin en émetteur vers
+   * Internet.
+   *
+   * @param mixed $_valeur
+   * @return string '' si non exploitable ou publiquement routable (= "non personnalisé").
+   */
+  private static function normaliserIpV4($_valeur) {
+    if (!is_scalar($_valeur)) {
+      return '';
+    }
+    $ip = filter_var((string) $_valeur, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4);
+    if ($ip === false) {
+      return '';
+    }
+    $publique = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+    if ($publique !== false) {
+      return '';
+    }
+    $octets = array_map('intval', explode('.', $ip));
+    if ($octets[0] === 100 && $octets[1] >= 64 && $octets[1] <= 127) {
+      return '';
+    }
+    // FILTER_FLAG_NO_PRIV_RANGE|FILTER_FLAG_NO_RES_RANGE ne couvre ni 0.0.0.0/8 ni la
+    // plage multicast/réservée haute (224.0.0.0 et au-delà) : rejet explicite par
+    // comparaison d'OCTETS, PAS ip2long() — ip2long() renvoie un entier SIGNÉ, et sur un
+    // build PHP 32 bits (ex. Raspberry Pi OS armhf) le seuil 224.0.0.0 devient négatif,
+    // ce qui fait passer à tort toute adresse en 10.x.x.x pour "supérieure" à ce seuil et
+    // la rejette (bug vécu, cf. revue). Raisonner sur les octets est exact quelle que
+    // soit la largeur des entiers.
+    if ($octets[0] === 0 || $octets[0] >= 224) {
+      return '';
+    }
+    return $ip;
   }
 
   /**
@@ -1588,6 +1991,24 @@ class smartclim extends eqLogic {
     $this->setConfiguration(self::CLE_CONF_TEMP_MIN, $min);
     $this->setConfiguration(self::CLE_CONF_TEMP_MAX, $max);
     $this->setConfiguration(self::CLE_CONF_TEMP_PAS, self::normaliserPasTemperature($this->getConfiguration(self::CLE_CONF_TEMP_PAS)));
+
+    // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 4.1 de la spec technique) :
+    // barrière AUTORITAIRE et SILENCIEUSE, symétrique de celle des bornes de température
+    // ci-dessus. lan_ip invalide/publiquement routable -> '' ; lan_mac non conforme -> ''.
+    // Ne lève JAMAIS : ce preSave() est aussi traversé par le save() du scan.
+    $lanIpBrute = $this->getConfiguration(self::CLE_CONF_LAN_IP);
+    $lanIpNormalisee = self::normaliserIpV4($lanIpBrute);
+    if (is_scalar($lanIpBrute) && (string) $lanIpBrute !== '' && $lanIpNormalisee === '') {
+      log::add('smartclim', 'warning', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : adresse IP locale saisie non exploitable, réinitialisée');
+    }
+    $this->setConfiguration(self::CLE_CONF_LAN_IP, $lanIpNormalisee);
+
+    $lanMacBrute = $this->getConfiguration(self::CLE_CONF_LAN_MAC);
+    $lanMacNormalisee = self::normaliserMac($lanMacBrute);
+    if (is_scalar($lanMacBrute) && (string) $lanMacBrute !== '' && $lanMacNormalisee === '') {
+      log::add('smartclim', 'warning', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : adresse MAC locale saisie non exploitable, réinitialisée');
+    }
+    $this->setConfiguration(self::CLE_CONF_LAN_MAC, $lanMacNormalisee);
   }
 
   // Fonction exécutée automatiquement après la sauvegarde (création ou mise à jour) de l'équipement
@@ -1611,6 +2032,78 @@ class smartclim extends eqLogic {
     } catch (Throwable $t) {
       log::add('smartclim', 'error', 'Création des commandes info/action impossible après sauvegarde (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
     }
+  }
+
+  /**
+   * MAC normalisée de CET équipement (UC01 du domaine post-mvp/01-transport-broadlink-lan,
+   * § 5.2 de la spec technique) : `configuration.mac` (posée par creerEquipement() d'UC03
+   * du MVP) en priorité, sinon le préfixe `mac:` du logicalId. LECTURE SEULE — cette UC
+   * n'écrit JAMAIS `configuration.mac` depuis le LAN (c'est UC04 de ce domaine).
+   *
+   * @return string 12 caractères hexadécimaux minuscules, ou ''.
+   */
+  public function macEquipement() {
+    $macConfig = self::normaliserMac($this->getConfiguration('mac'));
+    if ($macConfig !== '') {
+      return $macConfig;
+    }
+    $logicalId = (string) $this->getLogicalId();
+    if (strpos($logicalId, 'mac:') === 0) {
+      return self::normaliserMac(substr($logicalId, strlen('mac:')));
+    }
+    return '';
+  }
+
+  /**
+   * Adresse LAN EFFECTIVE de cet équipement (UC01 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.2 de la spec technique) : règle de lecture
+   * UNIQUE, analogue de bornesTemperature() — lan_ip PERSONNALISÉE (revalidée À LA
+   * LECTURE, double barrière) en priorité, sinon l'IP mémorisée en cache pour la MAC de
+   * l'équipement (MAC inversée essayée aussi, D-POSTMVP0101-09), sinon ''. lan_mac
+   * PERSONNALISÉE en priorité pour la MAC, sinon macEquipement().
+   *
+   * @return array{ip:string, mac:string, port:int, source:string} source = 'manuel'|'detecte'|'aucun'.
+   */
+  public function adresseLan() {
+    $mac = $this->getConfiguration(self::CLE_CONF_LAN_MAC);
+    $mac = is_string($mac) ? self::normaliserMac($mac) : '';
+    if ($mac === '') {
+      $mac = $this->macEquipement();
+    }
+
+    $ipPersonnalisee = self::normaliserIpV4($this->getConfiguration(self::CLE_CONF_LAN_IP));
+    if ($ipPersonnalisee !== '') {
+      return array(
+        'ip' => $ipPersonnalisee,
+        'mac' => $mac,
+        'port' => smartclimBroadlinkLan::PORT,
+        'source' => 'manuel',
+      );
+    }
+
+    $macEquipement = $this->macEquipement();
+    if ($macEquipement !== '') {
+      $sonde = self::sondeLanMemorisee($macEquipement);
+      if (!is_array($sonde)) {
+        $macInversee = self::macInversee($macEquipement);
+        $sonde = ($macInversee !== '') ? self::sondeLanMemorisee($macInversee) : null;
+      }
+      if (is_array($sonde) && isset($sonde['ip']) && is_string($sonde['ip']) && $sonde['ip'] !== '') {
+        return array(
+          'ip' => $sonde['ip'],
+          'mac' => $mac,
+          'port' => isset($sonde['port']) && is_numeric($sonde['port']) ? (int) $sonde['port'] : smartclimBroadlinkLan::PORT,
+          'source' => 'detecte',
+        );
+      }
+    }
+
+    return array(
+      'ip' => '',
+      'mac' => $mac,
+      'port' => smartclimBroadlinkLan::PORT,
+      'source' => 'aucun',
+    );
   }
 
   /**
@@ -1734,7 +2227,8 @@ class smartclim extends eqLogic {
    * filtre, ouvrir la page d'un équipement pourrait allumer l'appareil).
    *
    * @return array{niveau:string, etat:string, detail:string, transport:string,
-   *               fraicheur:string, derniereDonnee:string, incidentLe:string}
+   *               fraicheur:string, derniereDonnee:string, incidentLe:string,
+   *               lan:string, lanAdresse:string}
    */
   public function etatConnexionAffichable() {
     $commandesInfo = array();
@@ -1762,6 +2256,33 @@ class smartclim extends eqLogic {
     $cmdOnline = isset($commandesInfo[smartclimCapabilities::CONCEPT_ONLINE]) ? $commandesInfo[smartclimCapabilities::CONCEPT_ONLINE] : null;
     $valeurOnline = ($cmdOnline instanceof cmd) ? $cmdOnline->execCmd() : '';
 
+    // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.2 de la spec technique) :
+    // 2 clés ADDITIVES 'lan'/'lanAdresse', calculées UNE fois ici et reportées dans
+    // CHAQUE branche de retour ci-dessous (⚠️ y compris le repli catch(Throwable) de
+    // etatsConnexionAffichables() — piège jQuery .text(undefined) documenté § 5.2).
+    $macEqPourLan = $this->macEquipement();
+    $sondeLan = ($macEqPourLan !== '') ? self::sondeLanMemorisee($macEqPourLan) : null;
+    if (!is_array($sondeLan) && $macEqPourLan !== '') {
+      $macEqPourLanInversee = self::macInversee($macEqPourLan);
+      $sondeLan = ($macEqPourLanInversee !== '') ? self::sondeLanMemorisee($macEqPourLanInversee) : null;
+    }
+    $lan = self::libelleStatutLan(is_array($sondeLan) && isset($sondeLan['statut']) && is_string($sondeLan['statut']) ? $sondeLan['statut'] : '');
+    $lanAdresse = '';
+    if (is_array($sondeLan)) {
+      $ipLan = isset($sondeLan['ip']) && is_string($sondeLan['ip']) ? $sondeLan['ip'] : '';
+      $tsLan = 0;
+      if (isset($sondeLan['vu_le']) && is_numeric($sondeLan['vu_le']) && (int) $sondeLan['vu_le'] > 0) {
+        $tsLan = (int) $sondeLan['vu_le'];
+      } elseif (isset($sondeLan['echec_le']) && is_numeric($sondeLan['echec_le']) && (int) $sondeLan['echec_le'] > 0) {
+        $tsLan = (int) $sondeLan['echec_le'];
+      }
+      if ($ipLan !== '' && $tsLan > 0) {
+        $lanAdresse = $ipLan . ' (' . self::dureeHumaine(max(0, time() - $tsLan)) . ')';
+      } elseif ($ipLan !== '') {
+        $lanAdresse = $ipLan;
+      }
+    }
+
     if ($this->getIsEnable() == 0) {
       return array(
         'niveau' => 'neutre',
@@ -1771,6 +2292,8 @@ class smartclim extends eqLogic {
         'fraicheur' => $fraicheur,
         'derniereDonnee' => $derniereDonnee,
         'incidentLe' => '',
+        'lan' => $lan,
+        'lanAdresse' => $lanAdresse,
       );
     }
 
@@ -1783,6 +2306,8 @@ class smartclim extends eqLogic {
         'fraicheur' => $fraicheur,
         'derniereDonnee' => $derniereDonnee,
         'incidentLe' => '',
+        'lan' => $lan,
+        'lanAdresse' => $lanAdresse,
       );
     }
 
@@ -1797,6 +2322,8 @@ class smartclim extends eqLogic {
         'fraicheur' => $fraicheur,
         'derniereDonnee' => $derniereDonnee,
         'incidentLe' => '',
+        'lan' => $lan,
+        'lanAdresse' => $lanAdresse,
       );
     }
 
@@ -1812,6 +2339,8 @@ class smartclim extends eqLogic {
           'fraicheur' => $fraicheur,
           'derniereDonnee' => $derniereDonnee,
           'incidentLe' => $incidentLe,
+          'lan' => $lan,
+          'lanAdresse' => $lanAdresse,
         );
       }
       return array(
@@ -1822,6 +2351,8 @@ class smartclim extends eqLogic {
         'fraicheur' => $fraicheur,
         'derniereDonnee' => $derniereDonnee,
         'incidentLe' => $incidentLe,
+        'lan' => $lan,
+        'lanAdresse' => $lanAdresse,
       );
     }
 
@@ -1834,6 +2365,8 @@ class smartclim extends eqLogic {
         'fraicheur' => $fraicheur,
         'derniereDonnee' => $derniereDonnee,
         'incidentLe' => '',
+        'lan' => $lan,
+        'lanAdresse' => $lanAdresse,
       );
     }
 
@@ -1847,6 +2380,8 @@ class smartclim extends eqLogic {
       'fraicheur' => $fraicheur,
       'derniereDonnee' => $derniereDonnee,
       'incidentLe' => '',
+      'lan' => $lan,
+      'lanAdresse' => $lanAdresse,
     );
   }
 

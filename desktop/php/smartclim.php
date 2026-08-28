@@ -86,6 +86,25 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 					</table>
 				</div>
 			</div>
+			<div id="div_scanLanWrapper">
+				<h4>{{Climatiseurs détectés sur le réseau local}}</h4>
+				<p id="span_scanResumeLan"></p>
+				<div class="table-responsive">
+					<table id="table_scanLan" class="table table-bordered table-condensed">
+						<thead>
+							<tr>
+								<th>{{Nom}}</th>
+								<th>{{Adresse MAC}}</th>
+								<th>{{Adresse IP}}</th>
+								<th>{{Type d'appareil}}</th>
+								<th>{{Résultat}}</th>
+							</tr>
+						</thead>
+						<tbody>
+						</tbody>
+					</table>
+				</div>
+			</div>
 			<a class="btn btn-primary hidden" id="bt_scanRecharger"><i class="fas fa-sync"></i> <span></span></a>
 		</div>
 		<div class="col-xs-12" id="div_sondeResultat" style="display:none;">
@@ -240,6 +259,23 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 									</select>
 								</div>
 							</div>
+							<legend><i class="fas fa-wifi"></i> {{Réseau local}}</legend>
+							<div class="form-group">
+								<label class="col-sm-4 control-label">{{Adresse IP locale}}
+									<sup><i class="fas fa-question-circle tooltips" title="{{Renseignez l'adresse locale si la diffusion réseau n'atteint pas l'appareil (VLAN, réseau segmenté)}}"></i></sup>
+								</label>
+								<div class="col-sm-6">
+									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="lan_ip" placeholder="{{Adresse détectée}}">
+								</div>
+							</div>
+							<div class="form-group">
+								<label class="col-sm-4 control-label">{{Adresse MAC locale}}
+									<sup><i class="fas fa-question-circle tooltips" title="{{Renseignez l'adresse locale si la diffusion réseau n'atteint pas l'appareil (VLAN, réseau segmenté)}}"></i></sup>
+								</label>
+								<div class="col-sm-6">
+									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="lan_mac" placeholder="{{Adresse détectée}}">
+								</div>
+							</div>
 						</div>
 
 						<!-- Partie droite de l'onglet "Équipement" -->
@@ -269,6 +305,10 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 								<div class="form-group">
 									<label class="col-sm-4 control-label">{{Dernière donnée reçue}}</label>
 									<div class="col-sm-8"><span id="span_etatConnexionDerniereDonnee"></span> <small class="text-muted" id="span_etatConnexionFraicheur"></small></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Réseau local}}</label>
+									<div class="col-sm-8"><span id="span_etatConnexionLan"></span> <small class="text-muted" id="span_etatConnexionLanAdresse"></small></div>
 								</div>
 							</div>
 

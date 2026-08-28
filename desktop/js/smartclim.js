@@ -110,6 +110,8 @@ function afficherEtatConnexion(_eqLogic) {
     $("#span_etatConnexionTransport").text("")
     $("#span_etatConnexionDerniereDonnee").text("")
     $("#span_etatConnexionFraicheur").text("")
+    $("#span_etatConnexionLan").text("")
+    $("#span_etatConnexionLanAdresse").text("")
     return
   }
   var classeNiveau = isset(smartclimClassesNiveau[etat.niveau]) ? smartclimClassesNiveau[etat.niveau] : "label-default"
@@ -121,6 +123,11 @@ function afficherEtatConnexion(_eqLogic) {
   $("#span_etatConnexionTransport").text(etat.transport)
   $("#span_etatConnexionDerniereDonnee").text(etat.derniereDonnee)
   $("#span_etatConnexionFraicheur").text(etat.fraicheur ? "(" + etat.fraicheur + ")" : "")
+  // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.2/5.6 de la spec technique) :
+  // repli chaîne vide OBLIGATOIRE — .text(undefined) est un accesseur, pas un mutateur, un
+  // champ omis conserverait le texte de l'équipement précédemment consulté.
+  $("#span_etatConnexionLan").text(etat.lan ? etat.lan : "")
+  $("#span_etatConnexionLanAdresse").text(etat.lanAdresse ? etat.lanAdresse : "")
 }
 
 /* Profil de capacités détecté (UC04). Tout le rendu de texte est SERVEUR
@@ -211,6 +218,49 @@ function saveEqLogic(_eqLogic) {
     $("#div_alert").showAlert({ message: "{{Bornes de température corrigées : vérifiez les valeurs saisies}}", level: "warning" })
   }
 
+  // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 4.1/5.6 de la spec technique) :
+  // AIDE à la saisie de lan_ip/lan_mac, JAMAIS autoritaire (la barrière AUTORITAIRE reste
+  // preSave() côté PHP) — ne bloque jamais l'enregistrement, corrige au pire vers "" (=
+  // "non personnalisé").
+  var corrigeLan = false
+
+  var lanIp = _eqLogic.configuration.lan_ip
+  if (isset(lanIp) && lanIp !== null && String(lanIp).trim() !== "") {
+    var lanIpTexte = String(lanIp).trim()
+    var motifIpV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
+    var correspondance = motifIpV4.exec(lanIpTexte)
+    var lanIpValide = false
+    if (correspondance !== null) {
+      lanIpValide = true
+      for (var i = 1; i <= 4 && lanIpValide; i++) {
+        if (parseInt(correspondance[i], 10) > 255) {
+          lanIpValide = false
+        }
+      }
+    }
+    if (!lanIpValide) {
+      corrigeLan = true
+      _eqLogic.configuration.lan_ip = ""
+    } else {
+      _eqLogic.configuration.lan_ip = lanIpTexte
+    }
+  }
+
+  var lanMac = _eqLogic.configuration.lan_mac
+  if (isset(lanMac) && lanMac !== null && String(lanMac).trim() !== "") {
+    var lanMacNormalisee = String(lanMac).toLowerCase().replace(/[^0-9a-f]/g, "")
+    if (lanMacNormalisee.length !== 12) {
+      corrigeLan = true
+      _eqLogic.configuration.lan_mac = ""
+    } else {
+      _eqLogic.configuration.lan_mac = lanMacNormalisee
+    }
+  }
+
+  if (corrigeLan) {
+    $("#div_alert").showAlert({ message: "{{Adresses réseau local corrigées : vérifiez les valeurs saisies}}", level: "warning" })
+  }
+
   return _eqLogic
 }
 
@@ -233,6 +283,7 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
   $bouton.find('span').text("{{Scan en cours…}}")
   $('#table_scanTrouves tbody').empty()
   $('#table_scanDisparus tbody').empty()
+  $('#table_scanLan tbody').empty()
   $('#bt_scanRecharger').addClass('hidden')
   $('#div_scanResultat').hide()
   $.ajax({
@@ -240,7 +291,10 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
     url: 'plugins/smartclim/core/ajax/smartclim.ajax.php',
     data: { action: 'scannerClimatiseurs' },
     dataType: 'json',
-    timeout: 30000,
+    // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.6 de la spec technique) :
+    // pire cas 18 s (phase LAN, BUDGET_LAN) + 25 s (phase cloud, BUDGET_SCAN) ≈ 43 s ; un
+    // timeout jQuery n'interrompt PAS le PHP, il ne doit donc jamais couper court.
+    timeout: 60000,
     global: false,
     error: function (jqXHR, textStatus) {
       if (textStatus === 'timeout') {
@@ -256,6 +310,24 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
       }
       var resultat = data.result
       $('#span_scanResume').text(resultat.resume)
+      // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 3/5.6 de la spec
+      // technique) : le scan cloud a pu échouer SANS empêcher le scan LAN (D-POSTMVP0101-10)
+      // — un cloudErreur non vide est un avertissement (warning), jamais une panne (danger).
+      if (resultat.cloudErreur) {
+        $('#div_alert').showAlert({ message: resultat.cloudErreur, level: 'warning' })
+      }
+      if (resultat.lan) {
+        $('#span_scanResumeLan').text(resultat.lan.resume)
+        $.each(resultat.lan.appareils, function (index, appareil) {
+          ajouterLigneScan($('#table_scanLan'), [
+            appareil.nom,
+            appareil.mac,
+            appareil.ip,
+            appareil.typeAppareil,
+            appareil.statutLibelle
+          ])
+        })
+      }
       $.each(resultat.appareils, function (index, appareil) {
         ajouterLigneScan($('#table_scanTrouves'), [
           appareil.nom,

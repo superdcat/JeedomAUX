@@ -44,7 +44,7 @@ try {
     }
 
     if (init('action') == 'scannerClimatiseurs') {
-        ajax::success(smartclim::scannerAuxHome());
+        ajax::success(smartclim::scannerClimatiseurs());
     }
 
     // Sonde de diagnostic (outillage de reverse engineering, cf.

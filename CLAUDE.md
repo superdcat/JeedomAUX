@@ -19,7 +19,7 @@ Trois **transports** interchangeables sont visés, derrière une abstraction com
 | Transport | Statut | Nature |
 |---|---|---|
 | **AUX Home** (`eu-smthome-api.aux-global.com`) | **socle MVP** | cloud récent, REST, 100 % PHP |
-| **Broadlink LAN** (UDP port 80) | post-MVP (domaine 01) | pilotage local, sans Internet |
+| **Broadlink LAN** (UDP port 80) | post-MVP domaine 01, **UC01 livrée** (découverte + session) | pilotage local, sans Internet |
 | **AUX Cloud legacy / AC Freedom** | post-MVP (domaine 03) | cloud historique, multi-régions |
 
 Le principe directeur (brief utilisateur, `.memory/brief.md`) :
@@ -243,10 +243,36 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Ne jamais committer un rapport de sonde brut**, ni dans `.memory/` : `.htaccess` ne protège que
   l'accès web d'une installation Jeedom, pas GitHub. Vérifier la sortie réelle (`grep` des champs
   d'identifiants) avant d'annoncer qu'un rapport est partageable.
+- **`core/class/smartclimBroadlinkLan.class.php`** — **existe** depuis l'UC01 du domaine post-MVP 01.
+  Brique du transport **Broadlink LAN**, seul point du plugin qui ouvre des **sockets UDP**. Porte la
+  découverte par diffusion (`decouvrir()`, deux chemins : `socket_*` si l'extension `sockets` est là,
+  sinon repli `stream_socket_server` avec l'option de contexte `so_broadcast`), la sonde **unicast**
+  d'une adresse connue (`interroger()`, qui ne dépend d'**aucune** extension), et le cycle de
+  **session par appareil** (`ouvrirSession()` / `purgerSession()`, authentification `0x65`,
+  AES-128-CBC, en-tête `0x38`). Elle renvoie des lignes **normalisées à clés génériques françaises** —
+  aucun offset ni nom de champ du protocole n'en sort.
+  ⚠️ **`ouvrirSession()` ne lève JAMAIS** : tout échec devient un statut (`STATUT_*`) plus un log. Et
+  elle ne renvoie **jamais** l'identifiant ni la clé de session.
+  ⚠️ **Session sérialisée par `flock`** (fichier par MAC dans `jeedom::getTmpFolder('smartclim')`),
+  jamais par un verrou en cache : `cache::byKey()` + `cache::set()` ne sont pas atomiques. Motif de
+  fond — le protocole n'admet **qu'une seule session par appareil**, et s'authentifier **invalide**
+  celle du logiciel qui l'avait avant (application du constructeur, Home Assistant…). Deux processus
+  PHP concurrents non sérialisés se décrocheraient donc mutuellement en boucle.
+  ⚠️ **La clé de session est stockée en HEXADÉCIMAL** dans le cache (`bin2hex()`), pas en octets
+  bruts : `json_encode()` renvoie `false` sur toute chaîne non-UTF-8, ce qui rendait la session
+  silencieusement illisible et forçait une ré-authentification à chaque scan. Tout appelant futur
+  (la `requete()` de l'UC02) doit repasser par `hex2bin()`.
+  ⚠️ **`requete()` est volontairement ABSENTE** de l'UC01 (aucun appelant = code mort) ; son contrat
+  est **déjà figé** au § 7 de
+  `.memory/specs/post-mvp/01-transport-broadlink-lan/01-decouverte-lan-et-session-tech.md` — le lire
+  avant d'en écrire une.
+  ⚠️ Ce transport est livré **non recetté** : le climatiseur de validation de l'utilisateur ignore le
+  protocole Broadlink. Le code est vérifié contre `mjg59/python-broadlink` (MIT), jamais contre du
+  matériel.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
   chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
   introuvable au runtime, cf. Conventions → Autoload) : `smartclimTransport` (sélection du transport
-  actif), et les deux autres briques de transport : `smartclimAuxCloudApi`, `smartclimBroadlinkLan`.
+  actif) et `smartclimAuxCloudApi` (cloud legacy).
   ⚠️ **`smartclimFrame` est volontairement AJOURNÉE, pas oubliée** (arbitrage UC05) : le décodage de la
   trame HVAC vit dans `smartclimAuxHomeApi` tant qu'il n'a **qu'un seul appelant** — l'en extraire
   imposerait de sortir les offsets de la brique de transport. Elle se crée le jour où un **second**
@@ -398,7 +424,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   chiffrent via les méthodes d'instance `encrypt()`/`decrypt()`.
   **Clés posées depuis l'UC04** : `capacites` (profil **détecté**, réécrit par chaque scan) et
   `temp_min` / `temp_max` / `temp_pas` (bornes **personnalisées** par l'utilisateur, `''` = « non
-  personnalisé »).
+  personnalisé »). **Depuis l'UC01 du domaine post-MVP 01** : `lan_ip` et `lan_mac` — adresses locales
+  **saisies par l'utilisateur** (secours quand la diffusion n'atteint pas l'appareil : VLAN, réseau
+  segmenté), `''` = « non personnalisé ». ⚠️ L'adresse **détectée** ne vit **jamais** là : elle est en
+  **cache** (`smartclim::lan_appareil::<mac>`, 24 h) — même séparation détecté/personnalisé que
+  `capacites` contre `temp_*`. Lecture unique par `smartclim::adresseLan()` (personnalisé → détecté →
+  aucun), qui **revalide l'IP à la lecture**.
+  ⚠️ **Valider une IP sans `ip2long()`** : cet appel renvoie un entier **signé** et PHP est **32 bits**
+  sur Raspberry Pi OS armhf — un seuil comme `224.0.0.0` y devient négatif et fait rejeter tout le
+  `10.0.0.0/8`. Comparer des **octets**. Détail :
+  `.memory/analyse/smartclim-transport-broadlink-lan.md` § 9.
   ⚠️ **Ces deux espaces de nommage sont disjoints par construction, et doivent le rester** : c'est cette
   séparation — pas une convention de nommage — qui garantit qu'une redétection n'écrase jamais une
   personnalisation. Aucun code ne doit écrire une valeur détectée dans `temp_*`, ni une valeur
@@ -415,7 +450,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   rattrape les changements d'identifiants qui ne passent pas par `config::save` (restauration, SQL
   direct). 🚫 **Jamais le mot de passe dans l'empreinte** : cela le remettrait sur la pile d'appel.
   La purge est câblée sur `postConfig_auxhome_password/email/country` **et** explicitement dans l'action
-  d'effacement (`config::remove()` ne déclenche **pas** les hooks). ⚠️ Le cloud AUX Home n'expose **aucun refresh token** : la stratégie est
+  d'effacement (`config::remove()` ne déclenche **pas** les hooks).
+  **Depuis l'UC01 du domaine post-MVP 01**, une **seconde** famille de sessions existe, indépendante :
+  `smartclim::session_lan::<mac>`, **30 min**, chiffrée elle aussi (elle contient une clé de session),
+  une entrée **par appareil** — cf. `smartclimBroadlinkLan` ci-dessus pour le `flock` qui la sérialise
+  et le stockage hexadécimal de la clé. À ne pas confondre avec `smartclim::lan_appareil::<mac>`
+  (mémoire de sonde, **non** chiffrée, aucun secret dedans). ⚠️ Le cloud AUX Home n'expose **aucun refresh token** : la stratégie est
   re-login réactif, avec anti-boucle (une seule tentative par cycle).
   Depuis l'UC08, ce rejeu couvre les **deux** chemins authentifiés, avec un seuil de budget **dédié** à
   chacun : la **lecture** (`listerAppareils()`, garde `BUDGET_LOGIN + 3`) et l'**écriture**

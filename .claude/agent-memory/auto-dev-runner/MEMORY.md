@@ -1,1 +1,2 @@
 - [execCmd() sur une commande action a un effet de bord](project-execcmd-action-effet-de-bord.md) — lire une valeur Jeedom peut actionner le matériel : filtrer `getType() === 'info'` avant tout `execCmd()`.
+- [Reprise d'une impl coupée en vol](feedback-reprise-impl-methode-appelee-non-definie.md) — chercher les méthodes appelées mais jamais définies et les fichiers prévus absents du diff : invisibles à `verif-plugin.py` et `php -l`.

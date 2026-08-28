@@ -49,6 +49,11 @@ diffusion.
       réseau simulée), la commande suivante aboutit malgré la perte de session, sans intervention de
       l'utilisateur — la réauthentification automatique est constatée par le succès de cette commande,
       éventuellement après un délai perceptible.
+      *(Validable en deux temps — arbitrage `D-POSTMVP0101-06` du run `run-20260827-1008` : l'UC01
+      **pose** la réauthentification — contrat de `smartclimBroadlinkLan::requete()`, déclencheurs
+      (silence, codes appareil `-7`, `-4012`, `-1`), purge de session et empreinte d'invalidation —
+      mais aucune commande n'existe avant l'UC02 (lecture) et l'UC03 (écriture) de ce domaine. Ce
+      critère devient donc **observable en UC02/UC03**, comme AC2.)*
 - [ ] **AC6** — Deux sollicitations rapprochées du même équipement (par ex. deux commandes quasi
       simultanées) n'entrent jamais en conflit visible : pas d'erreur de session, pas de réponse mélangée
       entre deux appareils.

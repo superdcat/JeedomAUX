@@ -83,7 +83,19 @@
         "à l'instant": "just now",
         "il y a %d min": "%d min ago",
         "il y a %1$d h %2$d min": "%1$d h %2$d min ago",
-        "il y a %d jour(s)": "%d day(s) ago"
+        "il y a %d jour(s)": "%d day(s) ago",
+        "%d appareil(s) Broadlink détecté(s) sur le réseau local": "%d Broadlink device(s) detected on the local network",
+        "%d appareil(s) non sondé(s) faute de budget": "%d device(s) not probed due to time budget",
+        "Adresse locale incohérente : l'appareil joint n'est pas celui attendu": "Inconsistent local address: the reached device is not the expected one",
+        "Aucun climatiseur détecté sur le réseau local": "No air conditioner detected on the local network",
+        "Découverte automatique indisponible sur cet hôte (extension PHP « sockets » absente) — renseignez l'adresse IP locale de chaque climatiseur.": "Automatic discovery unavailable on this host (PHP “sockets” extension missing) — enter the local IP address of each air conditioner.",
+        "Jamais détecté sur le réseau local": "Never detected on the local network",
+        "LAN disponible": "LAN available",
+        "LAN disponible (session existante)": "LAN available (existing session)",
+        "LAN indisponible": "LAN unavailable",
+        "LAN indisponible — appareil déjà sollicité": "LAN unavailable — device already busy",
+        "LAN indisponible — appareil verrouillé": "LAN unavailable — device locked",
+        "LAN indisponible — authentification refusée": "LAN unavailable — authentication refused"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -179,7 +191,8 @@
         "Sonde en cours…": "Probe running…",
         "La sonde n'a pas répondu à temps": "The probe did not respond in time",
         "Rapport copié dans le presse-papiers": "Report copied to the clipboard",
-        "Copie impossible : sélectionnez le texte du rapport et copiez-le à la main": "Copy failed: select the report text and copy it manually"
+        "Copie impossible : sélectionnez le texte du rapport et copiez-le à la main": "Copy failed: select the report text and copy it manually",
+        "Adresses réseau local corrigées : vérifiez les valeurs saisies": "Local network addresses corrected: check the entered values"
     },
     "plugins/smartclim/desktop/php/smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access",
@@ -246,7 +259,15 @@
         "Télécharger le rapport complet": "Download the full report",
         "État de connexion": "Connection status",
         "Transport actif": "Active transport",
-        "Dernière donnée reçue": "Last data received"
+        "Dernière donnée reçue": "Last data received",
+        "Adresse IP": "IP address",
+        "Adresse IP locale": "Local IP address",
+        "Adresse MAC locale": "Local MAC address",
+        "Adresse détectée": "Detected address",
+        "Climatiseurs détectés sur le réseau local": "Air conditioners detected on the local network",
+        "Renseignez l'adresse locale si la diffusion réseau n'atteint pas l'appareil (VLAN, réseau segmenté)": "Enter the local address if network broadcast does not reach the device (VLAN, segmented network)",
+        "Réseau local": "Local network",
+        "Type d'appareil": "Device type"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

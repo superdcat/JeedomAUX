@@ -18,6 +18,11 @@
 /* * ***************************Includes********************************* */
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
 require_once __DIR__ . '/smartclimException.class.php';
+// UC02 du domaine post-mvp/01-transport-broadlink-lan : etatAppareil()/capacitesAppareil()
+// ci-dessous consomment smartclimCapabilities::TRANSPORT_BROADLINK_LAN/CONCEPT_ONLINE, et
+// lireEtat() consomme le décodeur mutualisé smartclimFrame. require_once idempotent.
+require_once __DIR__ . '/smartclimCapabilities.class.php';
+require_once __DIR__ . '/smartclimFrame.class.php';
 
 /**
  * Brique de transport "Broadlink LAN" (UC01 du domaine post-mvp/01-transport-broadlink-lan) :
@@ -86,6 +91,17 @@ class smartclimBroadlinkLan {
   // jamais adopté, jamais de session ouverte avec lui.
   const STATUT_MAC_DIVERGENTE = 'mac_divergente';
 
+  // UC02 de ce domaine (§ 3.2/5.2 de sa spec technique) : commande "requête" du protocole
+  // et les DEUX charges magiques (16 octets = 1 bloc AES, chiffrées avec la clé de
+  // session), constantes de PROTOCOLE re-vérifiées indépendamment contre le contrat
+  // documenté (§ 3 de la spec technique), JAMAIS recopiées depuis un dépôt sans licence
+  // (R8) — cf. l'attribution MIT en tête de fichier, qui ne couvre QUE python-broadlink.
+  const COMMANDE_REQUETE = 0x6A;
+  const CHARGE_ETAT = '0c00bb0006800000020011012b7e0000';
+  const CHARGE_INFO = '0c00bb0006800000020021011b7e0000';
+  const STATUT_ETAT_LU = 'etat_lu';
+  const STATUT_ETAT_ILLISIBLE = 'etat_illisible';
+
   // Constantes de crypto (mjg59/python-broadlink, const.py) — ⚠️ l'octet d'index 3 de l'IV
   // vaut 0x99, PAS 0x09 (piège confirmé par la source canonique, D-POSTMVP0101-02).
   const INIT_KEY = '097628343fe99e23765c1513accf8b02';
@@ -95,6 +111,15 @@ class smartclimBroadlinkLan {
   // (D-POSTMVP0101-04, finding F3) : jeedom::getTmpFolder() exécute un chown au premier
   // appel, s'appuyer sur une mémoïsation interne du core serait un détail non contractuel.
   private static $dossierVerrous = null;
+
+  // Compteur de paquet PAR PROCESSUS (UC02, § 5.3 de sa spec technique), jamais persisté
+  // en cache : python-broadlink initialise ce compteur ALÉATOIREMENT (Device.__init__),
+  // l'appareil ne contrôle donc aucune monotonie. Persister imposerait une écriture de
+  // cache::set() par requête, qui RÉARMERAIT la TTL de 30 min de la session à chaque
+  // lecture — faussant sa durée de vie réelle. Initialisé au compteur de la session (à
+  // défaut aléatoire) au premier appel de requete(), incrémenté à chaque appel, remis à 0
+  // après une ré-authentification.
+  private static $compteurPaquet = null;
 
   /*     * ***********************Methode static*************************** */
 
@@ -225,31 +250,15 @@ class smartclimBroadlinkLan {
     try {
       $budgetRestant = max(1, $_budget - (microtime(true) - $debut));
 
-      $dejaValide = false;
-      $brut = cache::byKey(self::CLE_CACHE_SESSION . $macNorm)->getValue(null);
-      if ($brut !== null) {
-        $dechiffre = utils::decrypt($brut);
-        if (is_string($dechiffre) && $dechiffre !== '') {
-          $session = json_decode($dechiffre, true);
-          if (
-            is_array($session)
-            && isset($session['id'], $session['cle'], $session['empreinte'])
-            && is_string($session['cle']) && preg_match('/\A[0-9a-f]{32}\z/', $session['cle']) === 1
-            && $session['empreinte'] === self::empreinteSession($_appareil)
-          ) {
-            $dejaValide = true;
-          }
-        }
-        if (!$dejaValide) {
-          log::add('smartclim', 'debug', 'Broadlink LAN : session en cache invalide (' . $macNorm . '), purge et nouvelle authentification');
-          self::purgerSession($macNorm);
-        }
-      }
-
-      if ($dejaValide) {
+      $session = self::sessionEnCache($_appareil);
+      if ($session !== null) {
         log::add('smartclim', 'debug', 'Broadlink LAN : session en cache valide, réutilisée (' . $macNorm . ')');
         return self::STATUT_REUTILISEE;
       }
+      // Absente OU invalide (empreinte divergente, forme inattendue) : purgerSession()
+      // est un no-op idempotent si rien n'était en cache (§ 5.2 de la spec technique UC02).
+      log::add('smartclim', 'debug', 'Broadlink LAN : aucune session en cache valide (' . $macNorm . '), nouvelle authentification');
+      self::purgerSession($macNorm);
 
       self::authentifier($_appareil, $budgetRestant);
       return self::STATUT_ETABLIE;
@@ -287,28 +296,341 @@ class smartclimBroadlinkLan {
     cache::delete(self::CLE_CACHE_SESSION . $_macNorm);
   }
 
-  /*
-   * RÉSERVÉ À UC02 — contrat FIGÉ, NON implémenté ici (aucun appelant en UC01, ce serait
-   * du code mort, D-POSTMVP0101-06) :
-   *   private static function requete($_appareil, $_commande, $_charge, $_budget)
-   * - point UNIQUE portant la réauthentification réactive ;
-   * - UN SEUL rejeu par appel (booléen local, JAMAIS de récursion — même convention que
-   *   le re-login réactif d'UC02 du MVP, smartclimAuxHomeApi::listerAppareils()) ;
-   * - déclencheurs : silence dans le budget, OU code appareil -7 (Control key is expired),
-   *   -4012 (Device control ID error), -1 (Authentication failed) ;
-   * - avant de ré-authentifier : réinitialiser la clé par défaut (INIT_KEY) + identifiant
-   *   de session NUL + compteur à ZÉRO ;
-   * - appliquer DELAI_APRES_AUTH (200 ms) APRÈS une authentification réussie, AVANT la
-   *   première requête effective.
+  /**
+   * Lit l'état HVAC COMPLET d'un appareil (UC02, § 5.2 de la spec technique) — commandes
+   * 0x6A "état" (CHARGE_ETAT) puis, si le budget le permet encore, "mesures/ambiante"
+   * (CHARGE_INFO). NE LÈVE JAMAIS : toute anomalie devient un statut. Séquence imposée :
+   * (1) ouvrirSession() — prend ET relâche son PROPRE verrou avant de rendre la main ;
+   * (2) hors ETABLIE/REUTILISEE → retour immédiat, 'statut' = statut de session ;
+   * (3) si ETABLIE → DELAI_APRES_AUTH (le contrat posé par UC01, non appliqué jusqu'ici,
+   *     trouve enfin son usage) ; (4) verrou() + finally libererVerrou(), couvrant la
+   *     lecture ET un éventuel rejeu ; (5) requete(CHARGE_ETAT) puis, si le budget le
+   *     permet encore, requete(CHARGE_INFO) ; (6) statut = ETAT_LU si au moins un concept
+   *     est décodable, sinon ETAT_ILLISIBLE (ex. appareil Broadlink non-climatiseur, code
+   *     -4 "Command not supported", § 3.4).
+   *
+   * @param array $_appareil Ligne normalisée (decouvrir()/interroger()).
+   * @param float $_budget Budget de temps RESTANT à cette tentative, en secondes.
+   * @return array{session:string, statut:string, trame_controle:string, trame_longue:string}
    */
+  public static function lireEtat(array $_appareil, $_budget) {
+    $macNorm = isset($_appareil['mac']) ? $_appareil['mac'] : '';
+    $debut = microtime(true);
+
+    $statutSession = self::ouvrirSession($_appareil, $_budget);
+    if ($statutSession !== self::STATUT_ETABLIE && $statutSession !== self::STATUT_REUTILISEE) {
+      return array(
+        'session' => $statutSession,
+        'statut' => $statutSession,
+        'trame_controle' => '',
+        'trame_longue' => '',
+      );
+    }
+
+    if ($statutSession === self::STATUT_ETABLIE) {
+      usleep((int) (self::DELAI_APRES_AUTH * 1000000));
+    }
+
+    $trameControle = '';
+    $trameLongue = '';
+    $budgetRestant = max(1, $_budget - (microtime(true) - $debut));
+    $ressource = self::verrou($macNorm, max(0, min(self::ATTENTE_VERROU, $budgetRestant)));
+    if ($ressource === null) {
+      return array(
+        'session' => $statutSession,
+        'statut' => self::STATUT_OCCUPE,
+        'trame_controle' => '',
+        'trame_longue' => '',
+      );
+    }
+
+    try {
+      try {
+        $budgetRestant = max(1, $_budget - (microtime(true) - $debut));
+        $trameControle = self::requete($_appareil, self::COMMANDE_REQUETE, hex2bin(self::CHARGE_ETAT), $budgetRestant);
+      } catch (smartclimException $e) {
+        $niveau = ($e->getType() === smartclimException::TYPE_PROTOCOLE) ? 'warning' : 'debug';
+        log::add('smartclim', $niveau, 'Broadlink LAN : lecture d\'état HVAC en échec (' . $macNorm . ') : ' . $e->getMessage());
+      }
+
+      $budgetRestant = $_budget - (microtime(true) - $debut);
+      if ($budgetRestant >= 1) {
+        try {
+          $trameLongue = self::requete($_appareil, self::COMMANDE_REQUETE, hex2bin(self::CHARGE_INFO), $budgetRestant);
+        } catch (smartclimException $e) {
+          $niveau = ($e->getType() === smartclimException::TYPE_PROTOCOLE) ? 'warning' : 'debug';
+          log::add('smartclim', $niveau, 'Broadlink LAN : lecture de mesures HVAC en échec (' . $macNorm . ') : ' . $e->getMessage());
+        }
+      }
+    } catch (Throwable $t) {
+      // Même discipline que ouvrirSession() (§ 5.1) : une anomalie interne INATTENDUE ne
+      // doit jamais s'échapper de lireEtat() — l'appelant (smartclim::scannerReseauLocal())
+      // doit pouvoir compter dessus sans le redoubler.
+      log::add('smartclim', 'warning', 'Broadlink LAN : anomalie interne pendant la lecture d\'état (' . $macNorm . ') : ' . $t->getMessage());
+    } finally {
+      self::libererVerrou($ressource);
+    }
+
+    $lisibles = smartclimFrame::conceptsLisibles($trameControle, $trameLongue);
+    $statut = !empty($lisibles) ? self::STATUT_ETAT_LU : self::STATUT_ETAT_ILLISIBLE;
+
+    return array(
+      'session' => $statutSession,
+      'statut' => $statut,
+      'trame_controle' => $trameControle,
+      'trame_longue' => $trameLongue,
+    );
+  }
+
+  /**
+   * État GÉNÉRIQUE décodé par CE transport, à partir d'une lecture lireEtat() (UC02, §
+   * 5.2 de la spec technique) : DÉLÈGUE au décodeur MUTUALISÉ smartclimFrame::decoderEtat()
+   * — c'est ce qui rend AC3 (« état identique LAN et cloud ») vrai PAR CONSTRUCTION.
+   * ⚠️ 'online' n'est JAMAIS false ici : un LAN muet ne prouve pas qu'un appareil est hors
+   * ligne (VLAN, pare-feu, diffusion filtrée) — seul le cloud sait le dire.
+   *
+   * @param array $_lecture Renvoyé par lireEtat() ci-dessus.
+   * @return array{online:bool, power?:int, mode?:string, target_temp?:float, ambient_temp?:int, fan_speed?:string, source:string}
+   */
+  public static function etatAppareil(array $_lecture) {
+    $trameControle = isset($_lecture['trame_controle']) && is_string($_lecture['trame_controle']) ? $_lecture['trame_controle'] : '';
+    $trameLongue = isset($_lecture['trame_longue']) && is_string($_lecture['trame_longue']) ? $_lecture['trame_longue'] : '';
+
+    $etat = array(
+      'online' => true,
+      'source' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN,
+    );
+
+    return $etat + smartclimFrame::decoderEtat(smartclimCapabilities::TRANSPORT_BROADLINK_LAN, $trameControle, $trameLongue);
+  }
+
+  /**
+   * Profil de capacités GÉNÉRIQUE de CE transport, à partir d'une lecture lireEtat() (UC02,
+   * § 5.2 de la spec technique). 'modes' et 'vitesses' VIDES à dessein (R1, § 9 de la spec
+   * technique) : le LAN n'a AUCUN équivalent de feature.coolType (le champ déclaré du
+   * cloud qui permet d'EXCLURE un mode) — il ne peut donc rien exclure. Publier ici le
+   * catalogue COMPLET du transport réintroduirait, via l'UNION de
+   * smartclim::appliquerCapacites(), un mode déjà écarté par le cloud (ex. Chauffage sur
+   * une unité froid-seul) dès qu'un scan LAN tourne sans qu'un scan cloud repasse
+   * derrière. UC02 étant en LECTURE SEULE, aucun catalogue d'action n'est nécessaire ici.
+   *
+   * @param array $_lecture Renvoyé par lireEtat() ci-dessus.
+   * @return array{concepts:array<int,string>, modes:array<int,string>, vitesses:array<int,string>, modes_exclus:array<int,string>, temperature:array{min:int,max:int,pas:float}, source:string}
+   */
+  public static function capacitesAppareil(array $_lecture) {
+    $trameControle = isset($_lecture['trame_controle']) && is_string($_lecture['trame_controle']) ? $_lecture['trame_controle'] : '';
+    $trameLongue = isset($_lecture['trame_longue']) && is_string($_lecture['trame_longue']) ? $_lecture['trame_longue'] : '';
+
+    $concepts = array_merge(array(smartclimCapabilities::CONCEPT_ONLINE), smartclimFrame::conceptsLisibles($trameControle, $trameLongue));
+
+    return array(
+      'concepts' => $concepts,
+      'modes' => array(),
+      'vitesses' => array(),
+      'modes_exclus' => array(),
+      'temperature' => smartclimCapabilities::bornesParDefaut(),
+      'source' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN,
+    );
+  }
+
+  /**
+   * Émet UNE requête 0x6A (§ 3.2/5.2 de la spec technique UC02) et renvoie la charge HVAC
+   * NUE (hexadécimal minuscule) contenue dans la réponse déchiffrée. SIGNATURE FIGÉE par
+   * le § 7 de la spec technique UC01. Point UNIQUE portant la réauthentification
+   * RÉACTIVE : UN SEUL rejeu par appel (booléen local, JAMAIS de récursion — même
+   * convention que le re-login réactif d'UC02 du MVP,
+   * smartclimAuxHomeApi::listerAppareils()). Déclencheurs de rejeu : silence dans le
+   * budget, ou code appareil -7 / -4012 / -1 (§ 3.4/7). Avant rejeu : purgerSession() puis
+   * authentifier() (qui repose INIT_KEY, identifiant nul et compteur à zéro), puis
+   * DELAI_APRES_AUTH.
+   *
+   * ⚠️ Appelle authentifier() et JAMAIS ouvrirSession() : le verrou est déjà tenu par
+   * lireEtat(), et flock() N'EST PAS RÉENTRANT entre deux descripteurs du même processus.
+   *
+   * @param array $_appareil
+   * @param int $_commande
+   * @param string $_charge 16 octets bruts (un bloc AES), NON chiffrés.
+   * @param float $_budget
+   * @return string Charge HVAC nue, en hexadécimal minuscule.
+   * @throws smartclimException
+   */
+  private static function requete(array $_appareil, $_commande, $_charge, $_budget) {
+    $macNorm = isset($_appareil['mac']) ? $_appareil['mac'] : '';
+    $debut = microtime(true);
+    $rejoue = false;
+
+    while (true) {
+      $session = self::sessionEnCache($_appareil);
+      if ($session === null) {
+        throw new smartclimException('Broadlink LAN : aucune session en cache disponible pour la requête', smartclimException::TYPE_INTERNE);
+      }
+      if (!is_string($session['cle']) || preg_match('/\A[0-9a-f]{32}\z/', $session['cle']) !== 1) {
+        throw new smartclimException('Broadlink LAN : clé de session illisible', smartclimException::TYPE_INTERNE);
+      }
+      $cle = hex2bin($session['cle']);
+
+      if (self::$compteurPaquet === null) {
+        self::$compteurPaquet = (isset($session['compteur']) && is_numeric($session['compteur'])) ? (int) $session['compteur'] : random_int(0, 0xFFFF);
+      }
+      $octetsMac = (isset($session['octets_mac']) && is_string($session['octets_mac'])) ? self::hexVersOctets($session['octets_mac']) : self::hexVersOctets(isset($_appareil['octets_mac']) ? $_appareil['octets_mac'] : '');
+
+      $sessionPourPaquet = array(
+        'compteur' => self::$compteurPaquet,
+        'octets_mac' => $octetsMac,
+        'id' => isset($session['id']) ? (int) $session['id'] : 0,
+        'cle' => $cle,
+        'devtype' => isset($session['devtype']) ? (int) $session['devtype'] : self::devtypeDepuisAppareil($_appareil),
+      );
+      $paquet = self::construirePaquet($_commande, $_charge, $sessionPourPaquet);
+      // Même formule que construirePaquet() (§ 1.3) : compteur = ((base+1)|0x8000)&0xFFFF.
+      // Duplication ASSUMÉE d'une identité arithmétique (pas de la construction du
+      // paquet) : c'est le seul moyen de faire progresser l'état PAR PROCESSUS sans que
+      // construirePaquet() ait à connaître ce compteur (§ 5.3 de la spec technique).
+      self::$compteurPaquet = ((self::$compteurPaquet + 1) | 0x8000) & 0xFFFF;
+
+      $budgetRestant = max(1, $_budget - (microtime(true) - $debut));
+      $timeout = max(1, min(self::TIMEOUT_ECHANGE, $budgetRestant));
+      $ip = (isset($session['ip']) && is_string($session['ip']) && $session['ip'] !== '') ? $session['ip'] : (isset($_appareil['ip']) ? $_appareil['ip'] : '');
+
+      // ⚠️ SANS $_octetsMacAttendus (§ 7.1 de la spec technique) : python-broadlink ne
+      // vérifie pas l'écho de MAC sur 0x6A, un contrôle BLOQUANT ici serait un déni de
+      // service auto-infligé sur un chemin non recettable. L'anti-mélange est déjà assuré
+      // par le socket UDP CONNECTÉ (filtrage noyau par adresse source).
+      $reponse = self::echanger($ip, $paquet, $timeout);
+
+      if ($reponse === null) {
+        if ($rejoue) {
+          throw new smartclimException('Broadlink LAN : aucune réponse à la requête (après rejeu)', smartclimException::TYPE_RESEAU);
+        }
+        $rejoue = true;
+        self::rejouerAuthentification($_appareil, $_budget - (microtime(true) - $debut));
+        continue;
+      }
+
+      $code = self::codeErreur($reponse);
+      if ($code !== 0) {
+        log::add('smartclim', 'debug', 'Broadlink LAN : code d\'erreur appareil observé sur la requête (' . $macNorm . ') : ' . $code);
+        if (!$rejoue && in_array($code, array(-7, -4012, -1), true)) {
+          $rejoue = true;
+          self::rejouerAuthentification($_appareil, $_budget - (microtime(true) - $debut));
+          continue;
+        }
+        // classerCodeAppareil() lève TOUJOURS (§ classement) : propage TYPE_RESEAU pour
+        // -3/-4000, TYPE_AUTH pour -1/-2/-7/-4012 hors rejeu, TYPE_PROTOCOLE sinon (dont
+        // -4 "Command not supported" : réponse attendue d'un appareil Broadlink qui n'est
+        // pas un climatiseur AUX, § 3.4).
+        self::classerCodeAppareil($code);
+      }
+
+      // Instrumentation § 10 (non bloquante) : commande écho, longueur déchiffrée, 1er
+      // octet de charge HVAC (attendu 0xBB), écho de MAC — accès garanti par la longueur
+      // minimale déjà vérifiée par echanger() (>= 0x38).
+      $commandeEcho = ord($reponse[0x26]) | (ord($reponse[0x27]) << 8);
+      $macEcho = substr($reponse, 0x2A, 6);
+      if ($macEcho !== $octetsMac) {
+        log::add('smartclim', 'debug', 'Broadlink LAN : écho de MAC divergent sur la requête (' . $macNorm . '), non bloquant');
+      }
+      log::add('smartclim', 'debug', 'Broadlink LAN : commande écho observée sur la requête (' . $macNorm . ') : 0x' . dechex($commandeEcho));
+
+      $chargeChiffree = substr($reponse, 0x38);
+      if (strlen($chargeChiffree) === 0 || strlen($chargeChiffree) % 16 !== 0) {
+        throw new smartclimException('Broadlink LAN : charge chiffrée de la réponse de longueur non multiple de 16', smartclimException::TYPE_PROTOCOLE);
+      }
+
+      $chargeClaire = self::dechiffrer($chargeChiffree, $cle);
+      if ($chargeClaire === false || strlen($chargeClaire) < 4) {
+        throw new smartclimException('Broadlink LAN : réponse de requête illisible ou tronquée', smartclimException::TYPE_PROTOCOLE);
+      }
+
+      // Somme de la charge (0x34-0x35, § 3.2/7) : NON bloquante, algorithme prouvé
+      // arithmétiquement mais jamais observé sur du matériel réel.
+      $sommeRecue = ord($reponse[0x34]) | (ord($reponse[0x35]) << 8);
+      $sommeCalculee = self::sommeControle($chargeClaire);
+      if ($sommeCalculee !== $sommeRecue) {
+        log::add('smartclim', 'debug', 'Broadlink LAN : somme de charge divergente sur la requête (' . $macNorm . '), non bloquant');
+      }
+
+      $longueur = ord($chargeClaire[0]) | (ord($chargeClaire[1]) << 8);
+      if ($longueur < 4 || (2 + $longueur) > strlen($chargeClaire)) {
+        throw new smartclimException('Broadlink LAN : longueur de charge HVAC incohérente dans la réponse', smartclimException::TYPE_PROTOCOLE);
+      }
+
+      $chargeHvac = substr($chargeClaire, 2, $longueur - 2);
+      log::add('smartclim', 'debug', 'Broadlink LAN : charge HVAC reçue (' . $macNorm . '), 1er octet=0x' . (strlen($chargeHvac) > 0 ? dechex(ord($chargeHvac[0])) : '--') . ', longueur=' . strlen($chargeHvac));
+
+      return strtolower(bin2hex($chargeHvac));
+    }
+  }
+
+  /**
+   * Ré-authentifie un appareil AVANT un rejeu (requete()) : purge la session en cache,
+   * authentifie de nouveau (authentifier() repose INIT_KEY, identifiant nul et compteur à
+   * zéro), remet le compteur de paquet PAR PROCESSUS à zéro (§ 5.3 de la spec technique),
+   * puis applique DELAI_APRES_AUTH. Propage toute smartclimException d'authentifier() —
+   * requete() ne la rattrape pas, elle fait partie de son propre contrat "lève".
+   *
+   * @param array $_appareil
+   * @param float $_budget
+   * @throws smartclimException
+   */
+  private static function rejouerAuthentification(array $_appareil, $_budget) {
+    $macNorm = isset($_appareil['mac']) ? $_appareil['mac'] : '';
+    self::purgerSession($macNorm);
+    self::authentifier($_appareil, max(1, $_budget));
+    self::$compteurPaquet = 0;
+    usleep((int) (self::DELAI_APRES_AUTH * 1000000));
+  }
+
+  /**
+   * Relit et VALIDE la session LAN en cache d'un appareil, SANS PRENDRE DE VERROU
+   * (extraction du bloc de relecture/validation historiquement dans ouvrirSession(), §
+   * 5.2 de la spec technique UC02) : déchiffrement, forme du tableau, 'cle' en 32
+   * caractères hexadécimaux, empreinte. ouvrirSession() l'appelle SOUS SON PROPRE
+   * VERROU ; requete() l'appelle SOUS LE VERROU pris par lireEtat() (jamais son propre
+   * verrou, flock() n'étant pas réentrant, § 5.2).
+   *
+   * 🚫 PRIVATE, et sa valeur de retour NE SORT JAMAIS de cette classe — elle porte la clé
+   * de session (au plus sa longueur peut être journalisée ailleurs, jamais son contenu).
+   *
+   * @param array $_appareil
+   * @return array|null
+   */
+  private static function sessionEnCache(array $_appareil) {
+    $macNorm = isset($_appareil['mac']) ? $_appareil['mac'] : '';
+    if ($macNorm === '') {
+      return null;
+    }
+    $brut = cache::byKey(self::CLE_CACHE_SESSION . $macNorm)->getValue(null);
+    if ($brut === null) {
+      return null;
+    }
+    $dechiffre = utils::decrypt($brut);
+    if (!is_string($dechiffre) || $dechiffre === '') {
+      return null;
+    }
+    $session = json_decode($dechiffre, true);
+    if (
+      !is_array($session)
+      || !isset($session['id'], $session['cle'], $session['empreinte'])
+      || !is_string($session['cle']) || preg_match('/\A[0-9a-f]{32}\z/', $session['cle']) !== 1
+      || $session['empreinte'] !== self::empreinteSession($_appareil)
+    ) {
+      return null;
+    }
+    return $session;
+  }
 
   /**
    * Authentifie l'appareil (paquet 0x65, § 1.5) et écrit la session en cache, chiffrée
    * (D-POSTMVP0101-07). Lève une smartclimException typée sur tout échec — rattrapée par
-   * ouvrirSession(), jamais propagée telle quelle plus haut.
+   * ouvrirSession(), jamais propagée telle quelle plus haut (mais PROPAGÉE telle quelle
+   * par rejouerAuthentification()/requete(), UC02, § 5.2 de sa spec technique).
    *
    * @param array $_appareil
    * @param float $_budget
+   * @return array Le tableau de session VENANT D'ÊTRE écrit en cache (UC02 : requete(),
+   *   via rejouerAuthentification(), en a besoin APRÈS un rejeu ; ouvrirSession() ignore
+   *   ce retour, comportement inchangé).
    * @throws smartclimException
    */
   private static function authentifier(array $_appareil, $_budget) {
@@ -357,6 +679,10 @@ class smartclimBroadlinkLan {
     }
 
     $chargeChiffree = substr($reponse, 0x38);
+    if (strlen($chargeChiffree) === 0 || strlen($chargeChiffree) % 16 !== 0) {
+      throw new smartclimException('Broadlink LAN : charge chiffrée de la réponse d\'authentification de longueur non multiple de 16', smartclimException::TYPE_PROTOCOLE);
+    }
+
     $chargeClaire = self::dechiffrer($chargeChiffree, hex2bin(self::INIT_KEY));
     if ($chargeClaire === false || strlen($chargeClaire) < 0x14) {
       throw new smartclimException('Broadlink LAN : réponse d\'authentification illisible ou tronquée', smartclimException::TYPE_PROTOCOLE);
@@ -389,6 +715,8 @@ class smartclimBroadlinkLan {
       'empreinte' => self::empreinteSession($_appareil),
     );
     cache::set(self::CLE_CACHE_SESSION . $macNorm, utils::encrypt(json_encode($donneesSession)), self::DUREE_SESSION);
+
+    return $donneesSession;
   }
 
   /**

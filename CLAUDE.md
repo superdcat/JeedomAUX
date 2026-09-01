@@ -175,11 +175,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   **découverte des appareils** (UC03) : `listerAppareils()` (`GET /app/user_device?getStatus=1`, budget
   de temps global `BUDGET_SCAN`, re-login réactif borné à **un** rejeu) qui renvoie des lignes
   **normalisées à clés génériques françaises** — aucun nom de champ AUX (`deviceId`, `alias`, `modelId`,
-  `online`) n'en sort. Enfin, la **lecture d'état** (UC05) : `etatAppareil(array $_appareil)`, appuyée sur
-  la table privée `champsEtatAuxHome()` (concept → trame `control`/`running` + index d'octet) et
-  l'accesseur `octetTrame()`. C'est **ici**, et nulle part ailleurs, que vivent les offsets d'octets de la
-  trame HVAC — `offsetsAuxHome()` (UC04) en **dérive** désormais ses longueurs minimales : une seule
-  source d'offsets.
+  `online`) n'en sort. Enfin, la **lecture d'état** (UC05) : `etatAppareil(array $_appareil)`.
+  ⚠️ **Les offsets d'octets de la trame HVAC n'y vivent PLUS** depuis l'UC02 du domaine post-MVP 01 : ils
+  ont migré dans `smartclimFrame` (second transport = second appelant), et `etatAppareil()` /
+  `capacitesAppareil()` n'en sont plus que des **délégations** — signatures et clés de retour
+  **inchangées**. Ne pas y réintroduire d'offset. Ce qui reste ici est ce qui relève du **cloud** :
+  `nettoyerTrame()` (assainissement d'un champ backend) et la normalisation des appareils.
   Depuis le 2026-08-26, elle porte aussi la **restriction des capacités PAR APPAREIL** — ce que le
   profil UC04 ne savait pas faire, d'où un « Chauffage » proposé sur une unité froid-seul :
   `nettoyerCapacitesBrutes()` récolte le champ d'origine (JSON **imbriqué dans une chaîne**, entrées en
@@ -262,22 +263,48 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   bruts : `json_encode()` renvoie `false` sur toute chaîne non-UTF-8, ce qui rendait la session
   silencieusement illisible et forçait une ré-authentification à chaque scan. Tout appelant futur
   (la `requete()` de l'UC02) doit repasser par `hex2bin()`.
-  ⚠️ **`requete()` est volontairement ABSENTE** de l'UC01 (aucun appelant = code mort) ; son contrat
-  est **déjà figé** au § 7 de
-  `.memory/specs/post-mvp/01-transport-broadlink-lan/01-decouverte-lan-et-session-tech.md` — le lire
-  avant d'en écrire une.
+  Depuis l'UC02 du même domaine, elle porte aussi la **lecture d'état** : `requete()` (contrat figé au
+  § 7 de la spec technique d'UC01, implémenté là), `lireEtat()`, `etatAppareil()`, `capacitesAppareil()`
+  et `sessionEnCache()`.
+  ⚠️ **`lireEtat()` ne lève JAMAIS non plus** : comme `ouvrirSession()`, tout échec devient un statut.
+  ⚠️ **`etatAppareil()` du LAN ne pose JAMAIS `online => false`** : un LAN muet ne prouve pas qu'un
+  appareil est hors ligne (VLAN, pare-feu, diffusion filtrée) — seul le cloud sait le dire.
+  ⚠️ **Le profil LAN publie `modes` et `vitesses` VIDES**, et ce n'est pas une paresse : le LAN n'a aucun
+  équivalent de `feature.coolType`, donc il ne peut **rien exclure**. S'il publiait son catalogue complet,
+  l'**union** de `appliquerCapacites()` réintroduirait « Chauffage » sur une unité froid-seul — la
+  régression corrigée le 2026-08-26 — dès qu'un scan LAN tourne sans qu'un scan cloud repasse derrière.
+  ⚠️ **`requete()` appelle `authentifier()` et JAMAIS `ouvrirSession()`** : le verrou est déjà tenu par
+  `lireEtat()`, et `flock` **n'est pas réentrant** entre deux descripteurs du même processus. Son rejeu
+  est borné à **un** par appel, par booléen local — jamais de récursion : le protocole n'admettant qu'une
+  session par appareil, une rafale d'authentifications décrocherait en boucle l'application du
+  constructeur.
+  ⚠️ **Le compteur de paquet est PAR PROCESSUS, jamais persisté** : `cache::set()` réarmerait la TTL de
+  30 min de la session à chaque lecture, faussant sa durée de vie réelle. `python-broadlink` initialise
+  ce compteur aléatoirement — l'appareil n'en contrôle aucune monotonie.
+  ⚠️ **Écho de MAC et sommes de charge sont journalisés, NON bloquants** sur une réponse `0x6A` : la
+  source de référence ne les vérifie pas, et un contrôle **invérifiable** sur un chemin non recettable
+  est un déni de service auto-infligé. Ce qui est bloquant : longueur de charge non multiple de 16, et
+  champ `longueur` incohérent avec la charge reçue.
   ⚠️ Ce transport est livré **non recetté** : le climatiseur de validation de l'utilisateur ignore le
   protocole Broadlink. Le code est vérifié contre `mjg59/python-broadlink` (MIT), jamais contre du
   matériel.
+- **`core/class/smartclimFrame.class.php`** — **existe** depuis l'UC02 du domaine post-MVP 01. **LE**
+  décodeur de la trame HVAC, **partagé par les deux transports** — c'est ici, et nulle part ailleurs, que
+  vivent désormais les offsets d'octets. Même statut que `smartclimCapabilities` : table de données pure,
+  aucune E/S, aucun `cache::`, aucun `config::`, aucun `eqLogic`, aucun réseau. Elle ne connaît ni AUX
+  Home ni Broadlink — elle reçoit deux trames en hexadécimal et un identifiant de transport. Porte
+  `champs()` (concept → trame + index d'octet), `longueursMinimales()` (dérivée de `champs()` : une seule
+  source d'offsets), `octet()`, `conceptsLisibles()` et `decoderEtat()`.
+  ⚠️ **C'est ce partage, et lui seul, qui rend l'AC3 d'UC02 vrai PAR CONSTRUCTION** (« l'état affiché par
+  le LAN et par le cloud est identique ») : les deux `etatAppareil()` appellent la **même**
+  `decoderEtat()`. Y glisser une amélioration qui ne vaut que pour un transport casse cette propriété —
+  et modifie au passage le chemin cloud, le seul qui soit réellement recetté.
+  ⚠️ **`decoderEtat()` ne pose NI `online` NI `source`** : la joignabilité et l'identité du transport sont
+  l'affaire de l'appelant, pas de la trame. Et `conceptsLisibles()` n'inclut jamais `CONCEPT_ONLINE`.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
   chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
   introuvable au runtime, cf. Conventions → Autoload) : `smartclimTransport` (sélection du transport
   actif) et `smartclimAuxCloudApi` (cloud legacy).
-  ⚠️ **`smartclimFrame` est volontairement AJOURNÉE, pas oubliée** (arbitrage UC05) : le décodage de la
-  trame HVAC vit dans `smartclimAuxHomeApi` tant qu'il n'a **qu'un seul appelant** — l'en extraire
-  imposerait de sortir les offsets de la brique de transport. Elle se crée le jour où un **second**
-  transport décode la même trame (domaine post-MVP 01, Broadlink LAN), et ce jour-là son `require_once`
-  dans `core/php/smartclim.inc.php` est **obligatoire**. Ne pas la (re)proposer avant.
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
   `isConnect('admin')`, `ajax::init()`, puis aiguille sur `init('action')` en branches
   `if (init('action') == '...')`. Pour un endpoint **non-admin** (widget de dashboard, page-panneau), créer
@@ -388,11 +415,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
 - ⚠️ **Piège majeur** : `mode` et `fanSpeed` ont **trois numérotations différentes** selon le transport.
   Elles vivent dans une **table de données unique** (`smartclimCapabilities`), jamais dupliquées ni codées
   en `switch`.
-- **Découverte structurante** : le champ d'état renvoyé par le cloud AUX Home est **la même trame HVAC**
-  que la réponse du LAN Broadlink → à terme **un seul décodeur** sert aux deux transports. Au MVP il vit
-  dans `smartclimAuxHomeApi` (`champsEtatAuxHome()` / `octetTrame()` / `etatAppareil()`), faute d'un
-  second appelant ; son extraction en `smartclimFrame` est la première tâche du transport LAN, pas une
-  tâche du MVP.
+- **Découverte structurante, désormais actée dans le code** : le champ d'état renvoyé par le cloud AUX
+  Home est **la même trame HVAC** que la réponse du LAN Broadlink → **un seul décodeur sert aux deux
+  transports**. Depuis l'UC02 du domaine post-MVP 01, il vit dans `smartclimFrame` (extraite de
+  `smartclimAuxHomeApi`, cf. Architecture).
+  ⚠️ **Les deux références publiques comptent leurs octets dans DEUX espaces différents**, et confondre
+  les deux fait décaler tout le décodage : la réponse LAN déchiffrée commence par un **préfixe de
+  longueur de 2 octets**, la trame cloud `status.control` non. `offset charge HVAC = offset réponse
+  LAN − 2`. C'est ce qui explique la fausse « divergence 12 contre 14 » sur le bit de demi-degré : les
+  deux sources désignaient le même bit. `smartclimBroadlinkLan::requete()` retire ce préfixe, si bien que
+  ce qui entre dans `smartclimFrame` est **toujours** de la charge HVAC nue.
 
 ## Configuration & secrets
 

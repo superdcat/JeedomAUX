@@ -17,3 +17,9 @@
 {"ts": "2026-08-28T02:46:19", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "correctifs", "etat": "debut", "detail": "passe de finition: ip2long 32 bits + portee catch Throwable", "commit": ""}
 {"ts": "2026-08-28T02:49:17", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "correctifs", "etat": "ok", "detail": "finition: ip2long remplace par octets (2 copies identiques), catch Throwable elargi", "commit": ""}
 {"ts": "2026-08-28T02:49:17", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "traduction", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-28T02:52:50", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "traduction", "etat": "ok", "detail": "257/257 cles en/de/es, 21 ajoutees par langue", "commit": ""}
+{"ts": "2026-08-28T02:52:50", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "memoire", "etat": "ok", "detail": "analyse LAN §9 et §11 + INDEX + memoire agent", "commit": ""}
+{"ts": "2026-08-28T02:52:50", "uc": "post-mvp/01-transport-broadlink-lan/01", "phase": "commit", "etat": "ok", "detail": "22 fichiers, pluginVersion 0.15->0.16 par le hook", "commit": "1fec4b7"}
+{"ts": "2026-08-28T02:53:44", "uc": "post-mvp/01-transport-broadlink-lan/02", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}
+{"ts": "2026-08-28T07:11:59", "uc": "post-mvp/01-transport-broadlink-lan/02", "phase": "plan", "etat": "reprise", "detail": "aucune spec tech, aucun code, HEAD=1fec4b7 : reprise au plan", "commit": ""}
+{"ts": "2026-08-28T07:11:59", "uc": "post-mvp/01-transport-broadlink-lan/02", "phase": "plan", "etat": "debut", "detail": "", "commit": ""}

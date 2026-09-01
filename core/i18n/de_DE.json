@@ -95,7 +95,10 @@
         "LAN indisponible": "LAN nicht verfügbar",
         "LAN indisponible — appareil déjà sollicité": "LAN nicht verfügbar — Gerät bereits ausgelastet",
         "LAN indisponible — appareil verrouillé": "LAN nicht verfügbar — Gerät gesperrt",
-        "LAN indisponible — authentification refusée": "LAN nicht verfügbar — Authentifizierung abgelehnt"
+        "LAN indisponible — authentification refusée": "LAN nicht verfügbar — Authentifizierung abgelehnt",
+        "État lu sur le réseau local": "Status im lokalen Netzwerk gelesen",
+        "LAN disponible — état non décodable par cet appareil": "LAN verfügbar — Status von diesem Gerät nicht entschlüsselbar",
+        "%d état(s) lu(s) sur le réseau local": "%d Status im lokalen Netzwerk gelesen"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albanien",

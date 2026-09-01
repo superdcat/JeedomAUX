@@ -95,7 +95,10 @@
         "LAN indisponible": "LAN unavailable",
         "LAN indisponible — appareil déjà sollicité": "LAN unavailable — device already busy",
         "LAN indisponible — appareil verrouillé": "LAN unavailable — device locked",
-        "LAN indisponible — authentification refusée": "LAN unavailable — authentication refused"
+        "LAN indisponible — authentification refusée": "LAN unavailable — authentication refused",
+        "État lu sur le réseau local": "State read on the local network",
+        "LAN disponible — état non décodable par cet appareil": "LAN available — state not decodable for this device",
+        "%d état(s) lu(s) sur le réseau local": "%d state(s) read on the local network"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",

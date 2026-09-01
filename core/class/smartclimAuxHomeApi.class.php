@@ -25,6 +25,9 @@ require_once __DIR__ . '/smartclimException.class.php';
 // Même motif : capacitesAppareil() ci-dessous appelle smartclimCapabilities::valeursLisibles().
 // require_once idempotent, sans coût quand smartclim.inc.php l'a déjà chargée.
 require_once __DIR__ . '/smartclimCapabilities.class.php';
+// Décodeur MUTUALISÉ de la trame HVAC (UC02 du domaine post-mvp/01-transport-broadlink-lan) :
+// etatAppareil()/capacitesAppareil() ci-dessous en dépendent désormais. require_once idempotent.
+require_once __DIR__ . '/smartclimFrame.class.php';
 
 /**
  * Brique de transport "AUX Home" (cloud eu-smthome-api.aux-global.com).
@@ -99,13 +102,6 @@ class smartclimAuxHomeApi {
   // télémétrie 'cree_le' (login()/session()) et les lignes de log de rejeu permettront
   // de la calibrer factuellement en recette.
   const DUREE_CACHE_SESSION = 1800;
-
-  // Plausibilité de la température ambiante décodée (octet[15] de status.running - 32
-  // est mathématiquement borné à [-32, 223], cf. spec technique UC05 § Contrats
-  // externes). Une trame à zéros (appareil éteint ?) donne -32 : hors de cette borne,
-  // le concept est OMIS (jamais une valeur par défaut, jamais null poussé).
-  const AMBIANTE_MIN_PLAUSIBLE = -20;
-  const AMBIANTE_MAX_PLAUSIBLE = 60;
 
   // --- Constantes de protocole reverse-engineered depuis l'application mobile AUX
   // Home, publiées par GijsZwegers/com.zwegersit.auxairco (fichiers
@@ -863,79 +859,19 @@ class smartclimAuxHomeApi {
   }
 
   /**
-   * Emplacement de CHAQUE concept dans les trames HVAC (cf. spec technique UC05 §
-   * Contrats externes) : 'trame' ('control'|'running') + 'octets' (indices 0-based lus
-   * pour ce concept). SOURCE UNIQUE de l'emplacement — offsetsAuxHome() ci-dessous en
-   * DÉRIVE ses longueurs minimales, et etatAppareil() ci-dessous lit directement cette
-   * table pour savoir dans quelle trame piocher.
-   *
-   * @return array<string, array{trame:string, octets:array<int,int>}>
-   */
-  private static function champsEtatAuxHome() {
-    return array(
-      smartclimCapabilities::CONCEPT_TARGET_TEMP => array('trame' => 'control', 'octets' => array(10, 12)),
-      smartclimCapabilities::CONCEPT_FAN_SPEED => array('trame' => 'control', 'octets' => array(13)),
-      smartclimCapabilities::CONCEPT_MODE => array('trame' => 'control', 'octets' => array(15)),
-      smartclimCapabilities::CONCEPT_POWER => array('trame' => 'control', 'octets' => array(18)),
-      smartclimCapabilities::CONCEPT_AMBIENT_TEMP => array('trame' => 'running', 'octets' => array(15)),
-    );
-  }
-
-  /**
-   * Longueur MINIMALE (en octets) de status.control / status.running requise par
-   * concept, avant d'en tirer une correspondance générique (cf. spec technique UC04 §
-   * Stratégie de détection) : offsets 0-based, donc une trame de longueur N couvre
-   * l'octet d'indice N-1. INCHANGÉE dans sa signature ET sa forme de retour (consommée
-   * telle quelle par capacitesAppareil()) : désormais DÉRIVÉE de champsEtatAuxHome(),
-   * longueur minimale = max(octets) + 1. Contrôlé arithmétiquement (spec technique UC05,
-   * R9) : 13/14/16/19 (control) et 16 (running), identiques aux anciens littéraux d'UC04.
-   *
-   * @return array{control:array<string,int>, running:array<string,int>}
-   */
-  private static function offsetsAuxHome() {
-    $offsets = array('control' => array(), 'running' => array());
-    foreach (self::champsEtatAuxHome() as $concept => $champ) {
-      $offsets[$champ['trame']][$concept] = max($champ['octets']) + 1;
-    }
-    return $offsets;
-  }
-
-  /**
-   * Octet d'indice $_index (0-based) d'une trame hexadécimale déjà nettoyée
-   * (nettoyerTrame()), ou null si la trame est trop courte / non exploitable. Ne lève
-   * jamais.
-   *
-   * @param string $_trame
-   * @param int $_index
-   * @return int|null
-   */
-  private static function octetTrame($_trame, $_index) {
-    if (!is_string($_trame) || $_index < 0) {
-      return null;
-    }
-    $hex = substr($_trame, $_index * 2, 2);
-    if (strlen($hex) !== 2) {
-      return null;
-    }
-    return hexdec($hex);
-  }
-
-  /**
    * État GÉNÉRIQUE de CET appareil, via CE transport (cf. spec technique UC05 §
    * Signatures) : décode les trames déjà rapportées par listerAppareils() (aucun appel
-   * réseau nouveau). Ne lève JAMAIS (contrôles is_array/is_string), au même titre que
-   * capacitesAppareil(). Un concept dont la valeur n'est PAS déterminable (trame trop
-   * courte, code fil sans correspondance, température ambiante implausible) est ABSENT
-   * du tableau renvoyé — jamais une valeur par défaut, jamais null poussé (mécanisme
-   * d'AC10). Aucun nom de champ AUX, aucun code propriétaire ne sort d'ici : uniquement
-   * des constantes smartclimCapabilities::CONCEPT_x/MODE_x/VITESSE_x, des entiers et des
-   * flottants. Les trames ne sont NI journalisées NI persistées ; seuls les codes fil
-   * (entiers) et les longueurs peuvent apparaître en 'debug'.
+   * réseau nouveau). Ne lève JAMAIS, au même titre que capacitesAppareil(). Signature ET
+   * clés de retour STRICTEMENT INCHANGÉES depuis UC05 : 'online' + 'source' posées ICI
+   * (seul le transport sait dire si l'appareil est joignable), le reste DÉLÉGUÉ au
+   * décodeur MUTUALISÉ smartclimFrame::decoderEtat() (UC02 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.1 de sa spec technique) — extrait de cette
+   * méthode le 2026-09-01, condition « second appelant » de CLAUDE.md désormais remplie.
    *
    * ⚠️ status.control est documenté comme le "dernier état COMMANDÉ" (cf. spec
    * technique UC05, risque R1) : s'il ne reflète pas un changement fait à la
    * télécommande infrarouge, basculer un concept vers 'running' se fait en changeant
-   * uniquement sa ligne dans champsEtatAuxHome() ci-dessus — à confirmer en recette.
+   * uniquement sa ligne dans smartclimFrame::champs() — à confirmer en recette.
    *
    * @param array $_appareil Ligne normalisée de listerAppareils()/normaliserAppareil().
    * @return array{online:bool, power?:int, mode?:string, target_temp?:float, ambient_temp?:int, fan_speed?:string, source:string}
@@ -944,77 +880,13 @@ class smartclimAuxHomeApi {
     $enLigne = isset($_appareil['enLigne']) ? (bool) $_appareil['enLigne'] : false;
     $trameControle = isset($_appareil['trame_controle']) && is_string($_appareil['trame_controle']) ? $_appareil['trame_controle'] : '';
     $trameRunning = isset($_appareil['trame_running']) && is_string($_appareil['trame_running']) ? $_appareil['trame_running'] : '';
-    $offsets = self::offsetsAuxHome();
-    $octetsControle = strlen($trameControle) / 2;
-    $octetsRunning = strlen($trameRunning) / 2;
 
     $etat = array(
       'online' => $enLigne,
       'source' => smartclimCapabilities::TRANSPORT_AUX_HOME,
     );
 
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_POWER]) {
-      $octet18 = self::octetTrame($trameControle, 18);
-      if ($octet18 !== null) {
-        $etat[smartclimCapabilities::CONCEPT_POWER] = ($octet18 >> 5) & 1;
-      }
-    }
-
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_MODE]) {
-      $octet15 = self::octetTrame($trameControle, 15);
-      if ($octet15 !== null) {
-        $codeMode = $octet15 >> 5;
-        $mode = smartclimCapabilities::depuisTransport(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE, $codeMode);
-        if ($mode !== null) {
-          $etat[smartclimCapabilities::CONCEPT_MODE] = $mode;
-        } else {
-          log::add('smartclim', 'debug', 'AUX Home : code mode inconnu dans status.control (' . $codeMode . ')');
-        }
-      }
-    }
-
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_TARGET_TEMP]) {
-      $octet10 = self::octetTrame($trameControle, 10);
-      $octet12 = self::octetTrame($trameControle, 12);
-      if ($octet10 !== null && $octet12 !== null) {
-        // Cast explicite : sans lui, la consigne est un int aux degrés pleins et un
-        // float aux demi-degrés. Le type doit rester STABLE d'un cycle à l'autre, sinon
-        // l'aller-retour par le cache du core peut faire varier execCmd() et déclencher
-        // un faux changement, donc un 'last_update' qui repart sans raison (AC6, R4).
-        $temp = (float) (($octet10 >> 3) + 8);
-        if (($octet12 & 0x80) !== 0) {
-          $temp += 0.5;
-        }
-        $etat[smartclimCapabilities::CONCEPT_TARGET_TEMP] = $temp;
-      }
-    }
-
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_FAN_SPEED]) {
-      $octet13 = self::octetTrame($trameControle, 13);
-      if ($octet13 !== null) {
-        $codeVitesse = $octet13 >> 5;
-        $vitesse = smartclimCapabilities::depuisTransport(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_FAN_SPEED, $codeVitesse);
-        if ($vitesse !== null) {
-          $etat[smartclimCapabilities::CONCEPT_FAN_SPEED] = $vitesse;
-        } else {
-          log::add('smartclim', 'debug', 'AUX Home : code vitesse inconnu dans status.control (' . $codeVitesse . ')');
-        }
-      }
-    }
-
-    if ($octetsRunning >= $offsets['running'][smartclimCapabilities::CONCEPT_AMBIENT_TEMP]) {
-      $octet15Running = self::octetTrame($trameRunning, 15);
-      if ($octet15Running !== null) {
-        $ambiante = $octet15Running - 32;
-        if ($ambiante >= self::AMBIANTE_MIN_PLAUSIBLE && $ambiante <= self::AMBIANTE_MAX_PLAUSIBLE) {
-          $etat[smartclimCapabilities::CONCEPT_AMBIENT_TEMP] = $ambiante;
-        } else {
-          log::add('smartclim', 'debug', 'AUX Home : température ambiante implausible dans status.running (' . $ambiante . ')');
-        }
-      }
-    }
-
-    return $etat;
+    return $etat + smartclimFrame::decoderEtat(smartclimCapabilities::TRANSPORT_AUX_HOME, $trameControle, $trameRunning);
   }
 
   /**
@@ -1023,6 +895,10 @@ class smartclimAuxHomeApi {
    * $_appareil (contrôles is_array/is_string) : au pire renvoie concepts => array('online').
    * Aucun nom de champ AUX, aucun code propriétaire ne sort de cette méthode :
    * uniquement des codes génériques (constantes smartclimCapabilities::CONCEPT_x, MODE_x, VITESSE_x).
+   * Signature ET clés de retour STRICTEMENT INCHANGÉES depuis UC04 : la liste des
+   * concepts LISIBLES est désormais DÉLÉGUÉE à smartclimFrame::conceptsLisibles() (UC02
+   * du domaine post-mvp/01-transport-broadlink-lan) ; la logique PROPRE à ce transport
+   * (profil déclaré, exclusions, bornes) reste ICI.
    *
    * @param array $_appareil Ligne normalisée de listerAppareils()/normaliserAppareil().
    * @return array{concepts:array<int,string>, modes:array<int,string>, vitesses:array<int,string>, modes_exclus:array<int,string>, temperature:array{min:int,max:int,pas:float}, source:string}
@@ -1030,26 +906,8 @@ class smartclimAuxHomeApi {
   public static function capacitesAppareil(array $_appareil) {
     $trameControle = isset($_appareil['trame_controle']) && is_string($_appareil['trame_controle']) ? $_appareil['trame_controle'] : '';
     $trameRunning = isset($_appareil['trame_running']) && is_string($_appareil['trame_running']) ? $_appareil['trame_running'] : '';
-    $octetsControle = strlen($trameControle) / 2;
-    $octetsRunning = strlen($trameRunning) / 2;
-    $offsets = self::offsetsAuxHome();
 
-    $concepts = array(smartclimCapabilities::CONCEPT_ONLINE);
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_TARGET_TEMP]) {
-      $concepts[] = smartclimCapabilities::CONCEPT_TARGET_TEMP;
-    }
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_FAN_SPEED]) {
-      $concepts[] = smartclimCapabilities::CONCEPT_FAN_SPEED;
-    }
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_MODE]) {
-      $concepts[] = smartclimCapabilities::CONCEPT_MODE;
-    }
-    if ($octetsControle >= $offsets['control'][smartclimCapabilities::CONCEPT_POWER]) {
-      $concepts[] = smartclimCapabilities::CONCEPT_POWER;
-    }
-    if ($octetsRunning >= $offsets['running'][smartclimCapabilities::CONCEPT_AMBIENT_TEMP]) {
-      $concepts[] = smartclimCapabilities::CONCEPT_AMBIENT_TEMP;
-    }
+    $concepts = array_merge(array(smartclimCapabilities::CONCEPT_ONLINE), smartclimFrame::conceptsLisibles($trameControle, $trameRunning));
 
     $capacitesBrutes = isset($_appareil['capacites_brutes']) && is_array($_appareil['capacites_brutes']) ? $_appareil['capacites_brutes'] : array();
     $modesExclus = self::modesExclusAuxHome($capacitesBrutes);
@@ -1069,8 +927,8 @@ class smartclimAuxHomeApi {
       ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_FAN_SPEED)
       : array();
 
-    if ($octetsControle < $offsets['control'][smartclimCapabilities::CONCEPT_TARGET_TEMP] && $octetsRunning < $offsets['running'][smartclimCapabilities::CONCEPT_AMBIENT_TEMP]) {
-      log::add('smartclim', 'debug', 'AUX Home : trames HVAC inexploitables pour la détection de capacités (control=' . $octetsControle . ' octets, running=' . $octetsRunning . ' octets)');
+    if (!in_array(smartclimCapabilities::CONCEPT_TARGET_TEMP, $concepts, true) && !in_array(smartclimCapabilities::CONCEPT_AMBIENT_TEMP, $concepts, true)) {
+      log::add('smartclim', 'debug', 'AUX Home : trames HVAC inexploitables pour la détection de capacités (control=' . (strlen($trameControle) / 2) . ' octets, running=' . (strlen($trameRunning) / 2) . ' octets)');
     }
 
     return array(

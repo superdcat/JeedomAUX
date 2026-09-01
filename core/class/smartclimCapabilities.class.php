@@ -56,10 +56,11 @@ class smartclimCapabilities {
   /*     * *************************Attributs****************************** */
 
   const TRANSPORT_AUX_HOME = 'AUX_HOME';
-  // UC01 du domaine post-mvp/01-transport-broadlink-lan : identifiant du transport LAN.
-  // Aucune entrée dans tables() pour l'instant (§ 5.3 de la spec technique — les
-  // correspondances mode/vitesse du LAN relèvent d'UC02, une entrée vide serait de la
-  // donnée morte).
+  // Identifiant du transport LAN (UC01 du domaine post-mvp/01-transport-broadlink-lan).
+  // Depuis UC02 de ce domaine, tables() porte une entrée BROADLINK_LAN (§ 5.4 de sa spec
+  // technique) : mêmes octets de la même trame HVAC que AUX_HOME (démontré § 3.3), colonne
+  // 'fil' donc IDENTIQUE ; colonne 'intent' laissée à null (l'écriture est le sujet d'UC03
+  // de ce domaine — rien ne l'établit tant qu'aucun ordre n'a été émis).
   const TRANSPORT_BROADLINK_LAN = 'BROADLINK_LAN';
 
   const CONCEPT_ONLINE = 'online';
@@ -136,6 +137,35 @@ class smartclimCapabilities {
           self::VITESSE_MEDIUM_HIGH => array('intent' => 7, 'fil' => null, 'intent_confirme' => true, 'libelle' => __('Moyen-fort', __FILE__)),
           self::VITESSE_HIGH => array('intent' => 2, 'fil' => 1, 'intent_confirme' => true, 'libelle' => __('Fort', __FILE__)),
           self::VITESSE_TURBO => array('intent' => 5, 'fil' => 4, 'intent_confirme' => true, 'libelle' => __('Turbo', __FILE__)),
+        ),
+      ),
+      // UC02 du domaine post-mvp/01-transport-broadlink-lan (§ 5.4 de sa spec technique) :
+      // mêmes octets de la MÊME trame HVAC que AUX_HOME (démontré § 3.3 — décalage de 2
+      // octets entre espace "réponse LAN" et espace "charge HVAC nue", vérifié EXACT sur
+      // les 6 concepts déjà en production), donc colonne 'fil' IDENTIQUE. Colonne 'libelle'
+      // délibérément ABSENTE ici : libelle()/libelleCommande() parcourent TOUTES les
+      // tables et trouvent déjà le libellé français via l'entrée AUX_HOME ci-dessus (même
+      // concept/valeur générique = même libellé, quel que soit le transport) — la dupliquer
+      // ici créerait un second __() pour un texte identique, sans utilité. Colonne 'intent'
+      // laissée à null et 'intent_confirme' à false : l'écriture est le sujet d'UC03 de ce
+      // domaine, rien ne l'établit tant qu'aucun ordre n'a été émis.
+      self::TRANSPORT_BROADLINK_LAN => array(
+        self::CONCEPT_MODE => array(
+          self::MODE_AUTO => array('intent' => null, 'fil' => 0, 'intent_confirme' => false),
+          self::MODE_COOL => array('intent' => null, 'fil' => 1, 'intent_confirme' => false),
+          self::MODE_DRY => array('intent' => null, 'fil' => 2, 'intent_confirme' => false),
+          self::MODE_HEAT => array('intent' => null, 'fil' => 4, 'intent_confirme' => false),
+          self::MODE_FAN => array('intent' => null, 'fil' => 6, 'intent_confirme' => false),
+        ),
+        self::CONCEPT_FAN_SPEED => array(
+          self::VITESSE_AUTO => array('intent' => null, 'fil' => 5, 'intent_confirme' => false),
+          self::VITESSE_SILENT => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
+          self::VITESSE_LOW => array('intent' => null, 'fil' => 3, 'intent_confirme' => false),
+          self::VITESSE_MEDIUM_LOW => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
+          self::VITESSE_MEDIUM => array('intent' => null, 'fil' => 2, 'intent_confirme' => false),
+          self::VITESSE_MEDIUM_HIGH => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
+          self::VITESSE_HIGH => array('intent' => null, 'fil' => 1, 'intent_confirme' => false),
+          self::VITESSE_TURBO => array('intent' => null, 'fil' => 4, 'intent_confirme' => false),
         ),
       ),
     );

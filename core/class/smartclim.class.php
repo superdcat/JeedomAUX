@@ -135,6 +135,13 @@ class smartclim extends eqLogic {
   // motivé cette exigence).
   const BUDGET_LAN = 18;
 
+  // Budget de temps PAR APPAREIL de la lecture d'état LAN (UC02 de ce domaine, § 6 de sa
+  // spec technique) : session + CHARGE_ETAT + CHARGE_INFO + rejeu éventuel. Borné par le
+  // budget GLOBAL restant (min(BUDGET_LECTURE_LAN, restant), plancher 1 s) — un appareil
+  // lent ne peut donc pas consommer le budget des suivants, le pire cas total reste
+  // BUDGET_LAN.
+  const BUDGET_LECTURE_LAN = 8;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -395,12 +402,17 @@ class smartclim extends eqLogic {
 
   /**
    * Point d'entrée du bouton "Scanner les climatiseurs" DEPUIS UC01 du domaine
-   * post-mvp/01-transport-broadlink-lan (D-POSTMVP0101-10) : COMPOSE la découverte LAN
-   * (jamais levée) et le scan AUX Home existant (peut lever). Un utilisateur SANS compte
-   * cloud configuré voit quand même ses résultats LAN — l'exception cloud est CAPTURÉE et
-   * placée dans 'cloudErreur' (message DÉJÀ curaté), jamais propagée : sans cela, AC1 de
-   * cette UC serait cassé pour tout utilisateur purement LAN. ⚠️ scannerAuxHome() reste
-   * PUBLIQUE et INCHANGÉE (contrat) : ce changement est LOCAL à cette méthode.
+   * post-mvp/01-transport-broadlink-lan (D-POSTMVP0101-10) : COMPOSE la découverte/lecture
+   * LAN (jamais levée) et le scan AUX Home existant (peut lever). Un utilisateur SANS
+   * compte cloud configuré voit quand même ses résultats LAN — l'exception cloud est
+   * CAPTURÉE et placée dans 'cloudErreur' (message DÉJÀ curaté), jamais propagée : sans
+   * cela, AC1 de cette UC serait cassé pour tout utilisateur purement LAN. ⚠️
+   * scannerAuxHome() reste PUBLIQUE et INCHANGÉE (contrat) : ce changement est LOCAL à
+   * cette méthode.
+   *
+   * Depuis UC02 de ce domaine (§ 5.5 de sa spec technique) : 'profils'/'etatsConnexion'
+   * FUSIONNENT ceux du LAN et ceux du cloud (array_replace, le CLOUD gagne en cas de
+   * collision — reflet de l'ordre réel d'exécution, le cloud passant EN DERNIER).
    *
    * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, cloudErreur:string}
    */
@@ -424,7 +436,12 @@ class smartclim extends eqLogic {
       $cloudErreur = $e->getMessage();
     }
 
+    $lanProfils = isset($lan['profils']) && is_array($lan['profils']) ? $lan['profils'] : array();
+    $lanEtatsConnexion = isset($lan['etatsConnexion']) && is_array($lan['etatsConnexion']) ? $lan['etatsConnexion'] : array();
+
     return array_merge($resultatCloud, array(
+      'profils' => array_replace($lanProfils, $resultatCloud['profils']),
+      'etatsConnexion' => array_replace($lanEtatsConnexion, $resultatCloud['etatsConnexion']),
       'lan' => $lan,
       'cloudErreur' => $cloudErreur,
     ));
@@ -606,13 +623,19 @@ class smartclim extends eqLogic {
   }
 
   /**
-   * Phase LAN du scan (UC01 du domaine post-mvp/01-transport-broadlink-lan) : compose la
-   * DÉCOUVERTE par diffusion (phase 1) et la sonde des équipements déjà connus porteurs
-   * d'une adresse LAN, jamais rencontrés en phase 1 (phase 2, AC3). Budget GLOBAL
-   * BUDGET_LAN, arrêt DUR évalué AVANT chaque appareil dans les DEUX phases
-   * (D-POSTMVP0101-04). NE LÈVE JAMAIS (AC4) : toute anomalie devient un statut/compteur.
+   * Phase LAN du scan (UC01 du domaine post-mvp/01-transport-broadlink-lan, ENRICHIE en
+   * UC02 de LECTURE D'ÉTAT — § 5.5 de sa spec technique) : compose la DÉCOUVERTE par
+   * diffusion (phase 1) et la sonde des équipements déjà connus porteurs d'une adresse
+   * LAN, jamais rencontrés en phase 1 (phase 2, AC3). Budget GLOBAL BUDGET_LAN, arrêt DUR
+   * évalué AVANT chaque appareil dans les DEUX phases (D-POSTMVP0101-04). NE LÈVE JAMAIS
+   * (AC4) : toute anomalie devient un statut/compteur.
    *
-   * @return array{resume:string, compteurs:array<string,int>, appareils:array}
+   * ⚠️ Le déclencheur reste EXCLUSIVEMENT le scan MANUEL (§ 8.1 de la spec technique
+   * UC02) : `cron()` et `rafraichirMaintenant()` restent cloud pur, inchangés — brancher
+   * le LAN sur le cycle automatique arbitrerait LAN vs cloud, hors périmètre de ce
+   * domaine (post-mvp/02).
+   *
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, profils:array, etatsConnexion:array}
    */
   private static function scannerReseauLocal() {
     $debut = microtime(true);
@@ -626,10 +649,22 @@ class smartclim extends eqLogic {
       'verrouillees' => 0,
       'mac_divergentes' => 0,
       'non_sondes' => 0,
+      // UC02 : succès/échec du DÉCODAGE, distinct du succès/échec de la SESSION
+      // ci-dessus (un appareil Broadlink non-climatiseur authentifie très bien, § 3.4).
+      'etats_lus' => 0,
+      'etats_illisibles' => 0,
     );
     $appareils = array();
     $rencontres = array(); // MAC (imprimable) déjà traitées, phases 1 et 2 confondues.
     $diffusionIndisponible = false;
+    // Équipements TOUCHÉS par ce scan LAN (lecture appliquée), pour rafraîchir l'affichage
+    // sans recharger la page — même motif que scannerAuxHome() (UC04/UC08).
+    $eqLogicsTouches = array();
+
+    // Une SEULE requête SQL pour tout le scan LAN (D-POSTMVP0101-04, review UC02) :
+    // réutilisée en phase 1 (rapprochement par MAC, § 8.2 de la spec technique UC02) ET
+    // en phase 2 (qui refaisait un eqLogic::byType() dédié avant UC02).
+    $index = self::indexerEquipements();
 
     try {
       $decouverts = smartclimBroadlinkLan::decouvrir();
@@ -654,26 +689,35 @@ class smartclim extends eqLogic {
         $mac = $appareil['mac'];
         $rencontres[$mac] = true;
         $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
-        $statut = smartclimBroadlinkLan::ouvrirSession($appareil, $budgetRestant);
-        self::compterStatutLan($compteurs, $statut);
+        $lecture = smartclimBroadlinkLan::lireEtat($appareil, max(1, min(self::BUDGET_LECTURE_LAN, $budgetRestant)));
+        self::compterStatutLan($compteurs, $lecture['session']);
+        self::compterStatutLecture($compteurs, $lecture['statut']);
         self::memoriserSondeLan($mac, array(
           'ip' => $appareil['ip'],
           'port' => $appareil['port'],
           'type_appareil' => $appareil['type_appareil'],
           'nom' => $appareil['nom'],
           'verrouille' => $appareil['verrouille'],
-          'statut' => $statut,
+          'statut' => $lecture['statut'],
           'vu_le' => $appareil['vu_le'],
-          'echec_le' => self::statutEnEchec($statut) ? time() : 0,
+          'echec_le' => self::statutEnEchec($lecture['statut']) ? time() : 0,
         ));
-        $appareils[] = self::ligneResultatLan($appareil['nom'], $mac, $appareil['ip'], $appareil['type_appareil'], $statut, self::libelleStatutLan($statut));
+        $appareils[] = self::ligneResultatLan($appareil['nom'], $mac, $appareil['ip'], $appareil['type_appareil'], $lecture['statut'], self::libelleStatutLan($lecture['statut']));
+
+        // Rapprochement par MAC vers un équipement DÉJÀ EXISTANT UNIQUEMENT (§ 8.2 de la
+        // spec technique UC02) : aucune création par la voie LAN, la fusion des doublons
+        // LAN/cloud reste UC04 de ce domaine.
+        $eqLogicExistant = self::chercherEquipementExistant($mac, '', $index);
+        if (is_object($eqLogicExistant)) {
+          self::appliquerLectureLan($eqLogicExistant, $lecture);
+          $eqLogicsTouches[] = $eqLogicExistant;
+        }
       } catch (Throwable $t) {
         log::add('smartclim', 'warning', 'Broadlink LAN : traitement d\'un appareil découvert en échec : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
       }
     }
 
-    $eqLogics = eqLogic::byType('smartclim');
-    foreach ($eqLogics as $eqLogic) {
+    foreach ($index['tous'] as $eqLogic) {
       if (!($eqLogic instanceof smartclim)) {
         continue;
       }
@@ -725,18 +769,23 @@ class smartclim extends eqLogic {
 
         $rencontres[$macTrouvee] = true;
         $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
-        $statut = smartclimBroadlinkLan::ouvrirSession($trouve, $budgetRestant);
-        self::compterStatutLan($compteurs, $statut);
+        $lecture = smartclimBroadlinkLan::lireEtat($trouve, max(1, min(self::BUDGET_LECTURE_LAN, $budgetRestant)));
+        self::compterStatutLan($compteurs, $lecture['session']);
+        self::compterStatutLecture($compteurs, $lecture['statut']);
         self::memoriserSondeLan($macTrouvee, array(
           'ip' => $trouve['ip'],
           'port' => $trouve['port'],
           'type_appareil' => $trouve['type_appareil'],
           'nom' => $trouve['nom'],
           'verrouille' => $trouve['verrouille'],
-          'statut' => $statut,
+          'statut' => $lecture['statut'],
           'vu_le' => $trouve['vu_le'],
-          'echec_le' => self::statutEnEchec($statut) ? time() : 0,
+          'echec_le' => self::statutEnEchec($lecture['statut']) ? time() : 0,
         ));
+        // Phase 2 : l'équipement est DÉJÀ en main (§ 8.2 de la spec technique UC02),
+        // aucun rapprochement à refaire.
+        self::appliquerLectureLan($eqLogic, $lecture);
+        $eqLogicsTouches[] = $eqLogic;
       } catch (Throwable $t) {
         log::add('smartclim', 'warning', 'Broadlink LAN : sonde d\'adresse manuelle en échec (équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
       }
@@ -746,18 +795,69 @@ class smartclim extends eqLogic {
       'resume' => self::resumeScanLan($compteurs, $diffusionIndisponible),
       'compteurs' => $compteurs,
       'appareils' => $appareils,
+      // UC02 : profil de capacités / état de connexion (affichables) des équipements
+      // touchés par CE scan LAN — même motif que scannerAuxHome() (UC04/UC08).
+      'profils' => self::profilsAffichables($eqLogicsTouches),
+      'etatsConnexion' => self::etatsConnexionAffichables($eqLogicsTouches),
     );
   }
 
   /**
+   * Applique une lecture LAN (smartclimBroadlinkLan::lireEtat()) à UN équipement DÉJÀ
+   * rapproché (UC02, § 5.5 de la spec technique) : capacités PUIS état, dans cet ordre
+   * (même ordre que scannerAuxHome()) — try/catch INTERNE, ne lève JAMAIS (un équipement
+   * en échec ne doit pas interrompre la boucle de scannerReseauLocal()).
+   *
+   * @param smartclim $_eqLogic
+   * @param array $_lecture Renvoyé par smartclimBroadlinkLan::lireEtat().
+   */
+  private static function appliquerLectureLan(smartclim $_eqLogic, array $_lecture) {
+    try {
+      if ($_eqLogic->appliquerCapacites(smartclimBroadlinkLan::capacitesAppareil($_lecture))) {
+        $_eqLogic->save();
+      }
+      // SANS second argument (§ 5.5 de la spec technique) : $_optimiste reste false, donc
+      // filtrerEtatSelonOrdres() s'applique — la période de grâce de 60 s protège le LAN
+      // exactement comme elle protège le cron cloud, gratuitement, sans une ligne de plus.
+      $_eqLogic->appliquerEtat(smartclimBroadlinkLan::etatAppareil($_lecture));
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Broadlink LAN : application de l\'état impossible (équipement "' . self::neutraliserPourLog($_eqLogic->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+    }
+  }
+
+  /**
    * true si un statut LAN correspond à un échec (utilisé pour dater 'echec_le' de la
-   * mémoire de sonde) — succès = STATUT_ETABLIE ou STATUT_REUTILISEE uniquement.
+   * mémoire de sonde) — succès = STATUT_ETABLIE / STATUT_REUTILISEE (session), ou
+   * STATUT_ETAT_LU / STATUT_ETAT_ILLISIBLE (UC02 : une session ÉTABLIE dont la trame
+   * n'est pas décodable — ex. appareil Broadlink non-climatiseur, § 3.4 de la spec
+   * technique UC02 — n'est PAS un échec de communication).
    *
    * @param string $_statut
    * @return bool
    */
   private static function statutEnEchec($_statut) {
-    return !in_array($_statut, array(smartclimBroadlinkLan::STATUT_ETABLIE, smartclimBroadlinkLan::STATUT_REUTILISEE), true);
+    return !in_array($_statut, array(
+      smartclimBroadlinkLan::STATUT_ETABLIE,
+      smartclimBroadlinkLan::STATUT_REUTILISEE,
+      smartclimBroadlinkLan::STATUT_ETAT_LU,
+      smartclimBroadlinkLan::STATUT_ETAT_ILLISIBLE,
+    ), true);
+  }
+
+  /**
+   * Incrémente etats_lus/etats_illisibles selon le statut de LECTURE (UC02, distinct du
+   * statut de SESSION compté par compterStatutLan() ci-dessous) — n'incrémente rien pour
+   * les autres statuts (lecture non tentée, session en échec : déjà comptés ailleurs).
+   *
+   * @param array $_compteurs Par référence.
+   * @param string $_statut
+   */
+  private static function compterStatutLecture(array &$_compteurs, $_statut) {
+    if ($_statut === smartclimBroadlinkLan::STATUT_ETAT_LU) {
+      $_compteurs['etats_lus']++;
+    } elseif ($_statut === smartclimBroadlinkLan::STATUT_ETAT_ILLISIBLE) {
+      $_compteurs['etats_illisibles']++;
+    }
   }
 
   /**
@@ -828,6 +928,12 @@ class smartclim extends eqLogic {
     if ($_statut === smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE) {
       return __('Adresse locale incohérente : l\'appareil joint n\'est pas celui attendu', __FILE__);
     }
+    if ($_statut === smartclimBroadlinkLan::STATUT_ETAT_LU) {
+      return __('État lu sur le réseau local', __FILE__);
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_ETAT_ILLISIBLE) {
+      return __('LAN disponible — état non décodable par cet appareil', __FILE__);
+    }
     return __('Jamais détecté sur le réseau local', __FILE__);
   }
 
@@ -846,6 +952,9 @@ class smartclim extends eqLogic {
       $fragments[] = __('Aucun climatiseur détecté sur le réseau local', __FILE__);
     } else {
       $fragments[] = sprintf(__('%d appareil(s) Broadlink détecté(s) sur le réseau local', __FILE__), $_compteurs['trouves']);
+    }
+    if ($_compteurs['etats_lus'] > 0) {
+      $fragments[] = sprintf(__('%d état(s) lu(s) sur le réseau local', __FILE__), $_compteurs['etats_lus']);
     }
     if ($_compteurs['non_sondes'] > 0) {
       $fragments[] = sprintf(__('%d appareil(s) non sondé(s) faute de budget', __FILE__), $_compteurs['non_sondes']);
@@ -1014,7 +1123,10 @@ class smartclim extends eqLogic {
       }
       $macInversee = self::macInversee($_macNorm);
       if ($macInversee !== '' && isset($_index['parLogicalId']['mac:' . $macInversee])) {
-        log::add('smartclim', 'warning', 'AUX Home : appareil rapproché via la MAC inversée (' . $_macNorm . ' / ' . $macInversee . ')');
+        // Littéral NEUTRE de transport (UC02 du domaine post-mvp/01-transport-broadlink-lan,
+        // § 5.5 de sa spec technique) : cette méthode sert désormais aussi au rapprochement
+        // LAN (scannerReseauLocal()), pas seulement à AUX Home.
+        log::add('smartclim', 'warning', 'Appareil rapproché via la MAC inversée (' . $_macNorm . ' / ' . $macInversee . ')');
         return $_index['parLogicalId']['mac:' . $macInversee];
       }
     }
@@ -3163,10 +3275,15 @@ class smartclim extends eqLogic {
       }
     }
 
-    // Littéral figé (le transport AUX Home est le seul actif au MVP) : "change" au
-    // premier cycle uniquement, hors de l'agrégation ci-dessus (spec technique § AC6 en
-    // détail).
-    $this->checkAndUpdateCmd(self::CMD_TRANSPORT, smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_AUX_HOME));
+    // Depuis UC02 du domaine post-mvp/01-transport-broadlink-lan (§ 5.5 de sa spec
+    // technique) : le transport AFFICHÉ suit 'source' de l'état APPLIQUÉ quand il est
+    // fourni. Le repli TRANSPORT_AUX_HOME préserve EXACTEMENT le comportement des deux
+    // appelants qui ne fournissent pas 'source' (basculerHorsLigne(), état optimiste
+    // d'UC06) — "change" au premier cycle uniquement, hors de l'agrégation ci-dessus
+    // (spec technique § AC6 en détail). 'source' n'est PAS un concept (la boucle de
+    // conceptsConnus() ci-dessus l'ignore déjà) et filtrerEtatSelonOrdres() ne lit que les
+    // clés présentes dans memoireOrdres(), jamais 'source' : rien à filtrer ici.
+    $this->checkAndUpdateCmd(self::CMD_TRANSPORT, smartclimCapabilities::libelleTransport(isset($_etat['source']) ? $_etat['source'] : smartclimCapabilities::TRANSPORT_AUX_HOME));
 
     if ($change) {
       $this->checkAndUpdateCmd(self::CMD_DERNIERE_MAJ, date('d/m/Y H:i:s'));

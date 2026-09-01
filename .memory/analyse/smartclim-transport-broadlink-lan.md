@@ -99,11 +99,20 @@ Deux sommes de contrôle **différentes**, à ne pas confondre ✅ :
 
 ### 5.2 Décodage de la réponse d'état (32 octets) ✅
 
+> ⚠️⚠️ **LIRE D'ABORD — deux espaces d'offsets, et c'est la source de toutes les fausses divergences.**
+> Les offsets de ce tableau sont **absolus dans la charge déchiffrée**, laquelle commence par un
+> **préfixe de longueur de 2 octets**. Les offsets de la trame cloud `status.control` (et donc ceux
+> codés dans `smartclimFrame`) sont dans la **charge HVAC nue**, qui commence par `bb00…`. Donc :
+> **`offset charge HVAC = offset de ce tableau − 2`**. Vérifié exact sur les six concepts en production
+> (UC02, 2026-09-02). ⚠️ `smartclimBroadlinkLan::requete()` **retire ce préfixe** : ce qui entre dans le
+> décodeur est **toujours** de la charge HVAC nue. Avant de conclure que deux références se
+> contredisent, **vérifier dans quel espace chacune compte**.
+
 | Champ | Extraction |
 |---|---|
-| consigne | `8 + (octet[12] >> 3)`, `+0,5` si `octet[14] & 0x80` ⚠️ *(l'offset du demi-degré diffère entre références : 14 chez `ac_freedom`, 12 chez `fparrav` en émission)* |
+| consigne | `8 + (octet[12] >> 3)`, `+0,5` si `octet[14] & 0x80` ✅ *(la « divergence » 14 chez `ac_freedom` / 12 chez `fparrav` est **résolue** : `12 + 2 = 14`, les deux désignent le même bit — cf. l'encadré ci-dessus)* |
 | oscillation verticale | `octet[12] & 0x07` |
-| oscillation horizontale | `octet[13] & 0x07` ⚠️ *(`fparrav` lit `octet[12] & 0x07`, très probablement un bug de recopie)* |
+| oscillation horizontale | `octet[13] & 0x07` ⚠️ *(`fparrav` lit `octet[12] & 0x07` — cette fois ce n'est PAS un décalage d'espace : `12` y désignerait l'oscillation verticale. Bug de recopie confirmé. **Reste à trancher contre du matériel** au domaine `post-mvp/04`)* |
 | vitesse (fil) | `(octet[15] >> 5) & 0x07` |
 | silence (`mute`) | `(octet[16] >> 7) & 1` |
 | turbo | `(octet[16] >> 6) & 1` |
@@ -245,8 +254,12 @@ Le seul gain d'un démon serait de **maintenir la session ouverte** entre deux c
 
 ## 10. À confirmer
 
-- [ ] Offset réel du bit de demi-degré en **lecture** (12 ou 14) — divergence entre références.
-- [ ] Offset réel de l'oscillation horizontale en **lecture** (12 ou 13).
+- [x] ~~Offset réel du bit de demi-degré en **lecture** (12 ou 14) — divergence entre références.~~ →
+      **fausse divergence** : décalage d'espace d'offsets, `12 + 2 = 14`, même bit (UC02, § 5.2).
+      Le plugin le lit déjà côté cloud. ⚠️ Reste non **mesuré** sur matériel — mais **aucune branche
+      alternative ne doit être codée**.
+- [ ] Offset réel de l'oscillation horizontale en **lecture** (12 ou 13) — **vraie** divergence celle-là
+      (cf. § 5.2), sans objet tant qu'aucun concept d'oscillation n'existe (domaine `post-mvp/04`).
 - [x] ~~Bornes exactes du remplissage ASCII `'1'` de la charge utile d'auth~~ → **`0x04`–`0x13`** (UC01, § 4).
 - [x] ~~Utilité réelle des ports de découverte 15001 et 2415~~ → **aucune** pour un climatiseur, port
       **80 seul** (UC01, § 1).
@@ -270,3 +283,36 @@ de la session. Ils n'étaient dans **aucune** des deux références d'origine.
 protocole Broadlink (cf. en-tête). Tout ce qui précède est **vérifié dans du code lu**, jamais observé
 sur du matériel. Le premier contact avec un appareil réellement compatible doit produire en `debug` les
 valeurs `0x26`-`0x27`, le `devtype` et tout code d'erreur — instrumentation posée exprès pour ça.
+
+## 12. Établi en UC02 du domaine `post-mvp/01` (2026-09-02) ✅
+
+Lecture d'état en LAN. **Non recetté** : l'appareil de validation de l'utilisateur ignore le protocole
+Broadlink — tout ci-dessous est vérifié contre `mjg59/python-broadlink` (MIT) et par recoupement
+arithmétique, jamais contre du matériel.
+
+- **Les deux espaces d'offsets** (§ 5.2, encadré) — le résultat le plus réutilisable de cette UC : il
+  referme une « divergence » qui aurait autrement conduit à coder deux branches concurrentes.
+- **Somme de contrôle de la charge HVAC** — complément à un « type Internet » sur mots de 16 bits
+  **BIG-endian**, avec repli des retenues, écrite en big-endian. **Distincte** de la somme du paquet
+  `0x38` (`sommeControle()`). Vérifiée arithmétiquement contre les deux magics : `bb00 0680 0000 0200
+  1101` → `0x2B7E`, `…2101` → `0x1B7E`. ⚠️ Non nécessaire en lecture (les charges sont constantes) —
+  elle le devient à l'**écriture**, UC03.
+- **Structure de la charge, requête comme réponse** : `[longueur uint16 LE][charge HVAC][somme 16
+  bits][remplissage nul]`, où `longueur = strlen(charge HVAC) + 2`.
+- **Un décodeur unique pour les deux transports** : `smartclimFrame`, extraite de `smartclimAuxHomeApi`
+  (le second appelant est arrivé). C'est ce qui rend « l'état LAN est identique à l'état cloud » vrai
+  **par construction** plutôt que par surveillance.
+- **Ce qui n'est PAS vérifié sur `0x6A`, et pourquoi** : `python-broadlink` ne contrôle **ni** l'écho de
+  MAC **ni** la somme de charge sur cette commande. SmartClim les **journalise sans bloquer** — un
+  contrôle invérifiable sur un chemin non recettable est un déni de service auto-infligé. Restent
+  bloquants : longueur de charge non multiple de 16, et champ `longueur` incohérent avec la charge reçue.
+- **Le compteur de paquet ne se persiste pas** : `python-broadlink` l'initialise **aléatoirement**, donc
+  l'appareil n'en contrôle aucune monotonie — et le persister réarmerait la TTL de session à chaque
+  lecture. Il vit **par processus**.
+- **Le profil de capacités LAN ne publie ni modes ni vitesses** : le LAN n'a aucun équivalent de
+  `feature.coolType`, donc il ne peut **rien exclure**, et l'union des profils réintroduirait un mode
+  précédemment exclu sur preuve. Corollaire pour UC03 : le jour où le LAN publiera des modes, l'exclusion
+  devra devenir **persistante dans le profil** — une preuve n'expire pas.
+- **Offsets déjà identifiés pour le domaine `post-mvp/04`** (à convertir depuis l'espace du § 5.2) :
+  oscillations, silence/turbo, veille, santé/nettoyage, afficheur/anti-moisissure. Rien n'est décodé
+  aujourd'hui, faute de concept générique correspondant.

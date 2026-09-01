@@ -16,11 +16,11 @@
       "predecesseur_implemente": null,
       "uc_dir": ".memory/auto-dev/run-20260827-1008/post-mvp-01-transport-broadlink-lan-01",
       "existe": true,
-      "etat": "en_cours",
-      "phase": "traduction",
-      "commit": null,
-      "detail": "finition: ip2long remplace par octets (2 copies identiques), catch Throwable elargi",
-      "maj_le": "2026-08-28T02:49:17"
+      "etat": "termine",
+      "phase": "commit",
+      "commit": "1fec4b7",
+      "detail": "22 fichiers, pluginVersion 0.15->0.16 par le hook",
+      "maj_le": "2026-08-28T02:52:50"
     },
     {
       "cle": "post-mvp/01-transport-broadlink-lan/02",
@@ -34,11 +34,11 @@
       "predecesseur_implemente": false,
       "uc_dir": ".memory/auto-dev/run-20260827-1008/post-mvp-01-transport-broadlink-lan-02",
       "existe": true,
-      "etat": "a_faire",
-      "phase": null,
+      "etat": "en_cours",
+      "phase": "plan",
       "commit": null,
-      "detail": null,
-      "maj_le": null
+      "detail": "aucune spec tech, aucun code, HEAD=1fec4b7 : reprise au plan",
+      "maj_le": "2026-08-28T07:11:59"
     },
     {
       "cle": "post-mvp/01-transport-broadlink-lan/03",
@@ -77,5 +77,5 @@
       "maj_le": null
     }
   ],
-  "maj_le": "2026-08-28T02:49:17"
+  "maj_le": "2026-08-28T07:11:59"
 }

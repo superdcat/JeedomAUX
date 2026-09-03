@@ -41,6 +41,14 @@ require_once __DIR__ . '/smartclimFrame.class.php';
  * l'utilisateur ignore le protocole Broadlink, D-POSTMVP0101-01) : le code est
  * théoriquement conforme à la source ci-dessus, instrumenté en 'debug' pour le premier
  * contact avec un appareil compatible, mais non vérifié en conditions réelles.
+ *
+ * Depuis l'UC02 de ce domaine, porte la LECTURE d'état (0x6A, § 5.2 de sa spec
+ * technique), et depuis l'UC03 l'ÉCRITURE (appliquerOrdre(), même commande 0x6A) : la
+ * charge d'écriture est OBTENUE PAR FUSION de la trame lue (recopie + patch des seuls
+ * concepts visés, jamais un delta) — le piège central documenté au § 2 de la spec
+ * technique UC03. Charges/offsets d'écriture RE-VÉRIFIÉS indépendamment contre le
+ * contrat documenté (fparrav/homebridge-aux-cloud, MIT ; azadaydinli/ac_freedom SANS
+ * LICENCE, non consulté pour l'écriture), jamais recopiés depuis une source dérivée.
  */
 class smartclimBroadlinkLan {
   /*     * *************************Attributs****************************** */
@@ -101,6 +109,18 @@ class smartclimBroadlinkLan {
   const CHARGE_INFO = '0c00bb0006800000020021011b7e0000';
   const STATUT_ETAT_LU = 'etat_lu';
   const STATUT_ETAT_ILLISIBLE = 'etat_illisible';
+
+  // UC03 du domaine post-mvp/01-transport-broadlink-lan (§ 5.2/7 de sa spec technique) :
+  // secondes MINIMALES exigées AVANT d'émettre l'ordre d'écriture — un ordre non envoyé
+  // vaut mieux qu'un ordre dont on ignore le sort (garde vérifiée APRÈS la lecture de
+  // base, AVANT le requete() d'écriture).
+  const RESERVE_ECRITURE = 3;
+
+  // Contexte technique dédié (§ 4.2 de la spec technique UC03) : distingue, au sein
+  // d'un même TYPE_RESEAU, un ordre EFFECTIVEMENT ÉMIS mais non confirmé (silence après
+  // émission, rejeu compris) d'un échec survenu AVANT l'émission (session/adresse
+  // indisponible) — smartclim::messageErreurLan() est l'UNIQUE endroit qui le traduit.
+  const CONTEXTE_ECRITURE_NON_CONFIRMEE = 'ecriture_lan_non_confirmee';
 
   // Constantes de crypto (mjg59/python-broadlink, const.py) — ⚠️ l'octet d'index 3 de l'IV
   // vaut 0x99, PAS 0x09 (piège confirmé par la source canonique, D-POSTMVP0101-02).
@@ -434,6 +454,155 @@ class smartclimBroadlinkLan {
   }
 
   /**
+   * Écrit un ordre GÉNÉRIQUE sur cet appareil (UC03 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.2 de sa spec technique) : relit la trame de
+   * CONTRÔLE courante, la fait fusionner par smartclimFrame::encoderOrdre() (recopie +
+   * patch des SEULS concepts visés — le piège central de cette UC, § 2.2), puis émet la
+   * charge encapsulée. ⚠️ LÈVE, contrairement à ouvrirSession()/lireEtat() : chemin
+   * INTERACTIF, un ordre perdu en silence est précisément ce que la spec fonctionnelle
+   * interdit.
+   *
+   * Séquence : (1) ouvrirSession() — prend ET relâche son PROPRE verrou ; (2) hors
+   * ETABLIE/REUTILISEE → smartclimException typée (AUTH ou RESEAU selon le statut) ;
+   * (3) si ETABLIE → DELAI_APRES_AUTH ; (4) verrou() + finally libererVerrou(), COUVRANT
+   * LA LECTURE DE BASE ET L'ÉCRITURE — sinon un autre processus s'intercale entre les
+   * deux et notre écriture réécrit un état déjà périmé ; (5) requete(CHARGE_ETAT) →
+   * trame de base ; (6) smartclimFrame::encoderOrdre() ; (7) garde RESERVE_ECRITURE
+   * AVANT d'émettre ; (8) requete() d'écriture, réponse journalisée en debug.
+   *
+   * ⚠️ Un rejeu de requete() sur l'ÉCRITURE est SANS DANGER (contrairement à un ordre
+   * dupliqué sur une API stateful) : la trame porte un état ABSOLU et complet, réémettre
+   * le même ordre est idempotent. Ne PAS « corriger » ce rejeu (§ 5.2/R6).
+   *
+   * @param array $_appareil Ligne normalisée (decouvrir()/interroger()).
+   * @param array $_ordre Map GÉNÉRIQUE concept => valeur générique (aucun code
+   *   propriétaire en entrée).
+   * @param float $_budget Budget de temps RESTANT à cette tentative, en secondes.
+   * @return array Ordre RÉELLEMENT appliqué (consigne après quantification) — MÊME
+   *   contrat de sortie que smartclimAuxHomeApi::appliquerOrdre() : c'est cette valeur,
+   *   jamais celle demandée, que l'appelant doit pousser en état optimiste.
+   * @throws smartclimException Message TECHNIQUE, jamais affiché tel quel.
+   */
+  public static function appliquerOrdre(array $_appareil, array $_ordre, $_budget) {
+    $macNorm = isset($_appareil['mac']) ? $_appareil['mac'] : '';
+    $debut = microtime(true);
+
+    $statutSession = self::ouvrirSession($_appareil, $_budget);
+    if ($statutSession !== self::STATUT_ETABLIE && $statutSession !== self::STATUT_REUTILISEE) {
+      $type = ($statutSession === self::STATUT_REFUSEE) ? smartclimException::TYPE_AUTH : smartclimException::TYPE_RESEAU;
+      throw new smartclimException('Broadlink LAN : session indisponible pour l\'écriture (' . $macNorm . '), statut ' . $statutSession, $type);
+    }
+
+    if ($statutSession === self::STATUT_ETABLIE) {
+      usleep((int) (self::DELAI_APRES_AUTH * 1000000));
+    }
+
+    $budgetRestant = max(1, $_budget - (microtime(true) - $debut));
+    $ressource = self::verrou($macNorm, max(0, min(self::ATTENTE_VERROU, $budgetRestant)));
+    if ($ressource === null) {
+      throw new smartclimException('Broadlink LAN : verrou indisponible pour l\'écriture (' . $macNorm . ')', smartclimException::TYPE_RESEAU);
+    }
+
+    try {
+      $budgetRestant = max(1, $_budget - (microtime(true) - $debut));
+      $trameBase = self::requete($_appareil, self::COMMANDE_REQUETE, hex2bin(self::CHARGE_ETAT), $budgetRestant);
+
+      $chargeHvac = smartclimFrame::encoderOrdre(smartclimCapabilities::TRANSPORT_BROADLINK_LAN, $trameBase, $_ordre);
+
+      $budgetRestant = $_budget - (microtime(true) - $debut);
+      if ($budgetRestant < self::RESERVE_ECRITURE) {
+        throw new smartclimException('Broadlink LAN : budget insuffisant pour émettre l\'ordre (' . $macNorm . ')', smartclimException::TYPE_RESEAU);
+      }
+
+      $chargeEncapsulee = self::encapsulerChargeHvac($chargeHvac);
+      try {
+        $reponse = self::requete($_appareil, self::COMMANDE_REQUETE, $chargeEncapsulee, $budgetRestant);
+      } catch (smartclimException $e) {
+        // Contexte DÉDIÉ (§ 4.2) : l'ordre a été EFFECTIVEMENT émis, seule sa
+        // confirmation manque — distinct d'un échec survenu AVANT l'émission.
+        if ($e->getType() === smartclimException::TYPE_RESEAU) {
+          throw new smartclimException($e->getMessage(), $e->getType(), self::CONTEXTE_ECRITURE_NON_CONFIRMEE);
+        }
+        throw $e;
+      }
+      log::add('smartclim', 'debug', 'Broadlink LAN : ordre écrit (' . $macNorm . '), réponse 1er octet=0x' . (strlen($reponse) >= 2 ? substr($reponse, 0, 2) : '--') . ', longueur=' . (strlen($reponse) / 2));
+    } finally {
+      self::libererVerrou($ressource);
+    }
+
+    return self::ordreAppliqueGenerique($_ordre);
+  }
+
+  /**
+   * Ordre GÉNÉRIQUE RÉELLEMENT appliqué, après quantification de la consigne (UC03, §
+   * 5.2 de la spec technique) : même échelle d'écriture que
+   * smartclimFrame::encoderConsigne() (arrondi au 0,5 °C le plus proche), lue via
+   * smartclimCapabilities::echelleTemperature() — jamais une seconde constante. Mode et
+   * vitesse ne sont PAS quantifiés : encoderOrdre() les a déjà validés (sinon levé),
+   * la valeur générique demandée EST la valeur appliquée.
+   *
+   * @param array $_ordre Map GÉNÉRIQUE, DÉJÀ validée par un encoderOrdre() réussi.
+   * @return array
+   */
+  private static function ordreAppliqueGenerique(array $_ordre) {
+    $echelle = smartclimCapabilities::echelleTemperature(smartclimCapabilities::TRANSPORT_BROADLINK_LAN);
+    $pas = (isset($echelle['pas_ecriture']) && $echelle['pas_ecriture'] > 0) ? $echelle['pas_ecriture'] : 0.5;
+
+    $applique = array();
+    foreach ($_ordre as $concept => $valeur) {
+      if ($concept === smartclimCapabilities::CONCEPT_TARGET_TEMP && is_numeric($valeur)) {
+        $applique[$concept] = round(((float) $valeur) / $pas) * $pas;
+      } else {
+        $applique[$concept] = $valeur;
+      }
+    }
+    return $applique;
+  }
+
+  /**
+   * Encapsule une charge HVAC d'ÉCRITURE (23 octets hexadécimaux) dans le format
+   * transporté par 0x6A (§ 2.3 de la spec technique UC03) : [longueur uint16
+   * LE][charge][somme 16 bits BE][remplissage nul], dans un tampon de 32 octets.
+   * `longueur = strlen(charge) + 2`. ⚠️ Somme calculée par sommeChargeHvac() (§ 2.4),
+   * DISTINCTE de sommeControle() (0xBEAF, paquet 0x38) — jamais fusionnées.
+   *
+   * @param string $_chargeHvacHex 23 octets, hexadécimal.
+   * @return string 32 octets bruts.
+   */
+  private static function encapsulerChargeHvac($_chargeHvacHex) {
+    $chargeHvac = hex2bin($_chargeHvacHex);
+    $longueur = strlen($chargeHvac) + 2;
+    $somme = self::sommeChargeHvac($chargeHvac);
+    $tampon = self::packerUint16LE($longueur) . $chargeHvac . chr(($somme >> 8) & 0xFF) . chr($somme & 0xFF);
+    return str_pad($tampon, 32, "\x00");
+  }
+
+  /**
+   * Somme de contrôle « type Internet » de la charge HVAC (§ 2.4 de la spec technique
+   * UC03), lue dans fparrav/homebridge-aux-cloud (MIT) `commandPayloadChecksum` :
+   * mots BIG-endian de 16 bits, repli des retenues, complément à un. La longueur de la
+   * charge HVAC (23) est IMPAIRE : le dernier octet est traité comme poids FORT d'un
+   * mot complété par 0x00 (vérifié par les 4 vecteurs de la spec technique, § 2.4).
+   * ⚠️ DISTINCTE de sommeControle() (0xBEAF, paquet 0x38) — ne JAMAIS fusionner les deux.
+   *
+   * @param string $_octets
+   * @return int
+   */
+  private static function sommeChargeHvac($_octets) {
+    $longueur = strlen($_octets);
+    $somme = 0;
+    for ($i = 0; $i < $longueur; $i += 2) {
+      $hi = ord($_octets[$i]);
+      $lo = ($i + 1 < $longueur) ? ord($_octets[$i + 1]) : 0;
+      $somme += ($hi << 8) + $lo;
+    }
+    while (($somme >> 16) !== 0) {
+      $somme = ($somme & 0xFFFF) + ($somme >> 16);
+    }
+    return (0xFFFF ^ $somme) & 0xFFFF;
+  }
+
+  /**
    * Émet UNE requête 0x6A (§ 3.2/5.2 de la spec technique UC02) et renvoie la charge HVAC
    * NUE (hexadécimal minuscule) contenue dans la réponse déchiffrée. SIGNATURE FIGÉE par
    * le § 7 de la spec technique UC01. Point UNIQUE portant la réauthentification
@@ -449,7 +618,11 @@ class smartclimBroadlinkLan {
    *
    * @param array $_appareil
    * @param int $_commande
-   * @param string $_charge 16 octets bruts (un bloc AES), NON chiffrés.
+   * @param string $_charge Un ou plusieurs blocs AES (multiple de 16 octets), NON
+   *   chiffrés — lireEtat() y passe TOUJOURS 16 octets (CHARGE_ETAT/CHARGE_INFO),
+   *   appliquerOrdre() (UC03 de ce domaine) y passe 32 octets (charge HVAC d'écriture
+   *   encapsulée, § 2.3 de sa spec technique) : construirePaquet() complète déjà à un
+   *   multiple de 16, aucune contrainte de longueur FIXE ici.
    * @param float $_budget
    * @return string Charge HVAC nue, en hexadécimal minuscule.
    * @throws smartclimException

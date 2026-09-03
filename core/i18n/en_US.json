@@ -98,7 +98,17 @@
         "LAN indisponible — authentification refusée": "LAN unavailable — authentication refused",
         "État lu sur le réseau local": "State read on the local network",
         "LAN disponible — état non décodable par cet appareil": "LAN available — state not decodable for this device",
-        "%d état(s) lu(s) sur le réseau local": "%d state(s) read on the local network"
+        "%d état(s) lu(s) sur le réseau local": "%d state(s) read on the local network",
+        "Adresse réseau locale inconnue pour cet équipement — lancez un scan ou renseignez l'adresse IP": "Unknown local network address for this device — run a scan or enter the IP address",
+        "L'appareil trouvé à cette adresse ne correspond pas à l'équipement attendu": "The device found at this address does not match the expected device",
+        "Commande LAN non confirmée": "LAN command not confirmed",
+        "État de l'appareil illisible : commande non envoyée pour ne pas dérégler le climatiseur": "Device state unreadable: command not sent to avoid disrupting the air conditioner",
+        "Consigne non transmissible en local (plage encodable : 8 à 39 °C)": "Target temperature not transmissible locally (encodable range: 8 to 39 °C)",
+        "Authentification locale refusée par l'appareil": "Local authentication refused by the device",
+        "Réponse inattendue de l'appareil sur le réseau local — consultez les logs du plugin": "Unexpected response from the device on the local network — check the plugin logs",
+        "Erreur interne lors de l'envoi de la commande locale — consultez les logs du plugin": "Internal error while sending the local command — check the plugin logs",
+        "Appareil injoignable sur le réseau local, réessayez plus tard": "Device unreachable on the local network, please try again later",
+        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "The “Refresh” command is not sent to the device"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",

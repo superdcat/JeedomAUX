@@ -142,6 +142,23 @@ class smartclim extends eqLogic {
   // BUDGET_LAN.
   const BUDGET_LECTURE_LAN = 8;
 
+  // Budget de temps GLOBAL d'un ordre d'écriture LAN (UC03 de ce domaine, § 7 de sa
+  // spec technique) : hello + session + lecture de base + écriture, chronométré depuis
+  // l'entrée d'envoyerOrdreLan(). RESERVE_ECRITURE_LAN documente, à ce niveau, la même
+  // réserve que smartclimBroadlinkLan::RESERVE_ECRITURE (3 s, vérifiée là-bas juste
+  // avant l'émission) — dupliquée à dessein, un transport ne doit pas dépendre d'une
+  // constante définie ailleurs (même motif que les autres duplications du plugin).
+  const BUDGET_ORDRE_LAN = 12;
+  const RESERVE_ECRITURE_LAN = 3;
+
+  // Contextes techniques de smartclimException RÉSERVÉS à la sonde LAN interactive
+  // (UC03 de ce domaine, § 4.2/4.3 de sa spec technique) : distinguent, au sein d'un
+  // même TYPE_RESEAU, deux messages curatés différents (adresse jamais connue vs MAC
+  // divergente à cette adresse). messageErreurLan() est l'UNIQUE endroit qui les
+  // traduit — même règle que CONTEXTE_REQUETE_INITIALE pour messageErreurAuxHome().
+  const CONTEXTE_LAN_ADRESSE_INCONNUE = 'lan_adresse_inconnue';
+  const CONTEXTE_LAN_MAC_DIVERGENTE = 'lan_mac_divergente';
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -1417,6 +1434,53 @@ class smartclim extends eqLogic {
     }
     // smartclimException::TYPE_AUTH, et repli par défaut pour tout type inattendu.
     return __('Échec de la connexion — vérifiez vos identifiants et le pays sélectionné', __FILE__);
+  }
+
+  /**
+   * Traduit le (type, contexte) d'une smartclimException levée par le pilotage LOCAL
+   * (UC03 du domaine post-mvp/01-transport-broadlink-lan, § 4.3 de sa spec technique)
+   * en un message français curaté — SEUL endroit du plugin où vivent ces __() (même
+   * règle que messageErreurAuxHome() ci-dessus, jamais fusionnées : deux transports,
+   * deux vocabulaires d'erreur distincts).
+   *
+   * @param int $_type Une des constantes smartclimException::TYPE_*.
+   * @param string $_contexte '' ou une des constantes CONTEXTE_LAN_ADRESSE_INCONNUE /
+   *   CONTEXTE_LAN_MAC_DIVERGENTE / smartclimBroadlinkLan::CONTEXTE_ECRITURE_NON_CONFIRMEE.
+   * @return string
+   */
+  private static function messageErreurLan($_type, $_contexte) {
+    if ($_contexte === self::CONTEXTE_LAN_ADRESSE_INCONNUE) {
+      return __('Adresse réseau locale inconnue pour cet équipement — lancez un scan ou renseignez l\'adresse IP', __FILE__);
+    }
+    if ($_contexte === self::CONTEXTE_LAN_MAC_DIVERGENTE) {
+      return __('L\'appareil trouvé à cette adresse ne correspond pas à l\'équipement attendu', __FILE__);
+    }
+    if ($_contexte === smartclimBroadlinkLan::CONTEXTE_ECRITURE_NON_CONFIRMEE) {
+      // Littéral DÉDIÉ de la spec fonctionnelle UC03 (§ Impact i18n) : l'ordre a été
+      // EFFECTIVEMENT émis, seule sa confirmation manque.
+      return __('Commande LAN non confirmée', __FILE__);
+    }
+    if ($_contexte === smartclimFrame::CONTEXTE_BASE_ILLISIBLE) {
+      // Littéral DÉDIÉ (§ 12 de la spec technique UC03, revue croisée) : l'ordre n'a PAS
+      // été envoyé — distinct du contexte ci-dessus, où il l'a été.
+      return __('État de l\'appareil illisible : commande non envoyée pour ne pas dérégler le climatiseur', __FILE__);
+    }
+    if ($_contexte === smartclimFrame::CONTEXTE_CONSIGNE_HORS_PLAGE) {
+      // Littéral DÉDIÉ (§ 12 de la spec technique UC03, revue croisée).
+      return __('Consigne non transmissible en local (plage encodable : 8 à 39 °C)', __FILE__);
+    }
+    if ($_type == smartclimException::TYPE_AUTH) {
+      return __('Authentification locale refusée par l\'appareil', __FILE__);
+    }
+    if ($_type == smartclimException::TYPE_PROTOCOLE) {
+      return __('Réponse inattendue de l\'appareil sur le réseau local — consultez les logs du plugin', __FILE__);
+    }
+    if ($_type == smartclimException::TYPE_INTERNE) {
+      return __('Erreur interne lors de l\'envoi de la commande locale — consultez les logs du plugin', __FILE__);
+    }
+    // smartclimException::TYPE_RESEAU générique (session/appareil injoignable, budget
+    // insuffisant AVANT émission…), et repli par défaut pour tout type inattendu.
+    return __('Appareil injoignable sur le réseau local, réessayez plus tard', __FILE__);
   }
 
   /**
@@ -2966,6 +3030,39 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Construit l'ordre GÉNÉRIQUE d'une commande action (UC03 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.3 de sa spec technique) : extraction
+   * VERBATIM des lignes de construction de executerCommandeAction() (consigne via
+   * ordreEffectifConsigne(), sinon $definition['ordre']), PLUS la garde d'existence
+   * qu'elle porte désormais elle-même — nécessaire ici, car envoyerCommandeActionLan()
+   * (le chemin LOCAL) ne passe PAS par les gardes cloud d'executerCommandeAction()
+   * (compteConfigure, auxhome_device_id) qui n'ont pas de sens pour ce transport.
+   * Reste PRIVATE : les DEUX chemins (cloud, local) restent responsables de leurs
+   * propres gardes AVANT de l'appeler (commande RAFRAICHIR notamment).
+   *
+   * @param string $_logicalId
+   * @param array $_options
+   * @return array Map GÉNÉRIQUE concept => valeur générique.
+   * @throws smartclimException Message DÉJÀ CURATÉ en français, littéral EXISTANT
+   *   ('Commande inconnue pour cet équipement') — aucune clé i18n nouvelle.
+   */
+  private function ordreDeCommandeAction($_logicalId, array $_options) {
+    $definitions = $this->definitionsCommandesAction();
+    if (!isset($definitions[$_logicalId])) {
+      throw new smartclimException(__('Commande inconnue pour cet équipement', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $definition = $definitions[$_logicalId];
+
+    if ($_logicalId === self::CMD_CONSIGNE) {
+      return array(
+        smartclimCapabilities::CONCEPT_POWER => 1,
+        smartclimCapabilities::CONCEPT_TARGET_TEMP => $this->ordreEffectifConsigne($_options),
+      );
+    }
+    return $definition['ordre'];
+  }
+
+  /**
    * Point d'entrée UNIQUE du pilotage, appelé par smartclimCmd::execute() (UC06, §
    * 5.3/10 de la spec technique). Recrée une exception CURATÉE en français à chaque
    * point de sortie en échec (contrat @throws) : jamais un message technique affiché
@@ -3003,7 +3100,6 @@ class smartclim extends eqLogic {
     if (!isset($definitions[$_logicalId])) {
       throw new smartclimException(__('Commande inconnue pour cet équipement', __FILE__), smartclimException::TYPE_INTERNE);
     }
-    $definition = $definitions[$_logicalId];
 
     if ($_logicalId === self::CMD_RAFRAICHIR) {
       // UC07, § 7 de la spec technique : sort AVANT le calcul d'empreinte de
@@ -3014,14 +3110,13 @@ class smartclim extends eqLogic {
       return;
     }
 
-    if ($_logicalId === self::CMD_CONSIGNE) {
-      $ordre = array(
-        smartclimCapabilities::CONCEPT_POWER => 1,
-        smartclimCapabilities::CONCEPT_TARGET_TEMP => $this->ordreEffectifConsigne($_options),
-      );
-    } else {
-      $ordre = $definition['ordre'];
-    }
+    // UC03 du domaine post-mvp/01-transport-broadlink-lan (§ 5.3 de sa spec technique) :
+    // construction de l'ordre EXTRAITE dans ordreDeCommandeAction(), réutilisée à
+    // l'identique par le pilotage local (envoyerCommandeActionLan()) — c'est ce qui
+    // rend AC4 vrai PAR CONSTRUCTION (même power => 1, même quantification, même
+    // liste blanche de logicalId que le chemin cloud). Double appel à
+    // definitionsCommandesAction() ASSUMÉ (elle ne fait aucune E/S).
+    $ordre = $this->ordreDeCommandeAction($_logicalId, $_options);
 
     $ordreTrie = $ordre;
     ksort($ordreTrie);
@@ -3083,6 +3178,142 @@ class smartclim extends eqLogic {
     if ($resultat['echecType'] !== null) {
       throw new smartclimException(self::messageErreurAuxHome($resultat['echecType'], $resultat['echecContexte']), $resultat['echecType']);
     }
+  }
+
+  /**
+   * POINT D'ENTRÉE du pilotage LOCAL (UC03 du domaine post-mvp/01-transport-broadlink-lan,
+   * § 5.3 de sa spec technique), appelé PAR LA CLI (core/php/commande-lan.php) — un
+   * script CLI ne peut pas appeler une méthode privée, cette méthode est donc PUBLIQUE.
+   * C'est elle qui rend « AC4 par construction » vrai : elle passe par la MÊME
+   * ordreDeCommandeAction() que le chemin cloud, donc la même injection power => 1, la
+   * même quantification de consigne, la même liste blanche de logicalId.
+   *
+   * ⚠️ REVALIDE ICI la présence de $_logicalId et REFUSE CMD_RAFRAICHIR (lecture, pas un
+   * ordre) : ces deux gardes ne sont plus portées par executerCommandeAction() sur ce
+   * chemin, qui ne l'appelle pas.
+   *
+   * @param string $_logicalId
+   * @param array $_options
+   * @return array Ordre RÉELLEMENT appliqué (affiché par la CLI).
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function envoyerCommandeActionLan($_logicalId, array $_options = array()) {
+    $definitions = $this->definitionsCommandesAction();
+    if (!isset($definitions[$_logicalId])) {
+      throw new smartclimException(__('Commande inconnue pour cet équipement', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    if ($_logicalId === self::CMD_RAFRAICHIR) {
+      // Message DÉDIÉ (§ 12 de la spec technique, revue croisée) : « Rafraîchir »
+      // EXISTE bel et bien dans definitionsCommandesAction() — « Commande inconnue »
+      // serait FAUX ici, c'est une lecture, pas un ordre à transmettre en local.
+      throw new smartclimException(__('La commande « Rafraîchir » ne s\'envoie pas à l\'appareil', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $ordre = $this->ordreDeCommandeAction($_logicalId, $_options);
+    return $this->envoyerOrdreLan($ordre);
+  }
+
+  /**
+   * Façade du pilotage LOCAL (UC03 de ce domaine, § 5.3/6 de sa spec technique) et
+   * POINT DE BRANCHEMENT du futur domaine post-mvp/02-strategies-de-transport : il
+   * l'appellera depuis executerCommandeAction() sans rien réécrire ici.
+   *
+   * ⚠️ Fusionne l'ordre DEMANDÉ avec la MÉMOIRE DES VALEURS COMMANDÉES encore sous
+   * grâce (§ 6 de la spec technique — mécanisme d'AC5) : sans elle, une relecture faite
+   * juste après un ordre précédent pourrait encore renvoyer l'ANCIEN état, et l'écriture
+   * suivante le réécrirait, annulant silencieusement la commande précédente. Les clés
+   * DEMANDÉES écrasent toujours celles héritées de la grâce (array_merge()).
+   *
+   * @param array $_ordreGenerique Map GÉNÉRIQUE concept => valeur générique.
+   * @return array Ordre RÉELLEMENT appliqué (consigne après quantification).
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function envoyerOrdreLan(array $_ordreGenerique) {
+    $debut = microtime(true);
+    try {
+      $appareil = $this->sonderAppareilLan(self::BUDGET_ORDRE_LAN);
+      $ordre = array_merge($this->valeursCommandees(), $_ordreGenerique);
+      $budgetRestant = max(1, self::BUDGET_ORDRE_LAN - (microtime(true) - $debut));
+      $applique = smartclimBroadlinkLan::appliquerOrdre($appareil, $ordre, $budgetRestant);
+    } catch (smartclimException $e) {
+      log::add('smartclim', 'error', 'Commande LAN échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+      throw new smartclimException(self::messageErreurLan($e->getType(), $e->getContexte()), $e->getType());
+    } catch (Throwable $t) {
+      // catch(Throwable) EN DERNIER bloc (même motif qu'executerCommandeAction()) :
+      // une Error PHP 8 traverserait sinon catch(smartclimException).
+      log::add('smartclim', 'error', 'Commande LAN échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+
+    $this->enregistrerOrdre($applique);
+    // Pose au passage la commande info "transport" (mécanisme d'UC02 de ce domaine, §
+    // 5.5 de sa spec technique) : ÉTAT OPTIMISTE, la valeur poussée est celle
+    // RÉELLEMENT envoyée (après quantification), jamais celle demandée.
+    $this->appliquerEtat($applique + array('source' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN), true);
+
+    return $applique;
+  }
+
+  /**
+   * Mémoire des valeurs COMMANDÉES, restreinte aux concepts que le transport LOCAL sait
+   * ÉCRIRE (UC03 de ce domaine, § 6.2 de sa spec technique — mécanisme d'AC5).
+   *
+   * ⚠️ memoireOrdres() rend concept => array('valeur' => …, 'ts' => …) et a DÉJÀ purgé
+   * les concepts hors grâce (self::DUREE_GRACE) : ici, EXTRACTION SEULE, AUCUN
+   * refiltrage temporel — ce serait dupliquer la règle des 60 s à un second endroit.
+   * `array_column($memoire, 'valeur')` N'EST PAS une alternative valide : elle PERD les
+   * clés de concept (tableau indexé, la clé de concept n'étant pas une colonne du
+   * sous-tableau) — la boucle foreach explicite est OBLIGATOIRE.
+   *
+   * Ne retient que smartclimFrame::conceptsEncodables() (LISTE BLANCHE) : une entrée de
+   * cache portant un concept futur (oscillation, domaine post-mvp/04) ferait sinon
+   * lever TYPE_INTERNE à smartclimFrame::encoderOrdre() et casserait TOUTES les
+   * commandes LAN pendant 60 s — l'inverse exact de ce que ce mécanisme est là pour faire.
+   *
+   * @return array<string, mixed> concept => valeur GÉNÉRIQUE scalaire.
+   */
+  private function valeursCommandees() {
+    $memoire = $this->memoireOrdres();
+    $encodables = smartclimFrame::conceptsEncodables();
+    $valeurs = array();
+    foreach ($memoire as $concept => $entree) {
+      if (!in_array($concept, $encodables, true)) {
+        continue;
+      }
+      $valeurs[$concept] = $entree['valeur'];
+    }
+    return $valeurs;
+  }
+
+  /**
+   * Sonde l'adresse LAN CONNUE de cet équipement (UC03 de ce domaine, § 4.2/5.3 de sa
+   * spec technique) : hello préalable OBLIGATOIRE, seule source de 'octets_mac' et de
+   * 'type_appareil' qu'exige smartclimBroadlinkLan::appliquerOrdre() (ni adresseLan()
+   * ni la mémoire de sonde ne les portent). ⚠️ AUCUNE diffusion à la volée (§ 9, R8) :
+   * 4 s de broadcast dans un chemin interactif est un mauvais compromis, le message
+   * curaté invite explicitement à relancer un scan.
+   *
+   * @param float $_budget
+   * @return array Ligne normalisée (smartclimBroadlinkLan::decouvrir()/interroger()).
+   * @throws smartclimException Message TECHNIQUE + contexte CONTEXTE_LAN_* dédié — la
+   *   curation finale vit dans messageErreurLan(), SEUL point de bascule (§ 4.3).
+   */
+  private function sonderAppareilLan($_budget) {
+    $adresse = $this->adresseLan();
+    if ($adresse['ip'] === '') {
+      throw new smartclimException('Broadlink LAN : aucune adresse connue pour cet équipement', smartclimException::TYPE_RESEAU, self::CONTEXTE_LAN_ADRESSE_INCONNUE);
+    }
+
+    $appareil = smartclimBroadlinkLan::interroger($adresse['ip'], max(1, min(smartclimBroadlinkLan::TIMEOUT_ECHANGE, $_budget)));
+    if ($appareil === null) {
+      throw new smartclimException('Broadlink LAN : aucune réponse de l\'appareil sur le réseau local', smartclimException::TYPE_RESEAU);
+    }
+
+    $macAttendue = $adresse['mac'];
+    if ($macAttendue !== '' && $appareil['mac'] !== $macAttendue && $appareil['mac'] !== self::macInversee($macAttendue)) {
+      throw new smartclimException('Broadlink LAN : MAC de l\'appareil répondant différente de celle attendue', smartclimException::TYPE_RESEAU, self::CONTEXTE_LAN_MAC_DIVERGENTE);
+    }
+
+    return $appareil;
   }
 
   /**

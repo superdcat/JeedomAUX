@@ -98,7 +98,17 @@
         "LAN indisponible — authentification refusée": "LAN nicht verfügbar — Authentifizierung abgelehnt",
         "État lu sur le réseau local": "Status im lokalen Netzwerk gelesen",
         "LAN disponible — état non décodable par cet appareil": "LAN verfügbar — Status von diesem Gerät nicht entschlüsselbar",
-        "%d état(s) lu(s) sur le réseau local": "%d Status im lokalen Netzwerk gelesen"
+        "%d état(s) lu(s) sur le réseau local": "%d Status im lokalen Netzwerk gelesen",
+        "Adresse réseau locale inconnue pour cet équipement — lancez un scan ou renseignez l'adresse IP": "Unbekannte lokale Netzwerkadresse für dieses Gerät — starten Sie einen Scan oder geben Sie die IP-Adresse ein",
+        "L'appareil trouvé à cette adresse ne correspond pas à l'équipement attendu": "Das an dieser Adresse gefundene Gerät entspricht nicht dem erwarteten Gerät",
+        "Commande LAN non confirmée": "LAN-Befehl nicht bestätigt",
+        "État de l'appareil illisible : commande non envoyée pour ne pas dérégler le climatiseur": "Gerätestatus nicht lesbar: Befehl nicht gesendet, um die Klimaanlage nicht zu verstellen",
+        "Consigne non transmissible en local (plage encodable : 8 à 39 °C)": "Sollwert lokal nicht übertragbar (kodierbarer Bereich: 8 bis 39 °C)",
+        "Authentification locale refusée par l'appareil": "Lokale Authentifizierung vom Gerät abgelehnt",
+        "Réponse inattendue de l'appareil sur le réseau local — consultez les logs du plugin": "Unerwartete Antwort des Geräts im lokalen Netzwerk — siehe Plugin-Logs",
+        "Erreur interne lors de l'envoi de la commande locale — consultez les logs du plugin": "Interner Fehler beim Senden des lokalen Befehls — siehe Plugin-Logs",
+        "Appareil injoignable sur le réseau local, réessayez plus tard": "Gerät im lokalen Netzwerk nicht erreichbar, bitte später erneut versuchen",
+        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "Der Befehl „Aktualisieren“ wird nicht an das Gerät gesendet"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albanien",

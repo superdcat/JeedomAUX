@@ -35,8 +35,13 @@ effet de bord destructeur sur l'état de l'appareil.
       transport LAN), la première commande envoyée aboutit correctement — le plugin lit l'état avant
       d'écrire plutôt que d'éteindre ou de dérégler l'appareil.
 - [ ] **AC4** — Chaque commande action disponible sur l'équipement (marche, arrêt, chaque mode supporté,
-      chaque vitesse supportée, chaque oscillation, chaque option de confort supportée), testée
-      individuellement, produit l'effet attendu et uniquement celui-ci, constaté sur l'appareil physique.
+      chaque vitesse supportée, réglage de consigne), testée individuellement, produit l'effet attendu et
+      uniquement celui-ci, constaté sur l'appareil physique.
+      ⚠️ *Amendé le 2026-09-03, au cycle de cette UC* : les **oscillations et options de confort ne sont
+      pas pilotables à ce stade** — le modèle générique ne porte aucun concept correspondant (domaine
+      `post-mvp/04-fonctions-avancees`), donc aucune commande d'action de ce type n'existe et il n'y a
+      rien à tester individuellement. Cette UC garantit seulement qu'elles **ne sont pas modifiées**, ce
+      que couvre déjà AC1.
 - [ ] **AC5** — Une séquence de plusieurs commandes rapprochées (par ex. changer le mode puis la consigne
       juste après) aboutit à un état final cohérent avec la dernière intention de l'utilisateur sur chaque
       champ, sans qu'une commande n'en annule silencieusement une autre.
@@ -58,6 +63,18 @@ effet de bord destructeur sur l'état de l'appareil.
 
 ## Hors périmètre
 
+- **Le pilotage des oscillations et des fonctions de confort en LAN** (cf. AC4 amendé) →
+  `post-mvp/04-fonctions-avancees`, qui devra aussi trancher **contre du matériel** la position réelle du
+  bit d'oscillation horizontale : les deux références publiques la placent dans le même octet mais à des
+  bits différents en lecture, et cette divergence-là — contrairement à celle du demi-degré, refermée en
+  UC02 — n'est **pas** un artefact d'espace de comptage.
+- **Le déclencheur du pilotage local** — arbitré le 2026-09-03. Cette UC livre la **capacité** d'écrire
+  en LAN, exercée par une **commande en ligne** dédiée (`core/php/commande-lan.php`, pendant de la sonde
+  de diagnostic). Elle **n'aiguille pas** les commandes d'action de Jeedom vers le LAN :
+  `executerCommandeAction()` reste cloud. Motif : décider qu'un équipement est « piloté en LAN » est
+  l'objet du domaine `post-mvp/02-strategies-de-transport` — le faire ici reviendrait à coder en dur un
+  mode AUTO, et à rendre faux par avance le critère du domaine 02 « en mode CLOUD, aucun paquet LAN
+  n'est émis ».
 - Le repli automatique vers le cloud en cas d'échec répété de l'écriture LAN est traité par
   `post-mvp/02-strategies-de-transport`. Ici, une commande qui échoue en LAN échoue — elle ne bascule pas
   d'elle-même.

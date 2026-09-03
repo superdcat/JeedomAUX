@@ -103,6 +103,15 @@ class smartclimCapabilities {
   const FACTEUR_TEMP_AUX_HOME = 1;
   const PAS_ECRITURE_AUX_HOME = 1.0;
 
+  // Échelle de température en ÉCRITURE du transport Broadlink LAN (UC03 du domaine
+  // post-mvp/01-transport-broadlink-lan, § 5.4 de sa spec technique) : facteur 1 (même
+  // unité, degrés Celsius), pas d'écriture 0,5 °C — la trame code la consigne sur 5 bits
+  // de degrés entiers PLUS un bit de demi-degré (smartclimFrame::encoderConsigne()),
+  // donc la même granularité qu'en LECTURE (TEMP_PAS_DEFAUT), contrairement au cloud
+  // AUX Home dont l'écriture est en degrés entiers (PAS_ECRITURE_AUX_HOME = 1.0).
+  const FACTEUR_TEMP_BROADLINK_LAN = 1;
+  const PAS_ECRITURE_BROADLINK_LAN = 0.5;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -146,26 +155,32 @@ class smartclimCapabilities {
       // délibérément ABSENTE ici : libelle()/libelleCommande() parcourent TOUTES les
       // tables et trouvent déjà le libellé français via l'entrée AUX_HOME ci-dessus (même
       // concept/valeur générique = même libellé, quel que soit le transport) — la dupliquer
-      // ici créerait un second __() pour un texte identique, sans utilité. Colonne 'intent'
-      // laissée à null et 'intent_confirme' à false : l'écriture est le sujet d'UC03 de ce
-      // domaine, rien ne l'établit tant qu'aucun ordre n'a été émis.
+      // ici créerait un second __() pour un texte identique, sans utilité.
+      // ⚠️ Colonne 'intent' remplie depuis l'UC03 de ce domaine (§ 5.4 de sa spec
+      // technique) AVEC LA VALEUR DE 'fil' : ce n'est PAS une supposition, c'est une
+      // conséquence du protocole — mode et vitesse s'écrivent dans le MÊME octet, au
+      // MÊME décalage que celui où ils se lisent (smartclimFrame::champsEcriture()), et
+      // l'écriture procède par RECOPIE de la trame lue. Si les deux numérotations
+      // différaient, chaque commande réécrirait les champs non modifiés avec des codes
+      // faux. 'intent_confirme' reste false : établi par COHÉRENCE INTERNE, jamais
+      // mesuré sur matériel — à basculer à true au premier ordre réussi en recette.
       self::TRANSPORT_BROADLINK_LAN => array(
         self::CONCEPT_MODE => array(
-          self::MODE_AUTO => array('intent' => null, 'fil' => 0, 'intent_confirme' => false),
-          self::MODE_COOL => array('intent' => null, 'fil' => 1, 'intent_confirme' => false),
-          self::MODE_DRY => array('intent' => null, 'fil' => 2, 'intent_confirme' => false),
-          self::MODE_HEAT => array('intent' => null, 'fil' => 4, 'intent_confirme' => false),
-          self::MODE_FAN => array('intent' => null, 'fil' => 6, 'intent_confirme' => false),
+          self::MODE_AUTO => array('intent' => 0, 'fil' => 0, 'intent_confirme' => false),
+          self::MODE_COOL => array('intent' => 1, 'fil' => 1, 'intent_confirme' => false),
+          self::MODE_DRY => array('intent' => 2, 'fil' => 2, 'intent_confirme' => false),
+          self::MODE_HEAT => array('intent' => 4, 'fil' => 4, 'intent_confirme' => false),
+          self::MODE_FAN => array('intent' => 6, 'fil' => 6, 'intent_confirme' => false),
         ),
         self::CONCEPT_FAN_SPEED => array(
-          self::VITESSE_AUTO => array('intent' => null, 'fil' => 5, 'intent_confirme' => false),
+          self::VITESSE_AUTO => array('intent' => 5, 'fil' => 5, 'intent_confirme' => false),
           self::VITESSE_SILENT => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
-          self::VITESSE_LOW => array('intent' => null, 'fil' => 3, 'intent_confirme' => false),
+          self::VITESSE_LOW => array('intent' => 3, 'fil' => 3, 'intent_confirme' => false),
           self::VITESSE_MEDIUM_LOW => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
-          self::VITESSE_MEDIUM => array('intent' => null, 'fil' => 2, 'intent_confirme' => false),
+          self::VITESSE_MEDIUM => array('intent' => 2, 'fil' => 2, 'intent_confirme' => false),
           self::VITESSE_MEDIUM_HIGH => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
-          self::VITESSE_HIGH => array('intent' => null, 'fil' => 1, 'intent_confirme' => false),
-          self::VITESSE_TURBO => array('intent' => null, 'fil' => 4, 'intent_confirme' => false),
+          self::VITESSE_HIGH => array('intent' => 1, 'fil' => 1, 'intent_confirme' => false),
+          self::VITESSE_TURBO => array('intent' => 4, 'fil' => 4, 'intent_confirme' => false),
         ),
       ),
     );
@@ -371,6 +386,12 @@ class smartclimCapabilities {
       return array(
         'facteur' => self::FACTEUR_TEMP_AUX_HOME,
         'pas_ecriture' => self::PAS_ECRITURE_AUX_HOME,
+      );
+    }
+    if ($_transport === self::TRANSPORT_BROADLINK_LAN) {
+      return array(
+        'facteur' => self::FACTEUR_TEMP_BROADLINK_LAN,
+        'pas_ecriture' => self::PAS_ECRITURE_BROADLINK_LAN,
       );
     }
     return array();

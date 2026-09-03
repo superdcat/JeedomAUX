@@ -265,7 +265,19 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   (la `requete()` de l'UC02) doit repasser par `hex2bin()`.
   Depuis l'UC02 du même domaine, elle porte aussi la **lecture d'état** : `requete()` (contrat figé au
   § 7 de la spec technique d'UC01, implémenté là), `lireEtat()`, `etatAppareil()`, `capacitesAppareil()`
-  et `sessionEnCache()`.
+  et `sessionEnCache()`. Depuis l'**UC03**, enfin, l'**écriture** : `appliquerOrdre()`,
+  `encapsulerChargeHvac()` et `sommeChargeHvac()`.
+  ⚠️ **`appliquerOrdre()` LÈVE, elle** — contrairement à `ouvrirSession()` et `lireEtat()` : c'est un
+  chemin **interactif**, et un ordre perdu en silence est précisément ce que la spec interdit. Elle tient
+  la **lecture de base ET l'écriture sous le MÊME verrou** (sinon un autre processus s'intercale et notre
+  écriture réécrit un état déjà périmé), et refuse d'émettre s'il reste moins de `RESERVE_ECRITURE`
+  secondes de budget : un ordre non envoyé vaut mieux qu'un ordre dont on ignore le sort.
+  ⚠️ **`sommeChargeHvac()` (complément à un, mots 16 bits big-endian) est DISTINCTE de
+  `sommeControle()`** (`0xBEAF`, paquet `0x38`) — deux fonctions, **jamais** fusionnées. Sur une longueur
+  **impaire** (la charge d'écriture fait 23 octets), le dernier octet est traité comme **poids fort d'un
+  mot complété par `0x00`**. Les quatre vecteurs de contrôle sont au § 2.4 de la spec technique d'UC03 :
+  ⚠️ les deux premiers, de longueur paire, **n'exercent pas** ce cas — ce sont les vecteurs 3 et 4 qui
+  discriminent poids fort et poids faible.
   ⚠️ **`lireEtat()` ne lève JAMAIS non plus** : comme `ouvrirSession()`, tout échec devient un statut.
   ⚠️ **`etatAppareil()` du LAN ne pose JAMAIS `online => false`** : un LAN muet ne prouve pas qu'un
   appareil est hors ligne (VLAN, pare-feu, diffusion filtrée) — seul le cloud sait le dire.
@@ -274,7 +286,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   l'**union** de `appliquerCapacites()` réintroduirait « Chauffage » sur une unité froid-seul — la
   régression corrigée le 2026-08-26 — dès qu'un scan LAN tourne sans qu'un scan cloud repasse derrière.
   ⚠️ **`requete()` appelle `authentifier()` et JAMAIS `ouvrirSession()`** : le verrou est déjà tenu par
-  `lireEtat()`, et `flock` **n'est pas réentrant** entre deux descripteurs du même processus. Son rejeu
+  l'appelant (`lireEtat()` ou `appliquerOrdre()`), et `flock` **n'est pas réentrant** entre deux
+  descripteurs du même processus. Elle reçoit **16 octets en lecture, 32 en écriture** — `construirePaquet()`
+  complète à un multiple de 16 quelle que soit la longueur d'entrée.
+  ⚠️ **Son rejeu s'applique aussi à l'ÉCRITURE, et c'est volontaire** : réémettre le même ordre est sans
+  danger, parce que la trame porte un état **absolu et complet** — l'écriture est **idempotente**. Ne pas
+  « corriger » cela en désactivant le rejeu sur ce chemin. Son rejeu
   est borné à **un** par appel, par booléen local — jamais de récursion : le protocole n'admettant qu'une
   session par appareil, une rafale d'authentifications décrocherait en boucle l'application du
   constructeur.
@@ -294,7 +311,28 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   aucune E/S, aucun `cache::`, aucun `config::`, aucun `eqLogic`, aucun réseau. Elle ne connaît ni AUX
   Home ni Broadlink — elle reçoit deux trames en hexadécimal et un identifiant de transport. Porte
   `champs()` (concept → trame + index d'octet), `longueursMinimales()` (dérivée de `champs()` : une seule
-  source d'offsets), `octet()`, `conceptsLisibles()` et `decoderEtat()`.
+  source d'offsets), `octet()`, `conceptsLisibles()` et `decoderEtat()`. Depuis l'**UC03 du même
+  domaine**, elle porte **symétriquement l'encodage d'écriture** : `enteteEcriture()`,
+  `champsEcriture()`, `conceptsEncodables()`, `encoderConsigne()` et `encoderOrdre()`.
+  ⚠️ **« Ne lève jamais » ne vaut que pour le DÉCODAGE** : `encoderOrdre()` lève, elle, une
+  `smartclimException` typée avec un contexte dédié.
+  ⚠️ **L'ÉCRITURE PORTE UN ÉTAT COMPLET, JAMAIS UN DELTA — un champ absent vaut 0, donc l'appareil
+  s'éteint tout seul.** D'où la règle qui commande toute la conception d'`encoderOrdre()` : on **recopie
+  la trame que l'appareil vient de renvoyer** et on ne patche que les bits des concepts visés. La fusion
+  se fait **au niveau des OCTETS, jamais des paramètres décodés** — c'est ce qui fait traverser intacts
+  les champs que le plugin ne sait même pas lire (oscillations, veille, santé, afficheur…). Une fusion
+  par paramètres perdrait tout ce qu'elle ne décode pas : c'est le défaut de l'implémentation de
+  référence, et la cause directe des retours en arrière qu'elle produit.
+  ⚠️ **Le marqueur `0x0F` de l'octet 12 est FORCÉ inconditionnellement** : sans lui, l'appareil **ignore
+  silencieusement** la commande. Et les octets 0-9 sont **posés** depuis `enteteEcriture()`, jamais
+  recopiés de la réponse lue.
+  ⚠️ **Les octets 13/15/18 (vitesse, mode, marche) sont PARTAGÉS** entre `champs()` (lecture) et
+  `champsEcriture()` — les deux tables portent un commentaire croisé : toute modification de l'une se
+  vérifie dans l'autre.
+  ⚠️ **Le bit turbo (octet 14, bit 6) est DÉRIVÉ de `fan_speed` à CHAQUE commande de vitesse** — posé
+  pour `VITESSE_TURBO`, **effacé** pour toute autre : sans l'effacement, commander « Faible » sur un
+  appareil en turbo enverrait « vitesse = 3 **et** turbo = 1 », deux informations contradictoires. Le bit
+  `mute` voisin, lui, est **recopié** (aucun concept générique ne le porte). Dissymétrie délibérée.
   ⚠️ **C'est ce partage, et lui seul, qui rend l'AC3 d'UC02 vrai PAR CONSTRUCTION** (« l'état affiché par
   le LAN et par le cloud est identique ») : les deux `etatAppareil()` appellent la **même**
   `decoderEtat()`. Y glisser une amélioration qui ne vaut que pour un transport casse cette propriété —
@@ -329,6 +367,20 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   retirer le masquage (`--brut`). Aucun POST, aucune écriture en base.
   ⚠️ Ne jamais écrire un rapport dans le dossier du plugin : sa racine n'a **pas** de `.htaccess`, le
   fichier y serait téléchargeable **sans authentification** (même piège que `configuration.txt`).
+- **`core/php/commande-lan.php`** — **existe** depuis l'UC03 du domaine post-MVP 01. Déclencheur **en
+  ligne de commande** du pilotage local, calqué sur `diagnostic-auxhome.php` (garde
+  `php_sapi_name() === 'cli'` **avant** tout `require_once`, aucun POST, aucune écriture en base ni sur
+  disque). Deux usages : `--lister` (affiche les `logicalId` des commandes d'action, sans rien émettre sur
+  le réseau) et `--commande=<logicalId> [--valeur=<consigne>]`.
+  ⚠️ **C'est un AIGUILLAGE, sans aucune logique métier** : il ne construit **jamais** de map de concepts à
+  la main. Il appelle `smartclim::envoyerCommandeActionLan()`, qui passe par la **même**
+  `ordreDeCommandeAction()` que le chemin cloud — donc le même `power => 1`, la même quantification de
+  consigne, la même liste blanche de `logicalId`. C'est **cela** qui garantit que la surface de commandes
+  LAN est identique à celle du cloud ; réimplémenter la construction d'ordre ici la ferait diverger.
+  ⚠️ **Il existe parce que le choix du transport N'EST PAS de son ressort** : décider qu'un équipement est
+  « piloté en LAN » appartient au domaine post-MVP 02. `executerCommandeAction()` reste donc **cloud** —
+  y brancher le LAN serait coder en dur un mode AUTO. Le jour du domaine 02, l'aiguillage se réduit à un
+  appel à `smartclim::envoyerOrdreLan()`, qui est dimensionnée pour ça.
 - **`core/template/{dashboard,mobile}/cmd.<type>.<subType>.<nom>.html`** — widgets de commande
   personnalisés (dashboard + mobile = **deux fichiers synchronisés**). ⚠️ Le dossier s'appelle bien
   `core/template/` : c'est le **nom standard Jeedom** du dossier de widgets, il ne se renomme pas avec l'id

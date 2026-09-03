@@ -150,8 +150,10 @@ Charge utile de **23 octets** `BB 00 06 80 00 00 0F 00 01 01 …` puis champs em
 > ⚠️ **Piège vérifié et coûteux** : sans le marqueur `0x0F` sur l'octet 12, *« the device silently discards
 > the command »* (commentaire de `Protocol.ts`).
 
-Puis encapsulation : `[longueur+2][0x00][charge utile 23 o.][CRC hi][CRC lo]` dans un tampon de 32 octets,
-CRC = complément à un 16 bits de la charge utile ✅.
+Puis encapsulation : `[longueur uint16 LE][charge utile 23 o.][CRC hi][CRC lo]` dans un tampon de 32
+octets — `longueur = 23 + 2 = 25 = 0x19`, donc les deux premiers octets sont `19 00`. CRC = complément à
+un 16 bits de la charge utile, écrit en **big-endian** ✅. **Algorithme exact, cas impair et vecteurs de
+contrôle : § 13** (établi en UC03).
 
 > ⚠️ **Piège vérifié n°2** : dans `fparrav`, `DeviceControl.ts::sendCommand` **double** l'encapsulation
 > (elle est déjà faite par `buildCommandPayload`) et y écrit `0xBEAF` en guise de CRC — code manifestement
@@ -316,3 +318,78 @@ arithmétique, jamais contre du matériel.
 - **Offsets déjà identifiés pour le domaine `post-mvp/04`** (à convertir depuis l'espace du § 5.2) :
   oscillations, silence/turbo, veille, santé/nettoyage, afficheur/anti-moisissure. Rien n'est décodé
   aujourd'hui, faute de concept générique correspondant.
+
+## 13. Établi en UC03 du domaine `post-mvp/01` (2026-09-03) ✅
+
+Écriture d'état en LAN. **Non recetté** : l'appareil de validation de l'utilisateur ignore le protocole
+Broadlink. Vérifié contre `fparrav/homebridge-aux-cloud` (MIT) et par recoupement arithmétique.
+
+### 13.1 Somme de contrôle de la charge HVAC — algorithme complet
+
+```
+somme = Σ, i par pas de 2 : (octet[i] << 8) + (octet[i+1] si présent, sinon 0)
+tant que (somme >> 16) : somme = (somme & 0xFFFF) + (somme >> 16)
+crc = 0xFFFF ^ somme        écrit BIG-endian [hi][lo]
+```
+
+⚠️ **La charge d'écriture fait 23 octets — longueur IMPAIRE**, et ce cas n'est pas une affaire de
+convention : la boucle de référence lit `data[i+1]` hors borne, qui vaut 0 après masquage, donc le
+**dernier octet est poids fort d'un mot complété par `0x00`**. La convention Internet standard dit la
+même chose.
+
+⚠️ **Cette somme est DISTINCTE de celle du paquet `0x38`** (`0xBEAF`, § 3) — deux fonctions, jamais
+fusionnées.
+
+**Vecteurs de contrôle** (les deux premiers sont les magics de lecture) :
+
+| Entrée | Longueur | Somme |
+|---|---|---|
+| `bb00 0680 0000 0200 1101` | 10 (paire) | `0x2B7E` |
+| `bb00 0680 0000 0200 2101` | 10 (paire) | `0x1B7E` |
+| `bb00 0680 0000 0f00 0101 8000 0fa0 0020 0000 2000 0000 00` | **23 (impaire)** | `0x7EBD` |
+| idem, **dernier octet à `0x01`** | 23 (impaire) | `0x7DBD` |
+
+⚠️ **Les deux premiers vecteurs ne suffisent PAS à valider une implémentation** : de longueur paire, ils
+n'exercent jamais la branche du dernier octet. Et le troisième seul ne discrimine pas non plus (son
+dernier octet vaut `0x00`) — c'est le **quatrième** qui départage : une implémentation plaçant l'octet
+impair en **poids faible** rendrait `0x7EBC` au lieu de `0x7DBD`.
+
+### 13.2 En-tête d'écriture contre en-tête de lecture — deux octets d'écart
+
+| | Octets 0-9 |
+|---|---|
+| lecture | `bb 00 06 80 00 00 `**`02`**` 00 `**`11`**` 01` |
+| écriture | `bb 00 06 80 00 00 `**`0f`**` 00 `**`01`**` 01` |
+
+Seuls les octets **6** et **8** diffèrent. ⚠️ Ne pas confondre l'octet 6 de l'en-tête (`0x0f`) avec le
+**marqueur `0x0F` de l'octet 12** (§ 5.4) : deux choses distinctes qui portent la même valeur.
+
+### 13.3 Ce que la stratégie d'écriture doit être — et pourquoi la référence a tort
+
+- **Fusionner au niveau des OCTETS, jamais des paramètres décodés.** On recopie la trame que l'appareil
+  vient de renvoyer et on ne patche que les bits visés : les champs que le décodeur ne connaît pas
+  (oscillations, veille, santé, afficheur, octets 21-22 non documentés) traversent **intacts**. Une
+  fusion par paramètres perd tout ce qu'elle ne décode pas.
+- **Relire l'appareil avant chaque écriture**, sous le **même verrou** que l'écriture. ⚠️
+  `AuxDeviceControl` fait l'inverse — il fusionne un `device.params` en cache alimenté par un polling
+  découplé : c'est la cause directe des retours en arrière observés avec cette référence.
+- ⚠️ **Corollaire heureux du « état complet » : l'écriture est IDEMPOTENTE.** Réémettre le même ordre est
+  sans danger, puisque la trame porte un état absolu. Un rejeu réseau sur l'écriture est donc légitime —
+  ne pas le désactiver « par prudence ».
+- ⚠️ **La plage de consigne encodable est `[8, 39] °C`** : `(T − 8) << 3` doit tenir sur 5 bits. Plus
+  étroite que l'enveloppe personnalisable du plugin (5-35 °C) — divergence de comportement entre
+  transports, à traiter au domaine 02.
+- **Le bit turbo (octet 14 bit 6) doit être DÉRIVÉ de la vitesse commandée**, pas recopié : `TURBO` est
+  modélisée à la fois par un code de vitesse et par ce bit. Le recopier laisserait « vitesse = Faible
+  **et** turbo = 1 » après un passage de TURBO à Faible. Le bit `mute` voisin (bit 7), lui, se recopie —
+  aucun concept générique ne le porte.
+
+### 13.4 Ce qui n'est toujours pas vérifiable
+
+- **La réponse à une écriture n'est parsée par aucune référence.** La seule confirmation disponible est
+  le **code d'erreur `0x22` nul**. Si un appareil accusait `0` sans appliquer, seule la recette le
+  montrerait.
+- **L'oscillation horizontale reste une VRAIE divergence** (§ 10) : octet 11 bits 7-5 en écriture, bits
+  2-0 en lecture selon `ac_freedom`. Contrairement au demi-degré (fausse divergence d'espace, refermée en
+  UC02), celle-ci ne se referme pas par l'analyse. En attendant, **l'octet 11 se recopie tel quel** —
+  toute transformation reposerait sur le choix arbitraire d'une des deux lectures.

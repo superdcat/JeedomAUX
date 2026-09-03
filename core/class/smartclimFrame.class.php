@@ -20,6 +20,10 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 // Même motif que les autres classes annexes (autoload du core limité à smartclim.class.php,
 // cf. core/php/smartclim.inc.php) : rend ce fichier autonome. require_once idempotent.
 require_once __DIR__ . '/smartclimCapabilities.class.php';
+// UC03 du domaine post-mvp/01-transport-broadlink-lan (§ 5.1 de sa spec technique) :
+// encoderOrdre() ci-dessous lève des smartclimException typées (TYPE_PROTOCOLE,
+// TYPE_INTERNE).
+require_once __DIR__ . '/smartclimException.class.php';
 
 /**
  * Décodeur MUTUALISÉ de la trame HVAC (UC02 du domaine
@@ -37,6 +41,12 @@ require_once __DIR__ . '/smartclimCapabilities.class.php';
  * reçu en PARAMÈTRE (au lieu de la constante TRANSPORT_AUX_HOME) et des messages de log
  * NEUTRES de transport. C'est ce qui rend le chemin cloud, déjà recetté, inchangé d'un
  * pixel, et AC3 d'UC02 (« état identique par les deux voies ») vrai PAR CONSTRUCTION.
+ *
+ * ⚠️ Depuis l'UC03 de ce domaine (« Envoi de commandes en LAN »), cette classe porte AUSSI
+ * l'ENCODAGE de l'écriture (`encoderOrdre()`, § 5.1 de sa spec technique) : « ne lève
+ * jamais » ne vaut donc plus que pour le DÉCODAGE ci-dessus. `encoderOrdre()` lève une
+ * `smartclimException` typée — une base illisible ou un concept sans correspondance
+ * d'écriture ne doivent JAMAIS produire un octet approximatif.
  */
 class smartclimFrame {
   /*     * *************************Attributs****************************** */
@@ -55,6 +65,24 @@ class smartclimFrame {
   const AMBIANTE_MIN_PLAUSIBLE = -20;
   const AMBIANTE_MAX_PLAUSIBLE = 60;
 
+  // UC03 du domaine post-mvp/01-transport-broadlink-lan (§ 2.2/5.1 de sa spec technique) :
+  // ÉCRITURE de la charge HVAC — 23 octets, en-tête FIXE distinct de celui de la LECTURE
+  // sur seulement 2 octets (l'octet 6 = 0x0f au lieu de 0x02, l'octet 8 = 0x01 au lieu de
+  // 0x11), et un marqueur FORCÉ (octet 12, bits 3-0) sans lequel l'appareil ignore
+  // silencieusement l'ordre. Consigne encodable sur [8, 39] °C (5 bits, (T-8) << 3).
+  const LONGUEUR_CHARGE_ECRITURE = 23;
+  const ENTETE_ECRITURE_HEX = 'bb00068000000f000101';
+  const MARQUEUR_ECRITURE = 0x0F;
+  const CONSIGNE_MIN_ENCODABLE = 8;
+  const CONSIGNE_MAX_ENCODABLE = 39;
+
+  // Contextes techniques DÉDIÉS (revue croisée UC03, § 4.2/4.3 de la spec technique) :
+  // smartclim::messageErreurLan() est l'UNIQUE endroit qui les traduit en français,
+  // même patron que smartclimBroadlinkLan::CONTEXTE_ECRITURE_NON_CONFIRMEE — un ordre
+  // NON envoyé (base illisible) doit se distinguer d'un ordre envoyé mais NON confirmé.
+  const CONTEXTE_BASE_ILLISIBLE = 'trame_base_illisible';
+  const CONTEXTE_CONSIGNE_HORS_PLAGE = 'consigne_hors_plage';
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -63,6 +91,11 @@ class smartclimFrame {
    * l'emplacement — longueursMinimales() ci-dessous en DÉRIVE ses longueurs minimales, et
    * decoderEtat()/conceptsLisibles() ci-dessous lisent directement cette table. Copie
    * VERBATIM de l'ex-smartclimAuxHomeApi::champsEtatAuxHome().
+   *
+   * ⚠️ Octets 13/15/18 (vitesse/mode/marche) IDENTIQUES à ceux de champsEcriture()
+   * ci-dessous (ÉCRITURE, UC03 de ce domaine, § 2.2 de sa spec technique) : mode et
+   * vitesse s'écrivent au MÊME décalage qu'ils se lisent. Commentaire croisé : toute
+   * évolution de l'une de ces deux tables doit être vérifiée contre l'autre.
    *
    * @return array<string, array{trame:string, octets:array<int,int>}>
    */
@@ -235,5 +268,158 @@ class smartclimFrame {
     }
 
     return $etat;
+  }
+
+  /**
+   * En-tête FIXE d'une charge HVAC d'ÉCRITURE (10 octets, § 2.2 de la spec technique
+   * UC03) : DEUX octets seulement la distinguent de l'en-tête de LECTURE (l'octet 6 —
+   * 0x0f au lieu de 0x02 — et l'octet 8 — 0x01 au lieu de 0x11). Écrit depuis le contrat
+   * documenté, jamais recopié depuis une source sans licence (§ 2.1/R8).
+   *
+   * @return string 10 octets bruts.
+   */
+  private static function enteteEcriture() {
+    return hex2bin(self::ENTETE_ECRITURE_HEX);
+  }
+
+  /**
+   * Emplacement des concepts qui s'écrivent par un simple couple (masque, décalage)
+   * dans UN SEUL octet — vitesse, mode, marche (§ 2.2/5.1 de la spec technique UC03).
+   * La consigne (2 octets, encodage dédié) n'est PAS ici : cf. encoderConsigne().
+   *
+   * ⚠️ Octets 13/15/18 IDENTIQUES à ceux de champs() (LECTURE, ci-dessus) : le mode et
+   * la vitesse s'écrivent au MÊME décalage qu'ils se lisent — c'est ce qui rend la
+   * fusion par recopie de la trame lue cohérente (§ 5.4 de la spec technique : « intent
+   * = fil n'est pas une supposition, c'est une conséquence du protocole »). Commentaire
+   * croisé avec champs() : toute évolution de l'un doit être vérifiée contre l'autre.
+   *
+   * @return array<string, array{octet:int, masque:int, decalage:int}>
+   */
+  private static function champsEcriture() {
+    return array(
+      smartclimCapabilities::CONCEPT_FAN_SPEED => array('octet' => 13, 'masque' => 0xE0, 'decalage' => 5),
+      smartclimCapabilities::CONCEPT_MODE => array('octet' => 15, 'masque' => 0xE0, 'decalage' => 5),
+      smartclimCapabilities::CONCEPT_POWER => array('octet' => 18, 'masque' => 0x20, 'decalage' => 5),
+    );
+  }
+
+  /**
+   * Concepts que encoderOrdre() sait ÉCRIRE (§ 5.1 de la spec technique UC03) :
+   * champsEcriture() + la consigne (encodage dédié sur 2 octets). Consommée en LISTE
+   * BLANCHE par smartclim::valeursCommandees() — une entrée de mémoire d'ordres portant
+   * un concept futur (oscillation, domaine post-mvp/04) ne doit JAMAIS atteindre
+   * encoderOrdre(), sous peine de TYPE_INTERNE sur TOUTE commande LAN pendant la
+   * fenêtre de grâce (§ 6.2/R14 de la spec technique).
+   *
+   * @return array<int, string>
+   */
+  public static function conceptsEncodables() {
+    return array_merge(array_keys(self::champsEcriture()), array(smartclimCapabilities::CONCEPT_TARGET_TEMP));
+  }
+
+  /**
+   * Encode la consigne GÉNÉRIQUE (float, degrés Celsius) sur les octets 10 (bits 7-3)
+   * et 12 (bit 7, demi-degré) — § 2.2/2.4 de la spec technique UC03. Arrondi à 0,5 °C
+   * le plus proche AVANT de séparer partie entière et demi-degré (mêmes conventions que
+   * le DÉCODAGE, smartclimCapabilities::echelleTemperature(BROADLINK_LAN)).
+   *
+   * @param mixed $_valeurGenerique
+   * @param int $_octet10 Octet 10 COURANT (recopié, bits 2-0 = oscillation verticale).
+   * @param int $_octet12 Octet 12 COURANT (déjà porteur du marqueur d'écriture forcé).
+   * @return array{0:int, 1:int} [octet10, octet12] patchés.
+   * @throws smartclimException TYPE_INTERNE (non numérique, ou hors [CONSIGNE_MIN_ENCODABLE, CONSIGNE_MAX_ENCODABLE]).
+   */
+  private static function encoderConsigne($_valeurGenerique, $_octet10, $_octet12) {
+    if (!is_scalar($_valeurGenerique) || !is_numeric($_valeurGenerique)) {
+      throw new smartclimException('Trame HVAC : consigne non numérique pour l\'écriture', smartclimException::TYPE_INTERNE);
+    }
+    $arrondi = round(((float) $_valeurGenerique) * 2) / 2;
+    $entier = (int) floor($arrondi);
+    $demiDegre = (($arrondi - $entier) >= 0.5);
+    if ($entier < self::CONSIGNE_MIN_ENCODABLE || $entier > self::CONSIGNE_MAX_ENCODABLE) {
+      throw new smartclimException('Trame HVAC : consigne hors plage encodable [' . self::CONSIGNE_MIN_ENCODABLE . ', ' . self::CONSIGNE_MAX_ENCODABLE . ']', smartclimException::TYPE_INTERNE, self::CONTEXTE_CONSIGNE_HORS_PLAGE);
+    }
+    $octet10 = ($_octet10 & 0x07) | ((($entier - self::CONSIGNE_MIN_ENCODABLE) & 0x1F) << 3);
+    $octet12 = $demiDegre ? ($_octet12 | 0x80) : ($_octet12 & 0x7F);
+    return array($octet10, $octet12);
+  }
+
+  /**
+   * Construit la charge HVAC d'ÉCRITURE (23 octets, § 2/5.1 de la spec technique UC03) :
+   * recopie la trame de CONTRÔLE lue (le PIÈGE CENTRAL de cette UC — l'écriture porte un
+   * état COMPLET, jamais un delta, sous peine d'éteindre l'appareil), écrase l'en-tête
+   * d'ÉCRITURE (octets 0-9, JAMAIS celui de la réponse lue), force le marqueur (octet
+   * 12, bits 3-0), puis ne patche QUE les concepts effectivement présents dans
+   * $_ordre — tout le reste traverse INTACT.
+   *
+   * ⚠️ Bit turbo (octet 14, bit 6) DÉRIVÉ à CHAQUE commande de vitesse : posé pour
+   * VITESSE_TURBO, EFFACÉ pour toute autre — jamais un recopiage partiel (§ 5.1). Le
+   * bit mute voisin (bit 7), lui, N'EST PAS touché ici : il traverse avec le reste de
+   * l'octet, recopié comme tout ce que ce concept ne couvre pas.
+   *
+   * @param string $_transport smartclimCapabilities::TRANSPORT_* — résout les codes
+   *   propriétaires via smartclimCapabilities::versTransport().
+   * @param string $_trameControleLue Trame de CONTRÔLE hexadécimale, déjà nettoyée par
+   *   le transport appelant (>= 21 octets, couvre l'octet 20).
+   * @param array $_ordre Map GÉNÉRIQUE concept => valeur générique (aucun code
+   *   propriétaire en entrée).
+   * @return string Charge HVAC d'écriture, 23 octets, hexadécimal minuscule.
+   * @throws smartclimException TYPE_PROTOCOLE (base illisible ou trop courte)
+   *                           | TYPE_INTERNE (concept sans entrée d'écriture, valeur
+   *                             sans correspondance pour ce transport, consigne hors
+   *                             plage encodable).
+   */
+  public static function encoderOrdre($_transport, $_trameControleLue, array $_ordre) {
+    if (!is_string($_trameControleLue) || preg_match('/\A[0-9a-fA-F]*\z/', $_trameControleLue) !== 1 || strlen($_trameControleLue) < 42) {
+      throw new smartclimException('Trame HVAC : base illisible ou trop courte pour construire un ordre d\'écriture', smartclimException::TYPE_PROTOCOLE, self::CONTEXTE_BASE_ILLISIBLE);
+    }
+    $base = hex2bin($_trameControleLue);
+    if ($base === false) {
+      throw new smartclimException('Trame HVAC : base illisible pour construire un ordre d\'écriture', smartclimException::TYPE_PROTOCOLE, self::CONTEXTE_BASE_ILLISIBLE);
+    }
+
+    $octets = array();
+    for ($i = 0; $i < self::LONGUEUR_CHARGE_ECRITURE; $i++) {
+      $octets[$i] = ($i < strlen($base)) ? ord($base[$i]) : 0;
+    }
+
+    $entete = self::enteteEcriture();
+    for ($i = 0; $i < strlen($entete); $i++) {
+      $octets[$i] = ord($entete[$i]);
+    }
+
+    // Marqueur FORCÉ (§ 2.2) : sans lui, l'appareil ignore silencieusement l'ordre.
+    $octets[12] |= self::MARQUEUR_ECRITURE;
+
+    $champs = self::champsEcriture();
+    foreach ($_ordre as $concept => $valeurGenerique) {
+      if ($concept === smartclimCapabilities::CONCEPT_TARGET_TEMP) {
+        list($octets[10], $octets[12]) = self::encoderConsigne($valeurGenerique, $octets[10], $octets[12]);
+        continue;
+      }
+      if (!isset($champs[$concept])) {
+        throw new smartclimException('Trame HVAC : concept sans entrée d\'écriture (' . $concept . ')', smartclimException::TYPE_INTERNE);
+      }
+      $code = smartclimCapabilities::versTransport($_transport, $concept, $valeurGenerique);
+      if ($code === null) {
+        throw new smartclimException('Trame HVAC : valeur sans correspondance d\'écriture pour ce transport (' . $concept . '=' . $valeurGenerique . ')', smartclimException::TYPE_INTERNE);
+      }
+      $definition = $champs[$concept];
+      $octets[$definition['octet']] = ($octets[$definition['octet']] & ~$definition['masque']) | (($code << $definition['decalage']) & $definition['masque']);
+
+      if ($concept === smartclimCapabilities::CONCEPT_FAN_SPEED) {
+        if ($valeurGenerique === smartclimCapabilities::VITESSE_TURBO) {
+          $octets[14] |= 0x40;
+        } else {
+          $octets[14] &= ~0x40;
+        }
+      }
+    }
+
+    $charge = '';
+    for ($i = 0; $i < self::LONGUEUR_CHARGE_ECRITURE; $i++) {
+      $charge .= chr($octets[$i] & 0xFF);
+    }
+    return strtolower(bin2hex($charge));
   }
 }

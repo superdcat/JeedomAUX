@@ -488,6 +488,70 @@ class smartclimDiagnostic {
   }
 
   /**
+   * Mise en forme PURE (UC01 du domaine post-mvp/04-fonctions-avancees, § 5.7 de sa
+   * spec technique) d'une mesure AVANT/APRÈS de trame HVAC produite par
+   * smartclim::sonderIntentAuxHome() : une ligne par octet (index, hexadécimal,
+   * binaire, marqueur de différence), puis un bloc « bits documentés » (concept,
+   * octet, bit, avant -> après) construit depuis smartclimFrame::champsBinaires(),
+   * puis les deux états génériques déjà décodés.
+   *
+   * ⚠️ AUCUN offset en dur ici (lit champsBinaires()), AUCUNE E/S, AUCUN masquage :
+   * une trame HVAC n'est PAS un secret, et CLAUDE.md interdit explicitement de
+   * masquer du 12-hex nu (ce sont les trames, la donnée la plus utile d'un rapport).
+   * Affiche TOUS les octets, pas seulement ceux qu'on suppose porteurs : si le bit
+   * qui bascule n'est pas celui attendu, c'est la SEULE façon de le voir (leçon de la
+   * température ambiante, cf. .memory/analyse/smartclim-transport-aux-home.md § 6.2).
+   *
+   * @param string $_avant Trame de contrôle hexadécimale AVANT écriture.
+   * @param string $_apres Trame de contrôle hexadécimale APRÈS écriture.
+   * @param array $_etatAvant État générique décodé AVANT (smartclimFrame::decoderEtat()).
+   * @param array $_etatApres État générique décodé APRÈS.
+   * @return string
+   */
+  public static function texteTrameHvac($_avant, $_apres, array $_etatAvant, array $_etatApres) {
+    $avant = is_string($_avant) ? $_avant : '';
+    $apres = is_string($_apres) ? $_apres : '';
+    $octetsAvant = (int) (strlen($avant) / 2);
+    $octetsApres = (int) (strlen($apres) / 2);
+    $nombreOctets = max($octetsAvant, $octetsApres);
+
+    $lignes = array();
+    $lignes[] = '== Trame HVAC : avant / apres ==';
+    $lignes[] = sprintf('%-4s %-6s %-10s %-6s %-10s %s', 'oct', 'avant', 'avant(bin)', 'apres', 'apres(bin)', '');
+    for ($i = 0; $i < $nombreOctets; $i++) {
+      $octetAvant = ($i < $octetsAvant) ? hexdec(substr($avant, $i * 2, 2)) : null;
+      $octetApres = ($i < $octetsApres) ? hexdec(substr($apres, $i * 2, 2)) : null;
+      $marqueur = ($octetAvant !== $octetApres) ? '<< DIFFERENT' : '';
+      $lignes[] = sprintf(
+        '%-4d %-6s %-10s %-6s %-10s %s',
+        $i,
+        ($octetAvant === null) ? '-' : sprintf('0x%02x', $octetAvant),
+        ($octetAvant === null) ? '-' : sprintf('%08b', $octetAvant),
+        ($octetApres === null) ? '-' : sprintf('0x%02x', $octetApres),
+        ($octetApres === null) ? '-' : sprintf('%08b', $octetApres),
+        $marqueur
+      );
+    }
+
+    $lignes[] = '';
+    $lignes[] = '-- Bits documentes (concept : octet.bit avant -> apres) --';
+    foreach (smartclimFrame::champsBinaires() as $concept => $champ) {
+      $octetAvant = ($champ['octet'] < $octetsAvant) ? hexdec(substr($avant, $champ['octet'] * 2, 2)) : null;
+      $octetApres = ($champ['octet'] < $octetsApres) ? hexdec(substr($apres, $champ['octet'] * 2, 2)) : null;
+      $bitAvant = ($octetAvant === null) ? '-' : (($octetAvant >> $champ['bit']) & 1);
+      $bitApres = ($octetApres === null) ? '-' : (($octetApres >> $champ['bit']) & 1);
+      $lignes[] = '  ' . $concept . ' : octet ' . $champ['octet'] . ' bit ' . $champ['bit'] . ' : ' . $bitAvant . ' -> ' . $bitApres;
+    }
+
+    $lignes[] = '';
+    $lignes[] = '-- Etat generique decode --';
+    $lignes[] = 'avant : ' . json_encode($_etatAvant, JSON_UNESCAPED_UNICODE);
+    $lignes[] = 'apres : ' . json_encode($_etatApres, JSON_UNESCAPED_UNICODE);
+
+    return implode("\n", $lignes) . "\n";
+  }
+
+  /**
    * Forme d'une réponse, résumée sur 2 niveaux : de quoi voir si une route candidate a
    * renvoyé une vraie charge utile ou une enveloppe vide, sans imprimer 300 lignes.
    *

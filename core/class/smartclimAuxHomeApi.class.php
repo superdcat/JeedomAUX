@@ -80,6 +80,14 @@ class smartclimAuxHomeApi {
   // code mort.
   const BUDGET_REJEU_ORDRE = 10;
 
+  // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.3/6 de sa spec technique) :
+  // contexte NEUTRE (aucun nom d'endpoint), même discipline que
+  // smartclimException::CONTEXTE_REQUETE_INITIALE et smartclimBroadlinkLan::
+  // CONTEXTE_ECRITURE_NON_CONFIRMEE. requeteControle() le transmet à classerCodeMetier()
+  // pour tout refus fonctionnel du backend (ex. "Nettoyage automatique" sur une clim
+  // allumée) — smartclim::messageErreurAuxHome() le traduit en français.
+  const CONTEXTE_ORDRE_REFUSE = 'ordre_refuse';
+
   // Sonde de diagnostic (sondeDiagnostic()). DIAG_MAX_ROUTES borne le NOMBRE de routes
   // (la CLI accepte des chemins libres en argument : on ne martèle pas le backend d'un
   // tiers depuis une boucle mal fermée). BUDGET_SONDE borne le TEMPS TOTAL, parce que la
@@ -521,6 +529,16 @@ class smartclimAuxHomeApi {
       smartclimCapabilities::CONCEPT_MODE => array('cle' => 'air_con_func', 'nature' => 'table'),
       smartclimCapabilities::CONCEPT_FAN_SPEED => array('cle' => 'wind_speed', 'nature' => 'table'),
       smartclimCapabilities::CONCEPT_TARGET_TEMP => array('cle' => 'temperature', 'nature' => 'temperature'),
+      // UC01 du domaine post-mvp/04-fonctions-avancees (§ 2.1/5.3 de sa spec technique) :
+      // clés déclarées par le backend lui-même (GET /app/getConfig?id=deviceMutex),
+      // relevées par la sonde de diagnostic le 2026-08-26. SEUL endroit du plugin où ces
+      // noms propriétaires apparaissent. 'nature' => 'booleen' existe déjà (cas de
+      // on_off ci-dessus) : appliquerOrdre() route ces concepts SANS modification.
+      smartclimCapabilities::CONCEPT_DISPLAY => array('cle' => 'screen', 'nature' => 'booleen'),
+      smartclimCapabilities::CONCEPT_SLEEP => array('cle' => 'sleep_mode', 'nature' => 'booleen'),
+      smartclimCapabilities::CONCEPT_HEALTH => array('cle' => 'healthy', 'nature' => 'booleen'),
+      smartclimCapabilities::CONCEPT_CLEAN => array('cle' => 'clean', 'nature' => 'booleen'),
+      smartclimCapabilities::CONCEPT_MILDEW => array('cle' => 'anti_fungus', 'nature' => 'booleen'),
     );
   }
 
@@ -658,7 +676,51 @@ class smartclimAuxHomeApi {
       if ($code !== 9023 && $code !== 64033) {
         self::purgerSession();
       }
-      self::classerCodeMetier('control', $donnees, smartclimException::TYPE_AUTH);
+      // UC01 du domaine post-mvp/04-fonctions-avancees (§ 6/6.1 de sa spec technique) :
+      // AUCUN changement de classement ni de purge — seul le message final change (via
+      // ce contexte, traduit par smartclim::messageErreurAuxHome()). Arbitrage retenu :
+      // le code d'expiration réel du jeton reste inconnu, inverser le défaut casserait
+      // le re-login réactif d'UC08.
+      self::classerCodeMetier('control', $donnees, smartclimException::TYPE_AUTH, self::CONTEXTE_ORDRE_REFUSE);
+    }
+  }
+
+  /**
+   * Instrument de MESURE (UC01 du domaine post-mvp/04-fonctions-avancees, § 5.3/5.5 de
+   * sa spec technique) : envoie un intent BRUT (clé AUX non traduite) — l'échappatoire
+   * d'investigation pour essayer une clé non encore déclarée dans intentionsAuxHome()
+   * (ex. "screen_on_off" si "screen" est refusé) ou chercher un bit "eco" par diff
+   * d'octets (§ 1.1/§ 11.5). GARDE CLI dans LE TRANSPORT, au plus près du risque —
+   * même patron que sondeDiagnostic() : un chemin/une clé LIBRE ne doit jamais être
+   * atteignable depuis le web.
+   *
+   * @param string $_identifiantAppareil auxhome_device_id de l'équipement ciblé.
+   * @param array $_intentBrut Une ou deux clés AUX brutes => entier (ex. array('screen' => 1)).
+   * @throws smartclimException TYPE_INTERNE (hors CLI, table vide/trop grande, clé ou
+   *         valeur invalide) ; sinon classement délégué à requeteControle().
+   */
+  public static function sonderIntent($_identifiantAppareil, array $_intentBrut) {
+    if (php_sapi_name() !== 'cli') {
+      throw new smartclimException('Sonde d\'intent AUX Home refusee hors ligne de commande', smartclimException::TYPE_INTERNE);
+    }
+    if (empty($_intentBrut) || count($_intentBrut) > 2) {
+      throw new smartclimException('Sonde d\'intent AUX Home : intent vide ou trop volumineux (2 clés maximum)', smartclimException::TYPE_INTERNE);
+    }
+    foreach ($_intentBrut as $cle => $valeur) {
+      if (!is_string($cle) || preg_match('/\A[a-z][a-z0-9_]{1,30}\z/', $cle) !== 1) {
+        throw new smartclimException('Sonde d\'intent AUX Home : clé d\'intent invalide (' . (is_string($cle) ? $cle : gettype($cle)) . ')', smartclimException::TYPE_INTERNE);
+      }
+      if (!is_int($valeur) || $valeur < -1 || $valeur > 255) {
+        throw new smartclimException('Sonde d\'intent AUX Home : valeur d\'intent invalide pour ' . $cle, smartclimException::TYPE_INTERNE);
+      }
+    }
+    try {
+      $session = self::session();
+      self::requeteControle($session['jeton'], $_intentBrut, $_identifiantAppareil, self::TIMEOUT_REQUETE);
+    } catch (smartclimException $e) {
+      // Recrée l'exception À CE POINT D'APPEL, même motif que login()/session()/
+      // appliquerOrdre() ci-dessus : la frame de requete() porte le JETON.
+      throw new smartclimException($e->getMessage(), $e->getType(), $e->getContexte());
     }
   }
 

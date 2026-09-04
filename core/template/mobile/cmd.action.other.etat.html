@@ -19,6 +19,14 @@
     valeurAttendue = logicalId.substring(5).toUpperCase()
   } else if (logicalId.indexOf('fan_') === 0) {
     valeurAttendue = logicalId.substring(4).toUpperCase()
+  } else if (logicalId.slice(-4) === '_off') {
+    // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.2/5.4 de sa spec technique) :
+    // commandes de bascule des fonctions de confort (<concept>_on / <concept>_off),
+    // liées à une commande info 'binary' — APRÈS les tests exacts on/off et les
+    // préfixes mode_/fan_ ci-dessus, pour ne jamais les court-circuiter.
+    valeurAttendue = '0'
+  } else if (logicalId.slice(-3) === '_on') {
+    valeurAttendue = '1'
   }
 
   function majEtat(_options) {
@@ -29,7 +37,7 @@
     // pas de raw_unit/alertLevel sur une commande action liée.
     var valeur = (isset(_options) && _options.value != undefined) ? String(_options.value) : ''
     var actif
-    if (logicalId === 'on' || logicalId === 'off') {
+    if (logicalId === 'on' || logicalId === 'off' || logicalId.slice(-4) === '_off' || logicalId.slice(-3) === '_on') {
       actif = (parseInt(valeur, 10) === parseInt(valeurAttendue, 10))
     } else {
       actif = (valeur.toUpperCase() === valeurAttendue)

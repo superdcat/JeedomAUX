@@ -112,7 +112,12 @@
         "Réponse inattendue de l'appareil sur le réseau local — consultez les logs du plugin": "Respuesta inesperada del aparato en la red local — consulte los registros del plugin",
         "Erreur interne lors de l'envoi de la commande locale — consultez les logs du plugin": "Error interno al enviar el comando local — consulte los registros del plugin",
         "Appareil injoignable sur le réseau local, réessayez plus tard": "Aparato inaccesible en la red local, vuelva a intentarlo más tarde",
-        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "El comando «Actualizar» no se envía al aparato"
+        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "El comando «Actualizar» no se envía al aparato",
+        "%s - Activer": "%s - Activar",
+        "%s - Désactiver": "%s - Desactivar",
+        "Le service AUX Home a refusé la commande — cette fonction est peut-être indisponible dans l'état actuel de l'appareil": "El servicio AUX Home rechazó el comando — esta función puede no estar disponible en el estado actual del aparato",
+        "Instrument de mesure réservé à la ligne de commande": "Instrumento de diagnóstico reservado a la línea de comandos",
+        "Appareil absent de la réponse AUX Home — relancez un scan": "Aparato ausente de la respuesta de AUX Home — vuelva a ejecutar un escaneo"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -184,7 +189,12 @@
         "Température ambiante": "Temperatura ambiente",
         "Vitesse de ventilation": "Velocidad del ventilador",
         "Marche-Arrêt": "Encendido-Apagado",
-        "Consigne": "Consigna"
+        "Consigne": "Consigna",
+        "Afficheur": "Pantalla",
+        "Mode sommeil": "Modo nocturno",
+        "Ioniseur": "Ionizador",
+        "Nettoyage automatique": "Autolimpieza",
+        "Anti-moisissure": "Protección antimoho"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Nombre del comando",

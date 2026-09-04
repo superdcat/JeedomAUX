@@ -112,7 +112,12 @@
         "Réponse inattendue de l'appareil sur le réseau local — consultez les logs du plugin": "Unerwartete Antwort des Geräts im lokalen Netzwerk — siehe Plugin-Logs",
         "Erreur interne lors de l'envoi de la commande locale — consultez les logs du plugin": "Interner Fehler beim Senden des lokalen Befehls — siehe Plugin-Logs",
         "Appareil injoignable sur le réseau local, réessayez plus tard": "Gerät im lokalen Netzwerk nicht erreichbar, bitte später erneut versuchen",
-        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "Der Befehl „Aktualisieren“ wird nicht an das Gerät gesendet"
+        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "Der Befehl „Aktualisieren“ wird nicht an das Gerät gesendet",
+        "%s - Activer": "%s - Aktivieren",
+        "%s - Désactiver": "%s - Deaktivieren",
+        "Le service AUX Home a refusé la commande — cette fonction est peut-être indisponible dans l'état actuel de l'appareil": "Der AUX-Home-Dienst hat den Befehl abgelehnt — diese Funktion ist im aktuellen Zustand des Geräts möglicherweise nicht verfügbar",
+        "Instrument de mesure réservé à la ligne de commande": "Diagnoseinstrument nur über die Befehlszeile verfügbar",
+        "Appareil absent de la réponse AUX Home — relancez un scan": "Gerät in der AUX-Home-Antwort nicht vorhanden — starten Sie einen neuen Scan"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albanien",
@@ -184,7 +189,12 @@
         "Température ambiante": "Raumtemperatur",
         "Vitesse de ventilation": "Lüftergeschwindigkeit",
         "Marche-Arrêt": "Ein-Aus",
-        "Consigne": "Sollwert"
+        "Consigne": "Sollwert",
+        "Afficheur": "Display",
+        "Mode sommeil": "Schlafmodus",
+        "Ioniseur": "Ionisator",
+        "Nettoyage automatique": "Selbstreinigung",
+        "Anti-moisissure": "Schimmelschutz"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Befehlsname",

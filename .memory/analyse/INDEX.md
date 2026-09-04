@@ -15,7 +15,12 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-09-03** (UC04 du domaine `post-mvp/01` : § 12 ajouté à
+> **Dernière mise à jour de cet index : 2026-09-04** (UC01 du domaine `post-mvp/04` : § 4.4 ajouté à
+> `smartclim-transport-aux-home.md` — les **fonctions de confort** cessent d'être une liste de noms au
+> statut ⚠️ : le backend en déclare les codes (⚠️ **pas tous booléens**) *et* les **conditions de
+> disponibilité**, dont le fait que `clean`/`anti_fungus` ne s'utilisent qu'appareil **éteint** ;
+> § 6.1 étendu aux **bits de confort** de la trame HVAC, et **négatif établi** : aucun signal par appareil
+> n'existe pour ces fonctions au-delà de la longueur de trame. Précédemment, UC04 du domaine `post-mvp/01` : § 12 ajouté à
 > `jeedom-config-plugin-et-cycle-de-vie.md` — **XSS stocké du squelette Jeedom** : `desktop/php/<id>.php`
 > rend `getHumanName()` sans échappement, et `cleanComponanteName()` ne filtre **ni `<` ni `>`** ; la
 > sévérité bascule dès qu'une source de découverte **non authentifiée** peut écrire le nom. Précédemment,
@@ -86,6 +91,9 @@
 | **AUX Home** (`eu-smthome-api.aux-global.com`) : `getPubkey`, chiffrement RSA/AES du login, bearer, `/app/user_device`, `/app/device/v2/control` | `smartclim-transport-aux-home.md` §§ 1-4 |
 | En-tête **`country` (ISO-3)** : cause documentée d'échec de login AUX Home | `smartclim-transport-aux-home.md` § 5 |
 | Décoder `status.control` / `status.running` (trames `bb00…`) ; **température ambiante = octet[15] − 32** ; fraîcheur très lente | `smartclim-transport-aux-home.md` § 6 |
+| **Fonctions de confort** (afficheur, sommeil, ioniseur, nettoyage, anti-moisissure, éco, ultra-silence) : noms d'intent, codes ⚠️ **non booléens pour `screen` et `ultra_silence`**, et **conditions de disponibilité** déclarées par le backend | `smartclim-transport-aux-home.md` § 4.4 |
+| ⚠️ Une fonction utilisable **seulement appareil ÉTEINT** (`clean`, `anti_fungus`) — donc son ordre ne porte **jamais** `power => 1` | `smartclim-transport-aux-home.md` § 4.4 |
+| **Bits de confort** dans la trame HVAC (octets 15/18/20, partagés avec mode et marche) ; pourquoi **`eco` n'a aucun bit connu** | `smartclim-transport-aux-home.md` § 6.1 |
 | **Broadlink LAN** : découverte broadcast, auth `0x65`, AES-128-CBC, structure de paquet, décodage/encodage d'état | `smartclim-transport-broadlink-lan.md` §§ 1-6 |
 | **Deux sources de reverse engineering se contredisent sur un offset ?** Vérifier D'ABORD dans quel **espace** chacune compte : réponse LAN déchiffrée (préfixe de longueur de 2 octets) *contre* charge HVAC nue. `offset charge HVAC = offset réponse LAN - 2` | `smartclim-transport-broadlink-lan.md` § 5.2 (encadré) et § 12 |
 | **Où vit le décodeur de trame HVAC** (offsets d'octets), et pourquoi il est mutualisé entre les transports | `smartclim-transport-broadlink-lan.md` § 12 |

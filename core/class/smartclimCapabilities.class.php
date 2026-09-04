@@ -48,9 +48,16 @@
  * Non couvert ICI, délibérément (emplacement prévu, pas de code mort) :
  * - oscillations : aucune lecture par axe possible depuis la trame HVAC connue à ce
  *   jour (cf. .memory/analyse/smartclim-modele-abstrait-capacites.md § 4.3) ;
- * - fonctions de confort (afficheur, veille, éco, santé…) : post-mvp/04 ;
  * - transports BROADLINK_LAN et AUX_CLOUD_LEGACY : post-mvp/01 et post-mvp/03 ;
  * - échelles de température PAR TRANSPORT : UC06.
+ *
+ * ⚠️ Depuis l'UC01 du domaine post-mvp/04-fonctions-avancees, ce fichier porte AUSSI les
+ * fonctions de confort (afficheur, sommeil, ioniseur, nettoyage, anti-moisissure) via
+ * fonctionsConfort() ci-dessous. Cette table introduit un SECOND marqueur de recette,
+ * nommé 'confirme' — à ne pas confondre avec 'intent_confirme' ci-dessus, qui reste,
+ * lui, purement DÉCLARATIF (jamais lu). 'confirme' est EFFECTIVEMENT lu et GOUVERNE
+ * l'exposition (profil, commandes info, commandes action). Voir le docblock de
+ * fonctionsConfort() pour le détail des TROIS familles de marqueurs du plugin.
  */
 class smartclimCapabilities {
   /*     * *************************Attributs****************************** */
@@ -69,6 +76,20 @@ class smartclimCapabilities {
   const CONCEPT_TARGET_TEMP = 'target_temp';
   const CONCEPT_AMBIENT_TEMP = 'ambient_temp';
   const CONCEPT_FAN_SPEED = 'fan_speed';
+
+  // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.1 de sa spec technique) :
+  // concepts booléens de confort. Ces logicalId sont STABLES par contrat (ne changent
+  // jamais lors d'une bascule de transport), comme tous les CONCEPT_* ci-dessus.
+  const CONCEPT_DISPLAY = 'display';
+  const CONCEPT_SLEEP = 'sleep';
+  const CONCEPT_HEALTH = 'health';
+  const CONCEPT_CLEAN = 'clean';
+  const CONCEPT_MILDEW = 'mildew';
+  // ⚠️ Pas de CONCEPT_ECO ni de CONCEPT_ULTRA_SILENCE (décision D-UC01-Q1, § 1.1 de la
+  // spec technique) : aucun bit de LECTURE connu pour ces deux fonctions, ce qui rendrait
+  // AC3/AC4/AC6 impossibles à honorer. Cette absence est le MÉCANISME qui les rend
+  // inatteignables par construction (un execCmd() forgé ne peut viser une constante qui
+  // n'existe pas), pas un oubli — ne pas les ajouter « pour compléter la table ».
 
   const MODE_AUTO = 'AUTO';
   const MODE_COOL = 'COOL';
@@ -250,6 +271,91 @@ class smartclimCapabilities {
   }
 
   /**
+   * LA table des fonctions de confort (UC01 du domaine post-mvp/04-fonctions-avancees,
+   * § 5.1 de sa spec technique). Une fonction n'y figure QUE si elle a un bit de LECTURE
+   * identifié dans smartclimFrame::champsBinaires() — sans quoi AC3/AC4/AC6 seraient
+   * impossibles à honorer (cf. décision D-UC01-Q1 pour Éco et Ultra-silence, exclues à la
+   * racine : aucune constante CONCEPT_* ne les représente).
+   *
+   * ⚠️ TROIS familles de marqueurs de recette dans ce plugin, à ne JAMAIS confondre :
+   * 1. 'intent_confirme' (table tables() ci-dessus) : DÉCLARATIF, jamais lu par du code,
+   *    simple note de traçabilité sur la solidité d'un code d'écriture.
+   * 2. 'fil' => null (table tables() ci-dessus) : un FAIT DE PROTOCOLE — aucune
+   *    correspondance de lecture n'EXISTE (pas seulement « pas encore vérifiée »).
+   * 3. 'confirme' ICI : un ÉTAT DE RECETTE actif — une correspondance est SUPPOSÉE
+   *    exister (bit identifié par recoupement de sources), mais n'a pas encore été
+   *    validée sur un appareil réel (§ 11 de la spec technique). C'est le PREMIER
+   *    marqueur de ce plugin qui soit à la fois lu ET décisionnel : 'confirme' => false
+   *    signifie concrètement « aucune commande, aucune entrée de profil » — c'est
+   *    conceptsConfortLivres() ci-dessous qui applique ce filtre, seul point d'édition
+   *    pour faire passer une fonction en production après recette (§ 11 : au minimum
+   *    l'ordre accepté, le bit qui bascule dans les deux sens, un effet constatable).
+   *
+   * - 'libelle' : chaîne LITTÉRALE dans __() (scan i18n statique) — sert À LA FOIS de
+   *   libellé de concept et de base du nom des deux commandes action (un seul __() par
+   *   fonction, jamais deux pour un texte identique).
+   * - 'allumer' : l'ordre ON de cette fonction porte-t-il power => 1 ? Dérogation
+   *   EXPLICITE à la règle générale de CLAUDE.md (scopée « mode ou consigne ») pour
+   *   'clean' et 'mildew' : ce sont des fonctions de l'état ARRÊT côté backend AUX Home
+   *   (clean/anti_fungus sont masquées quand on_off=1, et allumer FORCE clean=0) — leur
+   *   ordre ON ne doit JAMAIS porter power => 1, sous peine d'éteindre la fonction qu'on
+   *   vient d'activer. 'sleep' et 'health' exigent au contraire l'appareil allumé.
+   * - 'ordre' : base d'affichage Jeedom (ON = ordre, OFF = ordre + 1).
+   *
+   * @return array<string, array{libelle:string, confirme:bool, allumer:bool, ordre:int}>
+   */
+  private static function fonctionsConfort() {
+    return array(
+      self::CONCEPT_DISPLAY => array('libelle' => __('Afficheur', __FILE__), 'confirme' => false, 'allumer' => false, 'ordre' => 30),
+      self::CONCEPT_SLEEP => array('libelle' => __('Mode sommeil', __FILE__), 'confirme' => false, 'allumer' => true, 'ordre' => 32),
+      self::CONCEPT_HEALTH => array('libelle' => __('Ioniseur', __FILE__), 'confirme' => false, 'allumer' => true, 'ordre' => 34),
+      self::CONCEPT_CLEAN => array('libelle' => __('Nettoyage automatique', __FILE__), 'confirme' => false, 'allumer' => false, 'ordre' => 36),
+      self::CONCEPT_MILDEW => array('libelle' => __('Anti-moisissure', __FILE__), 'confirme' => false, 'allumer' => false, 'ordre' => 38),
+    );
+  }
+
+  /**
+   * Les 5 concepts de confort, TOUJOURS (recette ou non) — dans l'ordre de la table.
+   *
+   * @return array<int,string>
+   */
+  public static function conceptsConfort() {
+    return array_keys(self::fonctionsConfort());
+  }
+
+  /**
+   * Les concepts de confort dont 'confirme' === true (§ 11 de la spec technique UC01) :
+   * UNIQUE point de filtrage de l'UC, consommé par conceptsConnus(), et par
+   * smartclimFrame::conceptsLisibles()/decoderEtat(). Éditer UNE ligne dans
+   * fonctionsConfort() ci-dessus suffit à faire circuler une fonction validée dans tout
+   * le cycle info/action existant.
+   *
+   * @return array<int,string>
+   */
+  public static function conceptsConfortLivres() {
+    $livres = array();
+    foreach (self::fonctionsConfort() as $concept => $colonnes) {
+      if (!empty($colonnes['confirme'])) {
+        $livres[] = $concept;
+      }
+    }
+    return $livres;
+  }
+
+  /**
+   * Colonnes de fonctionsConfort() pour un concept de confort donné, ou array() si le
+   * concept est inconnu — jamais de repli silencieux. Consommée par smartclim::
+   * definitionsCommandesAction() (libellé, 'allumer', 'ordre').
+   *
+   * @param string $_concept
+   * @return array{libelle:string, confirme:bool, allumer:bool, ordre:int}|array
+   */
+  public static function fonctionConfort($_concept) {
+    $fonctions = self::fonctionsConfort();
+    return isset($fonctions[$_concept]) ? $fonctions[$_concept] : array();
+  }
+
+  /**
    * Libellé français déjà traduit d'une valeur générique de mode ou de vitesse. Chaîne
    * vide si le concept ou la valeur est inconnu(e) — jamais de code brut affiché (AC4).
    * Cherche dans TOUS les transports connus de la table (un même concept/valeur porte
@@ -272,6 +378,11 @@ class smartclimCapabilities {
   /**
    * Libellé français d'un concept générique (AC1/AC4). Chaîne vide si inconnu.
    *
+   * ⚠️ Depuis l'UC01 du domaine post-mvp/04-fonctions-avancees : REPLI sur
+   * fonctionsConfort()[$_concept]['libelle'] quand le concept n'est pas dans la liste
+   * statique ci-dessous (un concept de confort NON livré, 'confirme' => false, n'a de
+   * toute façon jamais de commande créée — ce repli ne relâche donc rien).
+   *
    * @param string $_concept
    * @return string
    */
@@ -284,7 +395,11 @@ class smartclimCapabilities {
       self::CONCEPT_AMBIENT_TEMP => __('Température ambiante', __FILE__),
       self::CONCEPT_FAN_SPEED => __('Vitesse de ventilation', __FILE__),
     );
-    return isset($libelles[$_concept]) ? $libelles[$_concept] : '';
+    if (isset($libelles[$_concept])) {
+      return $libelles[$_concept];
+    }
+    $confort = self::fonctionConfort($_concept);
+    return isset($confort['libelle']) ? $confort['libelle'] : '';
   }
 
   /**
@@ -307,7 +422,16 @@ class smartclimCapabilities {
       self::CONCEPT_AMBIENT_TEMP => __('Température ambiante', __FILE__),
       self::CONCEPT_FAN_SPEED => __('Vitesse de ventilation', __FILE__),
     );
-    return isset($libelles[$_concept]) ? $libelles[$_concept] : '';
+    if (isset($libelles[$_concept])) {
+      return $libelles[$_concept];
+    }
+    // Aucun des libellés de fonctionsConfort() ne porte de caractère supprimé par
+    // cleanComponanteName() (`& # ] [ % \ / ' " *`) : pas de transformation nécessaire
+    // ici, contrairement à CONCEPT_POWER ci-dessus (cf. § Impact i18n de la spec
+    // technique UC01 post-mvp/04 — « Santé / Ioniseur » a d'ailleurs été raccourci en
+    // « Ioniseur » pour cette même raison, en amont, dans fonctionsConfort()).
+    $confort = self::fonctionConfort($_concept);
+    return isset($confort['libelle']) ? $confort['libelle'] : '';
   }
 
   /**
@@ -331,16 +455,27 @@ class smartclimCapabilities {
    * Ordre CANONIQUE d'affichage/de fusion des concepts génériques (indépendant d'un
    * transport particulier) : identique aux futurs logicalId de commandes info (UC05).
    *
+   * ⚠️ Depuis l'UC01 du domaine post-mvp/04-fonctions-avancees : les 6 concepts
+   * historiques PUIS conceptsConfortLivres() (dans l'ordre de fonctionsConfort()) — donc
+   * RIEN tant qu'aucune fonction de confort n'est 'confirme' => true. C'est cet ordre que
+   * consomme la boucle de smartclim::appliquerEtat() (elle itère sur conceptsConnus(),
+   * PAS sur les clés de l'état) : étendre cette seule fonction suffit à faire circuler
+   * les nouveaux concepts dans le cycle info existant, sans une ligne dans
+   * appliquerEtat().
+   *
    * @return array<int,string>
    */
   public static function conceptsConnus() {
-    return array(
-      self::CONCEPT_ONLINE,
-      self::CONCEPT_POWER,
-      self::CONCEPT_MODE,
-      self::CONCEPT_TARGET_TEMP,
-      self::CONCEPT_AMBIENT_TEMP,
-      self::CONCEPT_FAN_SPEED,
+    return array_merge(
+      array(
+        self::CONCEPT_ONLINE,
+        self::CONCEPT_POWER,
+        self::CONCEPT_MODE,
+        self::CONCEPT_TARGET_TEMP,
+        self::CONCEPT_AMBIENT_TEMP,
+        self::CONCEPT_FAN_SPEED,
+      ),
+      self::conceptsConfortLivres()
     );
   }
 

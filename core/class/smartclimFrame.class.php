@@ -104,6 +104,11 @@ class smartclimFrame {
    * vitesse s'écrivent au MÊME décalage qu'ils se lisent. Commentaire croisé : toute
    * évolution de l'une de ces deux tables doit être vérifiée contre l'autre.
    *
+   * ⚠️ Depuis l'UC01 du domaine post-mvp/04-fonctions-avancees : les octets 15 et 18
+   * sont EN PLUS PARTAGÉS avec champsBinaires() ci-dessous (sommeil sur l'octet 15,
+   * ioniseur/nettoyage sur l'octet 18) — TROISIÈME table à vérifier avant toute
+   * modification de ces deux octets, en plus de champsEcriture().
+   *
    * @return array<string, array{trame:string, octets:array<int,int>}>
    */
   private static function champs() {
@@ -117,10 +122,46 @@ class smartclimFrame {
   }
 
   /**
+   * Emplacement des concepts BOOLÉENS de confort (UC01 du domaine
+   * post-mvp/04-fonctions-avancees, § 5.2 de sa spec technique) : un simple (octet, bit)
+   * — jamais 'octets' (pluriel) comme champs() ci-dessus, dont le SCHÉMA est différent
+   * (une liste d'indices, pas un octet unique + un bit). Table NON filtrée par
+   * 'confirme' : des offsets restent des offsets, quel que soit l'état de recette —
+   * c'est conceptsLisibles()/decoderEtat() ci-dessous qui appliquent le filtre.
+   *
+   * ⚠️ Commentaire croisé OBLIGATOIRE avec champs() et champsEcriture() : l'octet 15 est
+   * PARTAGÉ avec le mode (champs()/champsEcriture() : bits 7-5), l'octet 18 avec la
+   * marche (bits 7-5). Toute modification de l'une de ces trois tables se vérifie contre
+   * les deux autres — un octet écrit en entier au lieu d'être masqué casserait deux
+   * concepts d'un coup.
+   *
+   * PUBLIQUE (contrairement à champs()) : second consommateur hors de cette classe,
+   * smartclimDiagnostic::texteTrameHvac() (§ 5.7 de la spec technique UC01) — mise en
+   * forme du rapport de mesure, sans jamais coder un offset en dur de son côté.
+   *
+   * @return array<string, array{trame:string, octet:int, bit:int}>
+   */
+  public static function champsBinaires() {
+    return array(
+      smartclimCapabilities::CONCEPT_SLEEP => array('trame' => self::TRAME_CONTROLE, 'octet' => 15, 'bit' => 2),
+      smartclimCapabilities::CONCEPT_HEALTH => array('trame' => self::TRAME_CONTROLE, 'octet' => 18, 'bit' => 1),
+      smartclimCapabilities::CONCEPT_CLEAN => array('trame' => self::TRAME_CONTROLE, 'octet' => 18, 'bit' => 2),
+      smartclimCapabilities::CONCEPT_DISPLAY => array('trame' => self::TRAME_CONTROLE, 'octet' => 20, 'bit' => 4),
+      smartclimCapabilities::CONCEPT_MILDEW => array('trame' => self::TRAME_CONTROLE, 'octet' => 20, 'bit' => 3),
+    );
+  }
+
+  /**
    * Longueur MINIMALE (en octets) de chaque trame requise par concept, avant d'en tirer
    * une correspondance générique : offsets 0-based, donc une trame de longueur N couvre
-   * l'octet d'indice N-1. DÉRIVÉE de champs() (longueur minimale = max(octets) + 1). Copie
-   * VERBATIM de l'ex-smartclimAuxHomeApi::offsetsAuxHome() (même forme de retour).
+   * l'octet d'indice N-1. DÉRIVÉE de champs() UNION champsBinaires() (longueur minimale
+   * = max(octets) + 1 pour champs(), octet + 1 pour champsBinaires()) — SOURCE UNIQUE
+   * des longueurs, ne pas coder de seuil ailleurs. Copie VERBATIM de l'ex-
+   * smartclimAuxHomeApi::offsetsAuxHome() (même forme de retour) pour la partie champs().
+   *
+   * ⚠️ Deux boucles DISTINCTES : champs() porte 'octets' (pluriel, liste d'indices),
+   * champsBinaires() porte 'octet' (singulier, un entier) — ne jamais confondre les deux
+   * schémas dans une même boucle.
    *
    * @return array{controle:array<string,int>, longue:array<string,int>}
    */
@@ -128,6 +169,9 @@ class smartclimFrame {
     $offsets = array(self::TRAME_CONTROLE => array(), self::TRAME_LONGUE => array());
     foreach (self::champs() as $concept => $champ) {
       $offsets[$champ['trame']][$concept] = max($champ['octets']) + 1;
+    }
+    foreach (self::champsBinaires() as $concept => $champ) {
+      $offsets[$champ['trame']][$concept] = $champ['octet'] + 1;
     }
     return $offsets;
   }
@@ -182,6 +226,20 @@ class smartclimFrame {
     }
     if ($octetsLongue >= $offsets[self::TRAME_LONGUE][smartclimCapabilities::CONCEPT_AMBIENT_TEMP]) {
       $concepts[] = smartclimCapabilities::CONCEPT_AMBIENT_TEMP;
+    }
+
+    // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.2 de sa spec technique) :
+    // n'ajoute un concept de confort QUE s'il figure dans conceptsConfortLivres() — seul
+    // point de filtrage de l'UC (mécanisme d'AC5 côté lecture).
+    $livres = smartclimCapabilities::conceptsConfortLivres();
+    foreach (self::champsBinaires() as $concept => $champ) {
+      if (!in_array($concept, $livres, true)) {
+        continue;
+      }
+      $octetsDisponibles = ($champ['trame'] === self::TRAME_CONTROLE) ? $octetsControle : $octetsLongue;
+      if ($octetsDisponibles >= $offsets[$champ['trame']][$concept]) {
+        $concepts[] = $concept;
+      }
     }
     return $concepts;
   }
@@ -288,6 +346,27 @@ class smartclimFrame {
       }
     }
 
+    // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.2 de sa spec technique) :
+    // fonctions de confort, filtrées par conceptsConfortLivres() — une clé absente reste
+    // absente (trame trop courte, octet illisible) : ne JAMAIS substituer 0 à une
+    // lecture impossible, ce serait afficher « inactif » pour « inconnu » et casserait
+    // l'invariant « une clé absente de l'état ne touche pas sa commande ».
+    $livres = smartclimCapabilities::conceptsConfortLivres();
+    foreach (self::champsBinaires() as $concept => $champ) {
+      if (!in_array($concept, $livres, true)) {
+        continue;
+      }
+      $trame = ($champ['trame'] === self::TRAME_CONTROLE) ? $trameControle : $trameLongue;
+      $octetsDisponibles = ($champ['trame'] === self::TRAME_CONTROLE) ? $octetsControle : $octetsLongue;
+      if ($octetsDisponibles < $offsets[$champ['trame']][$concept]) {
+        continue;
+      }
+      $valeurOctet = self::octet($trame, $champ['octet']);
+      if ($valeurOctet !== null) {
+        $etat[$concept] = ($valeurOctet >> $champ['bit']) & 1;
+      }
+    }
+
     return $etat;
   }
 
@@ -314,13 +393,28 @@ class smartclimFrame {
    * = fil n'est pas une supposition, c'est une conséquence du protocole »). Commentaire
    * croisé avec champs() : toute évolution de l'un doit être vérifiée contre l'autre.
    *
-   * @return array<string, array{octet:int, masque:int, decalage:int}>
+   * ⚠️ Depuis l'UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.2 de sa spec
+   * technique) : 5 lignes supplémentaires portant 'binaire' => true (concepts de
+   * confort), masques VÉRIFIÉS DISJOINTS de ceux des concepts qui partagent leur octet
+   * (sleep 0x04 contre mode 0xE0 sur l'octet 15 ; health 0x02 / clean 0x04 contre power
+   * 0x20 sur l'octet 18). encoderOrdre() ci-dessous COURT-CIRCUITE
+   * smartclimCapabilities::versTransport() pour ces lignes : ces concepts sont ABSENTS
+   * de smartclimCapabilities::tables() (ce sont des booléens, pas des valeurs génériques
+   * énumérées), donc versTransport() y renverrait systématiquement null et lèverait
+   * TYPE_INTERNE à chaque commande LAN.
+   *
+   * @return array<string, array{octet:int, masque:int, decalage:int, binaire?:bool}>
    */
   private static function champsEcriture() {
     return array(
       smartclimCapabilities::CONCEPT_FAN_SPEED => array('octet' => 13, 'masque' => 0xE0, 'decalage' => 5),
       smartclimCapabilities::CONCEPT_MODE => array('octet' => 15, 'masque' => 0xE0, 'decalage' => 5),
       smartclimCapabilities::CONCEPT_POWER => array('octet' => 18, 'masque' => 0x20, 'decalage' => 5),
+      smartclimCapabilities::CONCEPT_SLEEP => array('octet' => 15, 'masque' => 0x04, 'decalage' => 2, 'binaire' => true),
+      smartclimCapabilities::CONCEPT_HEALTH => array('octet' => 18, 'masque' => 0x02, 'decalage' => 1, 'binaire' => true),
+      smartclimCapabilities::CONCEPT_CLEAN => array('octet' => 18, 'masque' => 0x04, 'decalage' => 2, 'binaire' => true),
+      smartclimCapabilities::CONCEPT_DISPLAY => array('octet' => 20, 'masque' => 0x10, 'decalage' => 4, 'binaire' => true),
+      smartclimCapabilities::CONCEPT_MILDEW => array('octet' => 20, 'masque' => 0x08, 'decalage' => 3, 'binaire' => true),
     );
   }
 
@@ -421,11 +515,19 @@ class smartclimFrame {
       if (!isset($champs[$concept])) {
         throw new smartclimException('Trame HVAC : concept sans entrée d\'écriture (' . $concept . ')', smartclimException::TYPE_INTERNE);
       }
-      $code = smartclimCapabilities::versTransport($_transport, $concept, $valeurGenerique);
-      if ($code === null) {
-        throw new smartclimException('Trame HVAC : valeur sans correspondance d\'écriture pour ce transport (' . $concept . '=' . $valeurGenerique . ')', smartclimException::TYPE_INTERNE);
-      }
       $definition = $champs[$concept];
+      if (!empty($definition['binaire'])) {
+        // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.2 de sa spec technique) :
+        // concept booléen de confort, ABSENT de smartclimCapabilities::tables() —
+        // versTransport() y renverrait null systématiquement. Le code est simplement le
+        // booléen générique, 0 ou 1.
+        $code = $valeurGenerique ? 1 : 0;
+      } else {
+        $code = smartclimCapabilities::versTransport($_transport, $concept, $valeurGenerique);
+        if ($code === null) {
+          throw new smartclimException('Trame HVAC : valeur sans correspondance d\'écriture pour ce transport (' . $concept . '=' . $valeurGenerique . ')', smartclimException::TYPE_INTERNE);
+        }
+      }
       $octets[$definition['octet']] = ($octets[$definition['octet']] & ~$definition['masque']) | (($code << $definition['decalage']) & $definition['masque']);
 
       if ($concept === smartclimCapabilities::CONCEPT_FAN_SPEED) {

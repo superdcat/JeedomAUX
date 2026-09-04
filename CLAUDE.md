@@ -247,6 +247,24 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   on n'ampute que sur preuve. `versTransport()`/`depuisTransport()` renvoient `null` quand la
   correspondance manque — **jamais** de repli silencieux. Ajouter une capacité, c'est éditer cette
   table, pas ajouter un `switch`.
+  Depuis l'UC01 du domaine post-MVP 04, elle porte aussi les **concepts booléens de confort** :
+  `CONCEPT_DISPLAY`, `CONCEPT_SLEEP`, `CONCEPT_HEALTH`, `CONCEPT_CLEAN`, `CONCEPT_MILDEW`, la table
+  `fonctionsConfort()` et ses accesseurs `conceptsConfort()` / `conceptsConfortLivres()` /
+  `fonctionConfort()`.
+  ⚠️⚠️ **TROIS familles de marqueurs coexistent maintenant, et une seule est LUE — ne pas les
+  confondre** : `'fil' => null` est un **fait de protocole** (aucune correspondance de lecture n'existe) ;
+  `intent_confirme`, dans `tables()`, est **déclaratif et jamais lu** (une note de traçabilité sur la
+  solidité d'un code d'écriture) ; `'confirme'`, dans `fonctionsConfort()`, est **effectivement lu et
+  gouverne l'exposition** — c'est le premier marqueur de recette *actif* du plugin. Prendre le deuxième
+  pour le troisième, c'est croire qu'on a livré une fonction qui n'apparaîtra jamais, ou l'inverse.
+  ⚠️ **`conceptsConfortLivres()` est le point d'édition UNIQUE pour activer une fonction** (consommé par
+  `conceptsConnus()`, `smartclimFrame::conceptsLisibles()`/`decoderEtat()` et
+  `definitionsCommandesAction()`). Les cinq fonctions sont livrées à `false` : **rien n'apparaît** avant
+  une mesure sur matériel — et c'est **irréversible dans l'autre sens**, `appliquerCapacites()` unionnant
+  les `concepts` sans équivalent de `modes_exclus`. D'où l'ordre non négociable : mesurer, puis activer.
+  ⚠️ **Pas de `CONCEPT_ECO` ni `CONCEPT_ULTRA_SILENCE`, et c'est le mécanisme** : sans bit de lecture
+  connu, leur état ne pourrait pas être relu — les omettre les rend inatteignables par construction, pas
+  seulement filtrées. Ne pas « compléter la table ».
 - **`core/class/smartclimDiagnostic.class.php`** — **outillage de reverse engineering**, jamais sollicité
   par le plugin en fonctionnement : met en forme les rapports de **sonde de diagnostic** (masquage des
   identifiants par jetons stables, section « pistes », résumé, rendu texte). Aucune E/S, aucun réseau
@@ -254,6 +272,11 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   qu'un bout de script : le bouton **« Sonde de diagnostic »** de `desktop/php/smartclim.php`
   (action AJAX `sonderDiagnostic` → `smartclim::sonderDiagnostic()`) et la CLI
   `core/php/diagnostic-auxhome.php`. Les deux doivent rendre **exactement** le même rapport.
+  Depuis l'UC01 du domaine post-MVP 04 s'y ajoute `texteTrameHvac()` — table octet/hex/binaire avec diff
+  avant/après, pour la CLI `core/php/sonde-intent-auxhome.php`. ⚠️ Elle lit ses offsets dans
+  `smartclimFrame::champsBinaires()`, **jamais en dur**, et n'applique **aucun masquage** : une trame HVAC
+  n'est pas un secret, c'est la donnée utile. Elle affiche **tous** les octets, pas seulement ceux qu'on
+  suppose porteurs — sans quoi un bit qui bascule ailleurs qu'attendu resterait invisible.
   Son rôle : trancher les « À confirmer » de contrat externe contre le matériel réel, le premier étant
   **où le backend expose les capacités d'un appareil donné** (cf.
   `.memory/analyse/smartclim-transport-aux-home.md` § 3.1 — le profil UC04 affiche aujourd'hui le
@@ -338,9 +361,26 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   vivent désormais les offsets d'octets. Même statut que `smartclimCapabilities` : table de données pure,
   aucune E/S, aucun `cache::`, aucun `config::`, aucun `eqLogic`, aucun réseau. Elle ne connaît ni AUX
   Home ni Broadlink — elle reçoit deux trames en hexadécimal et un identifiant de transport. Porte
-  `champs()` (concept → trame + index d'octet), `longueursMinimales()` (dérivée de `champs()` : une seule
-  source d'offsets), `octet()`, `conceptsLisibles()`, `decoderEtat()` et — depuis l'**UC04 du même
+  `champs()` (concept → trame + index d'octet), `longueursMinimales()` (**une seule source d'offsets**,
+  dérivée de `champs()` **et**, depuis l'UC01 du domaine post-MVP 04, de `champsBinaires()`), `octet()`,
+  `conceptsLisibles()`, `decoderEtat()` et — depuis l'**UC04 du même
   domaine** — le prédicat pur `estTrameHvac()` (préfixe `MAGIC_TRAME_HVAC` = `bb00`).
+  ⚠️ **`champs()` porte `'octets'` (PLURIEL, une liste d'indices) et `champsBinaires()` porte `'octet'`
+  (singulier)** : `longueursMinimales()` les fusionne en **deux boucles distinctes**. Confondre les deux
+  schémas casse silencieusement le calcul de longueur, donc les garde-fous de trame courte.
+  Depuis l'UC01 du domaine post-MVP 04, elle porte les **bits des fonctions de confort** :
+  `champsBinaires()` (publique — second appelant `smartclimDiagnostic::texteTrameHvac()`), et les cinq
+  lignes `'binaire' => true` de `champsEcriture()`.
+  ⚠️ **`encoderOrdre()` court-circuite `versTransport()` pour une ligne `'binaire'`** : ces concepts sont
+  absents de `tables()`, donc `versTransport()` renverrait `null` et **chaque** commande LAN lèverait
+  `TYPE_INTERNE`.
+  ⚠️ **Les octets 15 et 18 sont PARTAGÉS entre les trois tables** (15 : mode + sommeil ; 18 : marche +
+  ioniseur + nettoyage) — d'où le commentaire croisé qu'elles portent toutes les trois. Écrire un octet
+  entier au lieu de masquer casserait deux concepts d'un coup.
+  ⚠️ **`conceptsLisibles()` et `decoderEtat()` filtrent les concepts de confort** par
+  `smartclimCapabilities::conceptsConfortLivres()` — seule dépendance de ce décodeur vers la table de
+  capacités, assumée pour ne pas dupliquer le filtre dans les deux `capacitesAppareil()`, où il
+  divergerait.
   ⚠️ `estTrameHvac()` n'est **qu'un signal de journalisation** pour le transport appelant, **jamais** un
   critère bloquant : le préfixe est établi côté cloud et par les magics de lecture, mais **jamais observé
   sur une réponse LAN réelle**. Le rendre bloquant rendrait le chemin LAN inopérant **en silence**. Depuis
@@ -414,6 +454,23 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   « piloté en LAN » appartient au domaine post-MVP 02. `executerCommandeAction()` reste donc **cloud** —
   y brancher le LAN serait coder en dur un mode AUTO. Le jour du domaine 02, l'aiguillage se réduit à un
   appel à `smartclim::envoyerOrdreLan()`, qui est dimensionnée pour ça.
+- **`core/php/sonde-intent-auxhome.php`** — **existe** depuis l'UC01 du domaine post-MVP 04. Troisième et
+  dernière CLI du plugin, calquée sur les deux précédentes (garde `php_sapi_name() === 'cli'` **avant**
+  tout `require_once`, aucun POST, aucune écriture en base ni sur disque, sorties FR **sans `__()`**).
+  C'est l'**instrument de mesure** des fonctions de confort : `--etat` (lecture seule),
+  `--concept=<code>`, ou `--intent=<clé brute>` — il lit la trame, envoie l'ordre, attend, relit, et
+  affiche le **diff octet par octet** via `smartclimDiagnostic::texteTrameHvac()`. Il appelle
+  `smartclim::lireTrameAuxHome()` / `sonderIntentAuxHome()`.
+  ⚠️ **Il existe parce que l'UC01 du domaine 04 est livrée DÉSACTIVÉE** : les cinq fonctions de confort
+  portent `'confirme' => false` dans `smartclimCapabilities::fonctionsConfort()`, donc **aucune commande
+  n'apparaît** avant qu'une mesure sur matériel ne fasse passer une ligne à `true`. Sans cet instrument,
+  l'AC7 rendrait l'UC inactivable. Protocole au § 11 de sa spec technique.
+  ⚠️ **Ces méthodes ne rendent JAMAIS la mémoire d'ordres ni le marqueur de déduplication** : un
+  instrument de mesure doit rendre la lecture **brute**, sinon `filtrerEtatSelonOrdres()` confirmerait ce
+  qu'on vient d'envoyer au lieu de ce que l'appareil a fait.
+  ⚠️ `--intent` accepte une **clé brute** : sa forme est validée **deux fois** (dans le script pour un
+  message utilisable, dans `smartclimAuxHomeApi::sonderIntent()` comme barrière) — défense en profondeur,
+  ne supprimer ni l'une ni l'autre comme « redondante ».
 - **`core/template/{dashboard,mobile}/cmd.<type>.<subType>.<nom>.html`** — widgets de commande
   personnalisés (dashboard + mobile = **deux fichiers synchronisés**). ⚠️ Le dossier s'appelle bien
   `core/template/` : c'est le **nom standard Jeedom** du dossier de widgets, il ne se renomme pas avec l'id

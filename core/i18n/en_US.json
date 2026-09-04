@@ -112,7 +112,12 @@
         "Réponse inattendue de l'appareil sur le réseau local — consultez les logs du plugin": "Unexpected response from the device on the local network — check the plugin logs",
         "Erreur interne lors de l'envoi de la commande locale — consultez les logs du plugin": "Internal error while sending the local command — check the plugin logs",
         "Appareil injoignable sur le réseau local, réessayez plus tard": "Device unreachable on the local network, please try again later",
-        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "The “Refresh” command is not sent to the device"
+        "La commande « Rafraîchir » ne s'envoie pas à l'appareil": "The “Refresh” command is not sent to the device",
+        "%s - Activer": "%s - Enable",
+        "%s - Désactiver": "%s - Disable",
+        "Le service AUX Home a refusé la commande — cette fonction est peut-être indisponible dans l'état actuel de l'appareil": "The AUX Home service refused the command — this function may be unavailable in the device's current state",
+        "Instrument de mesure réservé à la ligne de commande": "Diagnostic instrument reserved for the command line",
+        "Appareil absent de la réponse AUX Home — relancez un scan": "Device missing from the AUX Home response — run a scan again"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -184,7 +189,12 @@
         "Température ambiante": "Room temperature",
         "Vitesse de ventilation": "Fan speed",
         "Marche-Arrêt": "On-Off",
-        "Consigne": "Setpoint"
+        "Consigne": "Setpoint",
+        "Afficheur": "Display",
+        "Mode sommeil": "Sleep mode",
+        "Ioniseur": "Ioniser",
+        "Nettoyage automatique": "Self-cleaning",
+        "Anti-moisissure": "Mildew protection"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Command name",

@@ -77,7 +77,8 @@ class smartclim extends eqLogic {
 
   // logicalId des 2 commandes info MÉTA (UC05) : produites par le PLUGIN, créées dans
   // TOUS les cas (y compris sur un équipement sans profil de capacités), contrairement
-  // aux 6 commandes de CONCEPT, conditionnées à configuration.capacites['concepts'].
+  // aux commandes de CONCEPT (les 6 historiques et les fonctions de confort livrées),
+  // conditionnées à configuration.capacites['concepts'].
   const CMD_TRANSPORT = 'transport';
   const CMD_DERNIERE_MAJ = 'last_update';
 
@@ -89,6 +90,12 @@ class smartclim extends eqLogic {
   const CMD_CONSIGNE = 'set_target_temp';
   const PREFIXE_CMD_MODE = 'mode_';
   const PREFIXE_CMD_VITESSE = 'fan_';
+
+  // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) :
+  // suffixes des deux commandes action de chaque fonction de confort — <concept>_on /
+  // <concept>_off, dérivés mécaniquement de smartclimCapabilities::conceptsConfortLivres().
+  const SUFFIXE_CMD_ON = '_on';
+  const SUFFIXE_CMD_OFF = '_off';
 
   // Déduplication d'ordre (AC7) : clé de cache = CLE_CACHE_DEDUP + id d'équipement +
   // empreinte du CONTENU de l'ordre (jamais l'équipement seul, § 7 — sinon AC10
@@ -1695,8 +1702,10 @@ class smartclim extends eqLogic {
    * __(), les éparpiller produirait plusieurs entrées pour une même intention).
    *
    * @param int $_type Une des constantes smartclimException::TYPE_*.
-   * @param string $_contexte '' ou smartclimException::CONTEXTE_REQUETE_INITIALE (seul
-   *   cas où le message dépend du contexte).
+   * @param string $_contexte '' ou smartclimException::CONTEXTE_REQUETE_INITIALE, ou
+   *   (depuis l'UC01 du domaine post-mvp/04-fonctions-avancees)
+   *   smartclimAuxHomeApi::CONTEXTE_ORDRE_REFUSE — les seuls cas où le message dépend
+   *   du contexte.
    * @return string
    */
   private static function messageErreurAuxHome($_type, $_contexte) {
@@ -1714,6 +1723,16 @@ class smartclim extends eqLogic {
     }
     if ($_type == smartclimException::TYPE_INTERNE) {
       return __('Erreur interne lors de la préparation de la connexion — consultez les logs du plugin', __FILE__);
+    }
+    // UC01 du domaine post-mvp/04-fonctions-avancees (§ 6/6.1 de sa spec technique) :
+    // un ordre de confort refusé par le backend (ex. "Nettoyage automatique" sur une
+    // clim allumée, § 2.1) traverse requeteControle() classé TYPE_AUTH, comme TOUT code
+    // métier non classé — ce nouveau message s'affiche donc aussi pour un échec de
+    // commande de base (marche/mode/consigne/vitesse), et c'est assumé (§ 6.1) : le
+    // message reste vrai dans les deux cas plutôt que d'inverser le classement/la purge
+    // de session, qui casserait le re-login réactif d'UC08.
+    if ($_contexte === smartclimAuxHomeApi::CONTEXTE_ORDRE_REFUSE) {
+      return __('Le service AUX Home a refusé la commande — cette fonction est peut-être indisponible dans l\'état actuel de l\'appareil', __FILE__);
     }
     // smartclimException::TYPE_AUTH, et repli par défaut pour tout type inattendu.
     return __('Échec de la connexion — vérifiez vos identifiants et le pays sélectionné', __FILE__);
@@ -1836,6 +1855,59 @@ class smartclim extends eqLogic {
         'generic_type' => '',
         'isHistorized' => 0,
         'ordre' => 5,
+        'meta' => false,
+      ),
+      // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) :
+      // les 5 fonctions de confort sont TOUJOURS déclarées ici (comme les 6 concepts
+      // historiques ci-dessus), mais ne sont créées par creerCommandesInfo() QUE si
+      // leur concept figure dans capacites['concepts'] — lui-même n'y figure que si
+      // smartclimCapabilities::conceptsConfortLivres() les inclut (§ 5.1/5.2). Aucune
+      // commande n'apparaît donc tant que 'confirme' vaut false (livraison désactivée,
+      // AC7). subType 'binary' comme 'power'/'online' : le core garde son widget natif,
+      // aucun __('Actif')/__('Inactif') n'est introduit (§ 7 de la spec technique).
+      smartclimCapabilities::CONCEPT_DISPLAY => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_DISPLAY),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 20,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_SLEEP => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_SLEEP),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 21,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_HEALTH => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_HEALTH),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 22,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_CLEAN => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_CLEAN),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 23,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_MILDEW => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_MILDEW),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 24,
         'meta' => false,
       ),
       self::CMD_TRANSPORT => array(
@@ -3202,6 +3274,51 @@ class smartclim extends eqLogic {
       }
     }
 
+    // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) :
+    // deux commandes par fonction de confort LIVRÉE (conceptsConfortLivres(), § 11 de
+    // sa spec technique — vide tant qu'aucune fonction n'a été validée en recette, AC7)
+    // ET détectée sur CET appareil (concept présent dans le profil, comme mode_/fan_
+    // ci-dessus). 'ordre' est une map STATIQUE, jamais dérivée de $_options (§ 4 : rien
+    // à valider côté client pour ces commandes).
+    foreach (smartclimCapabilities::conceptsConfortLivres() as $concept) {
+      if (!in_array($concept, $concepts, true)) {
+        continue;
+      }
+      $fonction = smartclimCapabilities::fonctionConfort($concept);
+      if (empty($fonction) || $fonction['libelle'] === '') {
+        continue;
+      }
+      $ordreOn = array($concept => 1);
+      if (!empty($fonction['allumer'])) {
+        // sleep/health EXIGENT l'appareil allumé côté backend (§ 2.1) — même forme
+        // que mode_* ci-dessus : deux clés dans le même intent.
+        $ordreOn[smartclimCapabilities::CONCEPT_POWER] = 1;
+      }
+      // ⚠️ clean/mildew sont des fonctions de l'état ARRÊT côté backend AUX Home
+      // (§ 2.1 de la spec technique) : leur ordre ON ne porte JAMAIS power => 1 —
+      // dérogation EXPLICITE à la règle générale de CLAUDE.md (scopée « mode ou
+      // consigne »), au même titre que fan_* ci-dessus qui n'allume jamais
+      // implicitement. NE PAS « corriger » en ajoutant power => 1 ici : le backend
+      // masque/force clean=0 dès que l'appareil s'allume, ce qui éteindrait
+      // silencieusement la fonction qu'on vient d'activer.
+      $definitions[$concept . self::SUFFIXE_CMD_ON] = array(
+        'name' => sprintf(__('%s - Activer', __FILE__), $fonction['libelle']),
+        'subType' => 'other',
+        'infoLiee' => $concept,
+        'ordre' => $ordreOn,
+        'ordreCmd' => $fonction['ordre'],
+      );
+      $definitions[$concept . self::SUFFIXE_CMD_OFF] = array(
+        'name' => sprintf(__('%s - Désactiver', __FILE__), $fonction['libelle']),
+        'subType' => 'other',
+        'infoLiee' => $concept,
+        // Jamais de power ici : désactiver une fonction de confort n'éteint jamais
+        // l'appareil (contrat identique pour les 5 fonctions).
+        'ordre' => array($concept => 0),
+        'ordreCmd' => $fonction['ordre'] + 1,
+      );
+    }
+
     // Commande méta hors profil de capacités (UC07, § 7 de la spec technique) —
     // inconditionnelle, comme les commandes méta d'UC05 : rafraîchir a du sens même
     // sur un équipement au profil vide. ordreCmd = 40 > maximum atteignable par les
@@ -3574,6 +3691,106 @@ class smartclim extends eqLogic {
     $this->appliquerEtat($applique + array('source' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN), true);
 
     return $applique;
+  }
+
+  /**
+   * Instrument de MESURE (UC01 du domaine post-mvp/04-fonctions-avancees, § 5.5 de sa
+   * spec technique), CLI UNIQUEMENT — garde INTERNE, au plus près du risque (même
+   * patron que smartclimAuxHomeApi::sonderIntent()). Un SEUL listerAppareils(),
+   * appariement sur configuration.auxhome_device_id.
+   *
+   * ⚠️ Ne renvoie JAMAIS l'identifiant cloud, la MAC ni le passcode — seulement la
+   * trame de contrôle et l'état décodé.
+   *
+   * @return array{trame:string, etat:array}
+   * @throws smartclimException Message CURATÉ (compte non configuré, équipement non
+   *   relié à un appareil AUX Home, appareil absent de la réponse).
+   */
+  public function lireTrameAuxHome() {
+    if (php_sapi_name() !== 'cli') {
+      throw new smartclimException(__('Instrument de mesure réservé à la ligne de commande', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    if (!self::compteConfigure()) {
+      throw new smartclimException(__('Compte AUX Home non configuré : renseignez l\'e-mail et le mot de passe', __FILE__), smartclimException::TYPE_AUTH);
+    }
+    $identifiantAppareil = $this->getConfiguration('auxhome_device_id');
+    if (!is_string($identifiantAppareil) || $identifiantAppareil === '') {
+      throw new smartclimException(__('Cet équipement n\'est pas relié à un appareil AUX Home — relancez un scan', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    try {
+      $appareils = smartclimAuxHomeApi::listerAppareils();
+    } catch (smartclimException $e) {
+      throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
+    }
+    foreach ($appareils as $appareil) {
+      if ($appareil['identifiant'] === $identifiantAppareil) {
+        return array(
+          'trame' => $appareil['trame_controle'],
+          'etat' => smartclimFrame::decoderEtat(smartclimCapabilities::TRANSPORT_AUX_HOME, $appareil['trame_controle'], $appareil['trame_running']),
+        );
+      }
+    }
+    throw new smartclimException(__('Appareil absent de la réponse AUX Home — relancez un scan', __FILE__), smartclimException::TYPE_PROTOCOLE);
+  }
+
+  /**
+   * Instrument de MESURE PRINCIPAL de l'UC (§ 5.5 de la spec technique) : lit → écrit
+   * (si $_ordre n'est pas vide) → attend → relit. CLI UNIQUEMENT, garde INTERNE.
+   *
+   * ⚠️ N'ÉCRIT NI la mémoire d'ordres, NI le marqueur de déduplication, NI AUCUNE
+   * commande : c'est un INSTRUMENT DE MESURE, il doit rendre la lecture BRUTE. Écrire
+   * la mémoire d'ordres ferait filtrer la relecture par filtrerEtatSelonOrdres() et la
+   * mesure confirmerait ce qu'on vient d'envoyer au lieu de ce que l'appareil a
+   * réellement fait (risque R3 de la spec technique).
+   *
+   * @param array $_ordre Map GÉNÉRIQUE concept => valeur générique (mode normal), OU
+   *   clé AUX brute => entier si $_brut vaut true (échappatoire d'investigation, §
+   *   5.6 : essayer une clé non déclarée, ou chercher un bit "eco"). Vide = lecture
+   *   seule.
+   * @param int $_attente Secondes d'attente entre écriture et relecture, bornées à [0, 180].
+   * @param bool $_brut true : passe par smartclimAuxHomeApi::sonderIntent() (clé AUX
+   *   brute, non traduite) ; false (défaut) : passe par appliquerOrdre() (chemin
+   *   normal du plugin, concept générique).
+   * @return array{avant:string, apres:string, etat_avant:array, etat_apres:array, ecrit:bool}
+   * @throws smartclimException Message CURATÉ.
+   */
+  public function sonderIntentAuxHome(array $_ordre, $_attente = 15, $_brut = false) {
+    if (php_sapi_name() !== 'cli') {
+      throw new smartclimException(__('Instrument de mesure réservé à la ligne de commande', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $attente = (int) min(180, max(0, $_attente));
+
+    $avant = $this->lireTrameAuxHome();
+
+    $ecrit = false;
+    if (!empty($_ordre)) {
+      $identifiantAppareil = $this->getConfiguration('auxhome_device_id');
+      try {
+        if ($_brut) {
+          smartclimAuxHomeApi::sonderIntent($identifiantAppareil, $_ordre);
+        } else {
+          smartclimAuxHomeApi::appliquerOrdre($identifiantAppareil, $_ordre);
+        }
+        $ecrit = true;
+      } catch (smartclimException $e) {
+        throw new smartclimException(self::messageErreurAuxHome($e->getType(), $e->getContexte()), $e->getType());
+      }
+      if ($attente > 0) {
+        // Instrument de mesure MANUEL (§ 9/R12 de la spec technique) : jamais de
+        // boucle automatique autour de cet appel, un usage humain unique par mesure.
+        sleep($attente);
+      }
+    }
+
+    $apres = $this->lireTrameAuxHome();
+
+    return array(
+      'avant' => $avant['trame'],
+      'apres' => $apres['trame'],
+      'etat_avant' => $avant['etat'],
+      'etat_apres' => $apres['etat'],
+      'ecrit' => $ecrit,
+    );
   }
 
   /**

@@ -435,8 +435,9 @@ défaut. Cas particulier : changer de mode alors que l'appareil est éteint impo
 | `wind_speed` | vitesse ventilation | **contradiction entre sources — cf. § 4.3** | ❓ |
 | `up_down_swing` | oscillation verticale | `0` = oscille, `7` = fixe | ⚠️ (`ha-aux-a-plus/climate.py::set_swing_mode`) — cohérent avec le LAN Broadlink (`Fixation.ON = 0`, `OFF = 7`) |
 | `left_right_swing` | oscillation horizontale | idem | ⚠️ |
-| `screen` / `screen_on_off` | afficheur | `0`/`1` ❓ | ⚠️ nom exact incertain (`screen` dans `deviceMutex`, `screen_on_off` dans l'état CN) |
-| `sleep_mode`, `eco`, `clean`, `healthy`, `anti_fungus`, `ultra_silence` | fonctions | `0`/`1` ❓ | ⚠️ noms issus de `deviceMutex` (`.memory/brief.md` § 2) ; valeurs non vérifiées |
+| `screen` / `screen_on_off` | afficheur | `0` arrêt, `1` marche, **`2` capteur de luminosité** | ⚠️ nom exact incertain (`screen` dans `deviceMutex`, `screen_on_off` dans l'état CN) — codes ✅ **déclarés par le backend** (§ 4.4) |
+| `sleep_mode`, `clean`, `healthy`, `anti_fungus`, `eco` | fonctions de confort | `0` / `1` | ✅ noms **et** codes **déclarés par le backend** (§ 4.4) ; ⚠️ acceptation par `v2/control` non vérifiée |
+| `ultra_silence` | ultra-silence | ⚠️ **`1` = arrêt, `2` = marche** — *pas* `0`/`1` | ✅ déclaré par le backend ; forme de `specs` différente des autres (§ 4.4) |
 
 ### 4.3 ⚠️ Contradiction ouverte sur `wind_speed`
 
@@ -481,6 +482,54 @@ La décision de fond ne change pas : la table reste une **donnée** et non du co
 `getConfig?id=deviceMutex` est la source de vérité quand un doute revient (cf.
 `smartclim-modele-abstrait-capacites.md`).
 
+### 4.4 Fonctions de confort : le backend déclare noms, codes **et** conditions (2026-09-04)
+
+Établi au cycle UC01 du domaine post-MVP 04, en repassant le dump complet de
+`getConfig?id=deviceMutex` (rapport de sonde du 2026-08-26). Ce que ce passage a changé : les intentions de
+confort n'étaient jusque-là qu'une liste de noms au statut ⚠️ « source unique, valeurs non vérifiées ».
+Chaque entrée de `configContent` porte en réalité `key` (le nom d'intent), `keyN` (le libellé constructeur)
+et `specs` (**les valeurs admises**) — c'est-à-dire la même autorité que celle qui a tranché `wind_speed`
+au § 4.3.
+
+⚠️ **Deux pièges de forme** : `screen` a **trois** codes (le 3ᵉ, `2` = 智能光感, est un mode « capteur de
+luminosité » qui sort de tout modèle booléen), et `ultra_silence` déclare ses `specs` comme un
+**dictionnaire à clés `"1"`/`"2"`** au lieu d'une liste — d'où un sens inversé par rapport à l'intuition
+(`1` = arrêt). Ne jamais présumer `0`/`1` pour une fonction de confort.
+
+**Les règles de disponibilité, plus structurantes encore que les codes** — lues dans `showMutex` /
+`controlMutex` / `off_function_to_support` (moteur décrit au § 3.4) :
+
+| Clé | Refusée / masquée quand |
+|---|---|
+| `sleep_mode` | `on_off=0` · `air_con_func ∈ {0,6}` · `sleep_diy=1` · `electric_lock=1` |
+| `healthy` | `on_off=0` · `electric_lock=1` |
+| `eco` | `on_off=0` · `air_con_func ∈ {0,2,4,6}` (donc **froid seul**) · `power_limit ∈ {1,2,3}` |
+| `clean`, `anti_fungus` | **`on_off=1`** (`off_function_to_support`) · `electric_lock=1` |
+| `screen` | `electric_lock=1` |
+| `ultra_silence` | `air_con_func ∈ {0,2,6}` · `eight_heat=2` |
+
+Trois conséquences de conception, toutes actées dans le code du plugin :
+
+1. ⚠️ **`clean` et `anti_fungus` sont des fonctions de l'état ARRÊT** : `on_off.specs[1].showMutex` les
+   masque quand l'appareil est allumé, et allumer **force `clean=0`**. Leur ordre ne doit donc **jamais**
+   porter `power => 1` — dérogation à la règle générale du projet, qui est scopée « mode ou consigne ».
+2. `sleep_mode` et `healthy` exigent l'appareil **allumé** ⇒ leur ordre porte bien `power => 1`.
+3. `air_con_func.controlMutex` **remet à 0** `sleep_mode`, `eco`, `silence` et `turbo` à chaque changement
+   de mode — mais **pas** `healthy`, `clean`, `anti_fungus`, `screen`. Règle d'IHM que le plugin ne
+   réimplémente pas : divergence de confort avec l'application constructeur, jamais un état faux.
+
+**`ultra_silence` est une fonction DISTINCTE de la vitesse « silencieux », pas un alias** — question de
+périmètre ouverte depuis le brief, ici close : elle a sa propre entrée `configContent`, et son
+`controlMutex` **pilote** `wind_speed = 3` plus `eco = 0` / `ai_eco = 0`. Un alias n'aurait pas à commander
+la vitesse. Elle est donc distincte **mais couplée** à `VITESSE_SILENT`.
+
+**Aucun signal par appareil pour ces fonctions.** Le dump a été passé au filtre « existe-t-il une règle de
+visibilité indexée sur `deviceSupport` / `appSupport` / `healthPlus` / `use_type` pour une fonction de
+confort ? » → **aucune** ; la seule règle de ce type concerne `temperature` (masquée si `deviceSupport` ne
+contient pas `37`). Et `feature.screen = "1"` ne prouve rien dans un sens ni dans l'autre. ⇒ **au-delà de
+la longueur de trame, rien ne permet de savoir si un appareil donné supporte une fonction de confort** —
+ne pas rouvrir ce chantier sans un second appareil de référence.
+
 ## 5. En-tête `country` : cause d'échec de login documentée
 
 > Le `country` (ISO-3) était figé à `NLD` jusqu'à ce qu'un utilisateur slovaque échoue au login avec
@@ -518,6 +567,36 @@ Les deux champs sont des **trames HVAC hexadécimales** (même famille que le LA
 | consigne | `(octet[10] >> 3) + 8` **+ 0,5** si `octet[12] & 0x80` | |
 | vitesse (fil) | `octet[13] >> 5` | **table du fil**, ≠ `wind_speed` de l'intent — cf. § 6.3 |
 | oscillation active | `octet[11] != 0x20` | ⚠️ **ne distingue pas vertical / horizontal** — limitation assumée par la référence |
+
+**Bits des fonctions de confort** (ajout du 2026-09-04, cycle UC01 du domaine post-MVP 04) — offsets dans
+l'espace **charge HVAC nue**, celui de `smartclimFrame` :
+
+| Concept | Lecture | Composition de l'octet en écriture |
+|---|---|---|
+| sommeil | `(octet[15] >> 2) & 1` | `octet[15] = mode<<5 \| sleep<<2` |
+| ioniseur | `(octet[18] >> 1) & 1` | `octet[18] = power<<5 \| health<<1 \| clean<<2` |
+| nettoyage | `(octet[18] >> 2) & 1` | idem |
+| afficheur | `(octet[20] >> 4) & 1` | `octet[20] = display<<4 \| mildew<<3` |
+| anti-moisissure | `(octet[20] >> 3) & 1` | idem |
+
+Statut : ✅ **vérifié dans trois codes sources lus**, lecture *et* écriture concordantes aux mêmes octets —
+`liaan/broadlink_ac_mqtt` (`classes/broadlink/ac_db.py`, `get_ac_states()` / `set_ac_status()`),
+`fparrav/homebridge-aux-cloud` (MIT) et `azadaydinli/ac_freedom` (les deux derniers déjà cités dans
+`smartclim-transport-broadlink-lan.md` §§ 5.2/5.4, à l'espace « réponse LAN », soit **−2**).
+⚠️ **Jamais observé variant sur une trame réelle** : l'unique échantillon disponible vient d'un appareil
+**éteint**, tous ces bits à 0 — ce qui est *cohérent* avec `on_off.specs[0].controlMutex` (qui force
+`sleep_mode=0`, `healthy=0`, `eco=0` à l'extinction), donc **ni contradiction ni preuve**.
+
+⚠️ **Confirmation de l'identité des deux espaces d'offsets** : `ac_db.py` déclare une charge de `0x19` =
+**25 octets**, soit exactement le compte de la trame cloud `status.control` relevée sur l'appareil de
+recette. Les octets 15/18/20 y sont donc tous lisibles. Recoupement utile, la « divergence » d'offsets
+entre références n'étant qu'un décalage de préfixe (cf. le § 3.3 et
+`smartclim-transport-broadlink-lan.md`).
+
+⚠️ **`eco` n'est décodé par AUCUNE des quatre implémentations lues** (les trois ci-dessus plus
+`com.zwegersit.auxairco`, dont `parseControlState` ne lit que marche, mode, consigne, vitesse et
+oscillation). Son bit, s'il existe, est **inconnu** — c'est pourquoi la fonction « Éco » n'est pas livrée :
+sans lecture, aucune commande info ne peut refléter son état.
 
 ### 6.2 `status.running` — trame longue ✅ (`client.ts::parseAmbientTemperature`)
 
@@ -599,8 +678,20 @@ l'application officielle. Conséquences pour SmartClim :
 - [ ] `temperature` : entier °C ou ×10 sur le backend EU ?
 - [x] ~~Table `wind_speed` réelle (8 valeurs ?)~~ → **confirmée par `deviceMutex`** le 2026-08-26,
       identique à la table EU (§ 4.3). Reste à valider l'ADÉQUATION vitesse ↔ ressenti sur l'appareil.
-- [ ] Noms et valeurs exacts des intentions de confort (`screen`/`screen_on_off`, `sleep_mode`, `eco`,
-      `clean`, `healthy`, `anti_fungus`, `ultra_silence`).
+- [x] ~~Noms et valeurs exacts des intentions de confort~~ → **déclarés par le backend** le 2026-09-04
+      (§ 4.4), avec leurs conditions de disponibilité. ⚠️ Reste ouvert : **l'endpoint `v2/control`
+      accepte-t-il ces clés ?** Aucune implémentation tierce n'en implémente une seule — une clé déclarée
+      dans `deviceMutex` ne prouve pas qu'elle soit commandable. Replis à essayer dans l'ordre :
+      `screen_on_off`, puis `POST /app/device/control` sans `v2`.
+- [ ] **Bits de lecture des fonctions de confort** (octets 15/18/20, § 6.1) : concordants sur trois
+      implémentations mais **jamais vus varier** — le seul échantillon vient d'un appareil éteint. À
+      mesurer par `core/php/sonde-intent-auxhome.php` (diff d'octets), fonction par fonction, avant
+      d'activer quoi que ce soit : c'est ce qui conditionne le passage de `'confirme' => false` à `true`
+      dans `smartclimCapabilities::fonctionsConfort()`.
+- [ ] **Existe-t-il un bit `eco` ?** Aucune des quatre implémentations lues ne le décode (§ 6.1). À
+      chercher par diff d'octets tant que le matériel est disponible (`--intent=eco --valeur=1` puis `0`).
+      Même question pour `ultra_silence` (`--valeur=2` puis `1`). Sans bit, ces deux fonctions restent
+      hors périmètre.
 - [x] ~~Où le backend expose-t-il les capacités RÉELLES d'un appareil donné ?~~ → **`feature`, dans
       chaque ligne de `/app/user_device`** (sonde du 2026-08-26, § 3.2). Aucune route nouvelle.
 - [x] ~~`feature.mode` ou `feature.coolType` ?~~ → **`coolType = 1` ⇒ pas de chauffage** (l'application
@@ -618,7 +709,10 @@ l'application officielle. Conséquences pour SmartClim :
 - [ ] Gating des vitesses PAR MODE (rien en déshumidification, pas d'auto en ventilation) : contrat
       vérifié (§ 3.4), exploitation ajournée au domaine post-MVP 04 — demande un profil par mode.
 - [ ] Table de référence des index de `feature.deviceSupport` / `appSupport` / `healthPlus` (sommaire de
-      `configContent` ?) — matière du domaine post-MVP 04.
+      `configContent` ?) — matière du domaine post-MVP 04. ⚠️ **Négatif établi le 2026-09-04** : le dump a
+      été passé au filtre « une règle de visibilité indexée sur ces champs existe-t-elle pour une fonction
+      de confort ? » → **aucune** (§ 4.4). Il n'existe donc **aucun signal par appareil** pour ces
+      fonctions au-delà de la longueur de trame ; inutile de rouvrir sans un second appareil.
 - [ ] Schéma de `GET /app/getConfig?id=deviceMutex` et **façon d'en dériver les capacités d'un appareil
       donné** (par `modelId` ? par un champ de `/app/user_device` ?).
 - [ ] `POST /app/device/control` (sans `v2`) existe-t-il en EU ?

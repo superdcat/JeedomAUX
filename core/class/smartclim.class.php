@@ -431,7 +431,7 @@ class smartclim extends eqLogic {
    * FUSIONNENT ceux du LAN et ceux du cloud (array_replace, le CLOUD gagne en cas de
    * collision — reflet de l'ordre réel d'exécution, le cloud passant EN DERNIER).
    *
-   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, cloudErreur:string}
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, cloudErreur:string, climatiseurs:array}
    */
   public static function scannerClimatiseurs() {
     $lan = self::scannerReseauLocal();
@@ -455,12 +455,19 @@ class smartclim extends eqLogic {
 
     $lanProfils = isset($lan['profils']) && is_array($lan['profils']) ? $lan['profils'] : array();
     $lanEtatsConnexion = isset($lan['etatsConnexion']) && is_array($lan['etatsConnexion']) ? $lan['etatsConnexion'] : array();
+    // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.10 de sa spec
+    // technique) : le cloud passe EN DERNIER et gagne — reflète l'ordre RÉEL d'exécution
+    // (LAN puis cloud), donc le transport RÉELLEMENT en usage.
+    $etatsConnexionFusionnes = array_replace($lanEtatsConnexion, $resultatCloud['etatsConnexion']);
 
     return array_merge($resultatCloud, array(
       'profils' => array_replace($lanProfils, $resultatCloud['profils']),
-      'etatsConnexion' => array_replace($lanEtatsConnexion, $resultatCloud['etatsConnexion']),
+      'etatsConnexion' => $etatsConnexionFusionnes,
       'lan' => $lan,
       'cloudErreur' => $cloudErreur,
+      // UC04 (§ 5.10) : une ligne de synthèse par climatiseur (LAN oui/non, cloud
+      // oui/non, transport actif), calculée APRÈS les deux phases.
+      'climatiseurs' => self::lignesFusionScan($lan['appareils'], $resultatCloud['appareils'], $etatsConnexionFusionnes),
     ));
   }
 
@@ -554,7 +561,9 @@ class smartclim extends eqLogic {
 
           if (in_array($cleConsommee, $consommes, true)) {
             $compteurs['ignores']++;
-            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_doublon');
+            // UC04 (post-mvp/01), § 5.7 : equipementId renseigné quand l'objet est
+            // effectivement en main (rapproché via l'index), 0 sinon.
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_doublon', is_object($eqLogic) ? $eqLogic->getId() : 0);
             continue;
           }
 
@@ -578,17 +587,23 @@ class smartclim extends eqLogic {
             if ($eqLogic->appliquerCapacites($capacites)) {
               $modifie = true;
             }
+            // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.4 de sa spec
+            // technique) : intègre memoriserMacEquipement() à la MÊME chaîne $modifie,
+            // AUCUN save() supplémentaire — c'est la migration du parc sans script.
+            if (self::memoriserMacEquipement($eqLogic, $macNorm)) {
+              $modifie = true;
+            }
             if ($modifie) {
               $eqLogic->save();
             }
             $compteurs['existants']++;
-            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'existant');
+            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'existant', $eqLogic->getId());
             $eqLogicsTouches[] = $eqLogic;
           } else {
-            $eqLogic = self::creerEquipement($logicalId, $appareil, $macNorm, $index['noms'], $capacites);
+            $eqLogic = self::creerEquipement($logicalId, $appareil['nom'], $macNorm, $index['noms'], $capacites, array('auxhome_device_id' => $identifiant, 'modele' => $appareil['modele']));
             $consommes[] = $logicalId;
             $compteurs['crees']++;
-            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'cree');
+            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['modele'], $macNorm, $identifiant, $appareil['enLigne'], 'cree', $eqLogic->getId());
             $eqLogicsTouches[] = $eqLogic;
           }
 
@@ -670,6 +685,11 @@ class smartclim extends eqLogic {
       // ci-dessus (un appareil Broadlink non-climatiseur authentifie très bien, § 3.4).
       'etats_lus' => 0,
       'etats_illisibles' => 0,
+      // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.5 de sa spec
+      // technique) : créations LAN (preuve STATUT_ETAT_LU) et doublons ignorés au sein
+      // de ce MÊME scan.
+      'crees' => 0,
+      'ignores' => 0,
     );
     $appareils = array();
     $rencontres = array(); // MAC (imprimable) déjà traitées, phases 1 et 2 confondues.
@@ -677,6 +697,11 @@ class smartclim extends eqLogic {
     // Équipements TOUCHÉS par ce scan LAN (lecture appliquée), pour rafraîchir l'affichage
     // sans recharger la page — même motif que scannerAuxHome() (UC04/UC08).
     $eqLogicsTouches = array();
+    // UC04 (post-mvp/01), § 5.5 de sa spec technique : id des équipements déjà
+    // rapprochés PENDANT ce scan LAN — empêche deux appareils découverts de revendiquer
+    // le même équipement (et donc d'écrire l'un sur l'autre via une collision de MAC
+    // inversée). ⚠️ Reste DISJOINT de $consommes (scan cloud) : ne sert qu'ici.
+    $rapprochesLan = array();
 
     // Une SEULE requête SQL pour tout le scan LAN (D-POSTMVP0101-04, review UC02) :
     // réutilisée en phase 1 (rapprochement par MAC, § 8.2 de la spec technique UC02) ET
@@ -719,16 +744,47 @@ class smartclim extends eqLogic {
           'vu_le' => $appareil['vu_le'],
           'echec_le' => self::statutEnEchec($lecture['statut']) ? time() : 0,
         ));
-        $appareils[] = self::ligneResultatLan($appareil['nom'], $mac, $appareil['ip'], $appareil['type_appareil'], $lecture['statut'], self::libelleStatutLan($lecture['statut']));
 
-        // Rapprochement par MAC vers un équipement DÉJÀ EXISTANT UNIQUEMENT (§ 8.2 de la
-        // spec technique UC02) : aucune création par la voie LAN, la fusion des doublons
-        // LAN/cloud reste UC04 de ce domaine.
-        $eqLogicExistant = self::chercherEquipementExistant($mac, '', $index);
-        if (is_object($eqLogicExistant)) {
-          self::appliquerLectureLan($eqLogicExistant, $lecture);
-          $eqLogicsTouches[] = $eqLogicExistant;
+        // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.5 de sa spec
+        // technique) : rapprochement PUIS, à défaut, création conditionnée à la PREUVE
+        // STATUT_ETAT_LU — critère de PREUVE, pas de joignabilité (§ 5.5, un appareil
+        // Broadlink non-climatiseur authentifie très bien mais ne rend pas de charge
+        // exploitable). C'est le SEUL acte irréversible de cette UC.
+        $eqLogicRapproche = self::chercherEquipementExistant($mac, '', $index, smartclimCapabilities::TRANSPORT_BROADLINK_LAN);
+        if (!is_object($eqLogicRapproche) && $lecture['statut'] === smartclimBroadlinkLan::STATUT_ETAT_LU) {
+          $eqLogicRapproche = self::creerEquipement('mac:' . $mac, $appareil['nom'], $mac, $index['noms'], smartclimBroadlinkLan::capacitesAppareil($lecture), array());
+          $compteurs['crees']++;
+          // Insertion IMMÉDIATE dans l'index EN MÉMOIRE (§ 5.5) : empêche un second
+          // appareil de MAC inversée de créer un doublon DANS CE MÊME SCAN. ⚠️ JAMAIS
+          // dans $index['tous'] (réservé au balayage de la phase 2) : l'appareil est
+          // déjà dans $rencontres.
+          $index['parLogicalId'][$eqLogicRapproche->getLogicalId()] = $eqLogicRapproche;
+          $index['parMac'][$mac] = $eqLogicRapproche;
+          $index['noms'][$eqLogicRapproche->getName()] = true;
         }
+
+        $statutLigne = $lecture['statut'];
+        $equipementId = 0;
+        if (is_object($eqLogicRapproche)) {
+          $equipementId = $eqLogicRapproche->getId();
+          if (isset($rapprochesLan[$eqLogicRapproche->getId()])) {
+            // Deux appareils découverts pointent vers le MÊME équipement DANS CE SCAN
+            // (§ 5.5) : aucun état appliqué — c'est ce qui empêche deux appareils
+            // d'écrire l'un sur l'autre via une collision de MAC inversée.
+            log::add('smartclim', 'warning', 'Broadlink LAN : deux appareils détectés se rapprochent du même équipement "' . self::neutraliserPourLog($eqLogicRapproche->getHumanName()) . '" — ignoré');
+            $compteurs['ignores']++;
+            $statutLigne = 'ignore_doublon';
+          } else {
+            $rapprochesLan[$eqLogicRapproche->getId()] = true;
+            if (self::memoriserMacEquipement($eqLogicRapproche, $mac)) {
+              $eqLogicRapproche->save();
+            }
+            self::appliquerLectureLan($eqLogicRapproche, $lecture);
+            $eqLogicsTouches[] = $eqLogicRapproche;
+          }
+        }
+        // UC04 (§ 5.5) : ligne poussée APRÈS le rapprochement, pour porter equipementId.
+        $appareils[] = self::ligneResultatLan($appareil['nom'], $mac, $appareil['ip'], $appareil['type_appareil'], $statutLigne, self::libelleStatutLan($statutLigne), $equipementId);
       } catch (Throwable $t) {
         log::add('smartclim', 'warning', 'Broadlink LAN : traitement d\'un appareil découvert en échec : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
       }
@@ -800,9 +856,17 @@ class smartclim extends eqLogic {
           'echec_le' => self::statutEnEchec($lecture['statut']) ? time() : 0,
         ));
         // Phase 2 : l'équipement est DÉJÀ en main (§ 8.2 de la spec technique UC02),
-        // aucun rapprochement à refaire.
+        // aucun rapprochement à refaire. UC04 (§ 5.5 de sa spec technique) :
+        // memoriserMacEquipement() + save() conditionné, AVANT appliquerLectureLan().
+        if (self::memoriserMacEquipement($eqLogic, $macTrouvee)) {
+          $eqLogic->save();
+        }
         self::appliquerLectureLan($eqLogic, $lecture);
         $eqLogicsTouches[] = $eqLogic;
+        // UC04 (§ 5.5) : ligne de scan poussée pour cette phase — SANS elle, un
+        // équipement joint UNIQUEMENT via une adresse saisie (cas VLAN) afficherait à
+        // tort "Disponible en LAN : Non" dans la synthèse d'AC3.
+        $appareils[] = self::ligneResultatLan($trouve['nom'], $macTrouvee, $trouve['ip'], $trouve['type_appareil'], $lecture['statut'], self::libelleStatutLan($lecture['statut']), $eqLogic->getId());
       } catch (Throwable $t) {
         log::add('smartclim', 'warning', 'Broadlink LAN : sonde d\'adresse manuelle en échec (équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
       }
@@ -901,11 +965,13 @@ class smartclim extends eqLogic {
 
   /**
    * Construit une ligne du tableau "appareils" LAN (D-POSTMVP0101-09) : liste BLANCHE de
-   * champs, jamais une clé de session.
+   * champs, jamais une clé de session. `equipementId` (UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.7 de sa spec technique) : id de l'eqLogic
+   * rapproché, 0 sinon.
    *
-   * @return array{nom:string, mac:string, ip:string, typeAppareil:string, statut:string, statutLibelle:string}
+   * @return array{nom:string, mac:string, ip:string, typeAppareil:string, statut:string, statutLibelle:string, equipementId:int}
    */
-  private static function ligneResultatLan($_nom, $_mac, $_ip, $_typeAppareil, $_statut, $_statutLibelle) {
+  private static function ligneResultatLan($_nom, $_mac, $_ip, $_typeAppareil, $_statut, $_statutLibelle, $_equipementId = 0) {
     return array(
       'nom' => $_nom,
       'mac' => $_mac,
@@ -913,6 +979,7 @@ class smartclim extends eqLogic {
       'typeAppareil' => $_typeAppareil,
       'statut' => $_statut,
       'statutLibelle' => $_statutLibelle,
+      'equipementId' => (int) $_equipementId,
     );
   }
 
@@ -951,6 +1018,12 @@ class smartclim extends eqLogic {
     if ($_statut === smartclimBroadlinkLan::STATUT_ETAT_ILLISIBLE) {
       return __('LAN disponible — état non décodable par cet appareil', __FILE__);
     }
+    // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.5 de sa spec technique) :
+    // un statut de LIGNE, pas un statut de session/lecture — deux appareils découverts
+    // dans ce même scan pointent vers le même équipement.
+    if ($_statut === 'ignore_doublon') {
+      return __('Ignoré — un autre appareil détecté correspond déjà à cet équipement', __FILE__);
+    }
     return __('Jamais détecté sur le réseau local', __FILE__);
   }
 
@@ -972,6 +1045,11 @@ class smartclim extends eqLogic {
     }
     if ($_compteurs['etats_lus'] > 0) {
       $fragments[] = sprintf(__('%d état(s) lu(s) sur le réseau local', __FILE__), $_compteurs['etats_lus']);
+    }
+    // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.5 de sa spec technique) :
+    // mentionne les créations issues du LAN, symétrique du résumé du scan cloud.
+    if ($_compteurs['crees'] > 0) {
+      $fragments[] = sprintf(__('%d climatiseur(s) créé(s) depuis le réseau local', __FILE__), $_compteurs['crees']);
     }
     if ($_compteurs['non_sondes'] > 0) {
       $fragments[] = sprintf(__('%d appareil(s) non sondé(s) faute de budget', __FILE__), $_compteurs['non_sondes']);
@@ -1073,11 +1151,13 @@ class smartclim extends eqLogic {
 
   /**
    * Construit une ligne du tableau "appareils" renvoyé par scannerAuxHome() : liste
-   * BLANCHE de champs (AC2 — jamais de jeton, uid ou e-mail).
+   * BLANCHE de champs (AC2 — jamais de jeton, uid ou e-mail). `equipementId` (UC04 du
+   * domaine post-mvp/01-transport-broadlink-lan, § 5.7 de sa spec technique) : id de
+   * l'eqLogic si l'objet est en main (cree/existant/ignore_doublon), 0 sinon.
    *
-   * @return array{nom:string, modele:string, mac:string, identifiant:string, enLigne:bool, enLigneLibelle:string, statut:string, statutLibelle:string}
+   * @return array{nom:string, modele:string, mac:string, identifiant:string, enLigne:bool, enLigneLibelle:string, statut:string, statutLibelle:string, equipementId:int}
    */
-  private static function ligneResultatScan($_nom, $_modele, $_mac, $_identifiant, $_enLigne, $_statut) {
+  private static function ligneResultatScan($_nom, $_modele, $_mac, $_identifiant, $_enLigne, $_statut, $_equipementId = 0) {
     return array(
       'nom' => $_nom,
       'modele' => $_modele,
@@ -1087,25 +1167,51 @@ class smartclim extends eqLogic {
       'enLigneLibelle' => self::libelleEnLigne($_enLigne),
       'statut' => $_statut,
       'statutLibelle' => self::libelleStatut($_statut),
+      'equipementId' => (int) $_equipementId,
     );
   }
 
   /**
    * Charge tous les équipements smartclim en UNE seule requête
    * (eqLogic::byType('smartclim')) et construit les index utilisés par le
-   * rapprochement (§ 5.2 de la spec technique UC03) : par logicalId, par
-   * auxhome_device_id, la liste complète (pour appareilsDisparus()) et l'ensemble des
-   * noms déjà utilisés (pour nomUnique()).
+   * rapprochement (§ 5.1/5.2 de la spec technique UC04, post-mvp/01) : par logicalId,
+   * par MAC (configuration.mac), par MAC LAN saisie (configuration.lan_mac, non vide
+   * seulement), par auxhome_device_id, la liste complète (pour appareilsDisparus()) et
+   * l'ensemble des noms déjà utilisés (pour nomUnique()).
    *
-   * @return array{parLogicalId:array<string,smartclim>, parDeviceId:array<string,smartclim>, tous:smartclim[], noms:array<string,bool>}
+   * ⚠️ Premier arrivé gagne sur parMac/parLanMac, avec un log 'debug' en cas de
+   * collision (doublon RÉEL du parc, pas une anomalie de code).
+   *
+   * @return array{parLogicalId:array<string,smartclim>, parMac:array<string,smartclim>, parLanMac:array<string,smartclim>, parDeviceId:array<string,smartclim>, tous:smartclim[], noms:array<string,bool>}
    */
   private static function indexerEquipements() {
     $tous = eqLogic::byType('smartclim');
     $parLogicalId = array();
+    $parMac = array();
+    $parLanMac = array();
     $parDeviceId = array();
     $noms = array();
     foreach ($tous as $eqLogic) {
       $parLogicalId[$eqLogic->getLogicalId()] = $eqLogic;
+      $mac = self::normaliserMac($eqLogic->getConfiguration('mac'));
+      if ($mac !== '') {
+        if (isset($parMac[$mac])) {
+          log::add('smartclim', 'debug', 'Collision d\'index MAC entre équipements lors de l\'indexation (' . $mac . ')');
+        } else {
+          $parMac[$mac] = $eqLogic;
+        }
+      }
+      // ⚠️ preSave() écrit TOUJOURS lan_mac, fût-ce une chaîne vide : filtrer sur
+      // "non vide" avant d'indexer, sinon tous les équipements sans adresse locale
+      // collisionnent sur la clé '' (§ 5.1 de la spec technique).
+      $lanMac = self::normaliserMac($eqLogic->getConfiguration(self::CLE_CONF_LAN_MAC));
+      if ($lanMac !== '') {
+        if (isset($parLanMac[$lanMac])) {
+          log::add('smartclim', 'debug', 'Collision d\'index MAC LAN entre équipements lors de l\'indexation (' . $lanMac . ')');
+        } else {
+          $parLanMac[$lanMac] = $eqLogic;
+        }
+      }
       $deviceId = $eqLogic->getConfiguration('auxhome_device_id');
       if (is_string($deviceId) && $deviceId !== '') {
         $parDeviceId[$deviceId] = $eqLogic;
@@ -1114,6 +1220,8 @@ class smartclim extends eqLogic {
     }
     return array(
       'parLogicalId' => $parLogicalId,
+      'parMac' => $parMac,
+      'parLanMac' => $parLanMac,
       'parDeviceId' => $parDeviceId,
       'tous' => $tous,
       'noms' => $noms,
@@ -1121,32 +1229,69 @@ class smartclim extends eqLogic {
   }
 
   /**
-   * Rapproche un appareil renvoyé par le cloud avec un équipement Jeedom déjà connu,
-   * dans l'ordre imposé par § 5.2 de la spec technique UC03 (conforme à
-   * .memory/analyse/smartclim-architecture-jeedom.md § 4) : MAC normalisée, puis MAC
-   * inversée (journalisée en warning), puis auxhome_device_id déjà mémorisé.
-   * `logicalId` n'est JAMAIS réécrit après création — c'est l'identité de
-   * l'équipement, rien n'en garantit l'unicité au niveau SQL.
+   * Rapproche un appareil (cloud ou LAN) avec un équipement Jeedom déjà connu, dans
+   * l'ordre CORRIGÉ imposé par § 5.2 de la spec technique UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan (conforme à
+   * .memory/analyse/smartclim-architecture-jeedom.md § 4) : tous les ordres DIRECTS
+   * (logicalId, mac, lan_mac) avant tous les ordres INVERSÉS (mêmes trois clés), puis
+   * auxhome_device_id. `logicalId` n'est JAMAIS réécrit après création — c'est
+   * l'identité de l'équipement, rien n'en garantit l'unicité au niveau SQL.
+   *
+   * ⚠️ `parLanMac` ne rapproche que POUR SON TRANSPORT (étapes 3 et 6, gardées par
+   * `$_transport === TRANSPORT_BROADLINK_LAN`) : `lan_mac` est une déclaration
+   * utilisateur pour le LAN, s'en servir pour un appareil cloud attacherait un
+   * appareil neuf à l'équipement d'un autre sur une simple faute de frappe.
+   * ⚠️ Garde palindrome : les étapes inversées (4-6) sont SAUTÉES si
+   * `macInversee($_macNorm) === $_macNorm`, sinon le warning "MAC inversée" se
+   * déclencherait à tort sur une MAC symétrique alors que c'est le MÊME équipement
+   * que l'étape 1.
    *
    * @param string $_macNorm
    * @param string $_deviceId
    * @param array $_index Index construit par indexerEquipements().
+   * @param string $_transport '' (cloud, comportement historique inchangé) ou
+   *   smartclimCapabilities::TRANSPORT_BROADLINK_LAN.
    * @return smartclim|null
    */
-  private static function chercherEquipementExistant($_macNorm, $_deviceId, array $_index) {
+  private static function chercherEquipementExistant($_macNorm, $_deviceId, array $_index, $_transport = '') {
+    $lan = ($_transport === smartclimCapabilities::TRANSPORT_BROADLINK_LAN);
+
     if ($_macNorm !== '') {
+      // 1. logicalId direct.
       if (isset($_index['parLogicalId']['mac:' . $_macNorm])) {
         return $_index['parLogicalId']['mac:' . $_macNorm];
       }
+      // 2. configuration.mac direct.
+      if (isset($_index['parMac'][$_macNorm])) {
+        return $_index['parMac'][$_macNorm];
+      }
+      // 3. lan_mac direct (LAN seulement).
+      if ($lan && isset($_index['parLanMac'][$_macNorm])) {
+        return $_index['parLanMac'][$_macNorm];
+      }
+
       $macInversee = self::macInversee($_macNorm);
-      if ($macInversee !== '' && isset($_index['parLogicalId']['mac:' . $macInversee])) {
-        // Littéral NEUTRE de transport (UC02 du domaine post-mvp/01-transport-broadlink-lan,
-        // § 5.5 de sa spec technique) : cette méthode sert désormais aussi au rapprochement
-        // LAN (scannerReseauLocal()), pas seulement à AUX Home.
-        log::add('smartclim', 'warning', 'Appareil rapproché via la MAC inversée (' . $_macNorm . ' / ' . $macInversee . ')');
-        return $_index['parLogicalId']['mac:' . $macInversee];
+      if ($macInversee !== '' && $macInversee !== $_macNorm) {
+        // 4. logicalId inversé.
+        if (isset($_index['parLogicalId']['mac:' . $macInversee])) {
+          // Littéral NEUTRE de transport (UC02 du domaine post-mvp/01-transport-broadlink-lan,
+          // § 5.5 de sa spec technique) : cette méthode sert au rapprochement cloud ET LAN.
+          log::add('smartclim', 'warning', 'Appareil rapproché via la MAC inversée (' . $_macNorm . ' / ' . $macInversee . ')');
+          return $_index['parLogicalId']['mac:' . $macInversee];
+        }
+        // 5. configuration.mac inversé.
+        if (isset($_index['parMac'][$macInversee])) {
+          log::add('smartclim', 'warning', 'Appareil rapproché via la MAC inversée (' . $_macNorm . ' / ' . $macInversee . ')');
+          return $_index['parMac'][$macInversee];
+        }
+        // 6. lan_mac inversé (LAN seulement).
+        if ($lan && isset($_index['parLanMac'][$macInversee])) {
+          log::add('smartclim', 'warning', 'Appareil rapproché via la MAC inversée (' . $_macNorm . ' / ' . $macInversee . ')');
+          return $_index['parLanMac'][$macInversee];
+        }
       }
     }
+    // 7. auxhome_device_id (cloud seulement, le LAN passe '').
     if ($_deviceId !== '' && isset($_index['parDeviceId'][$_deviceId])) {
       return $_index['parDeviceId'][$_deviceId];
     }
@@ -1154,19 +1299,27 @@ class smartclim extends eqLogic {
   }
 
   /**
-   * Crée un équipement Jeedom pour un appareil AUX Home nouvellement découvert
-   * (AC1) : setName() UNIQUEMENT ici (AC3 — jamais réappelé sur un équipement
-   * existant), setObject_id() JAMAIS appelé (AC4). Aucune smartclimCmd, aucune
-   * capacité, aucune trame HVAC : hors périmètre UC03 (§ 0 de la spec technique).
+   * Crée un équipement Jeedom pour un appareil nouvellement découvert, CLOUD ou LAN
+   * (AC1 du MVP UC03, § 5.3 de la spec technique UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan) : setName() UNIQUEMENT ici (AC3 — jamais
+   * réappelé sur un équipement existant), setObject_id() JAMAIS appelé (AC4). Aucune
+   * smartclimCmd, aucune trame HVAC ici : les capacités sont pré-calculées par
+   * l'appelant (§ 0 de la spec technique UC03).
+   *
+   * *Arbitrage* (§ 5.3 de la spec technique UC04) : méthode NEUTRE de transport
+   * plutôt qu'un jumeau creerEquipementLan() — $_nomBrut est l'alias déjà assaini par
+   * le transport appelant, $_configuration porte les clés SUPPLÉMENTAIRES propres à
+   * ce transport (ex. auxhome_device_id/modele côté cloud, aucune côté LAN).
    *
    * @param string $_logicalId
-   * @param array $_appareil Normalisé par smartclimAuxHomeApi::normaliserAppareil().
+   * @param string $_nomBrut Alias déjà assaini par le transport appelant.
    * @param string $_macNorm
    * @param array $_noms Noms déjà utilisés, par référence (nomUnique()).
-   * @param array $_capacites Profil de capacités détecté (smartclimAuxHomeApi::capacitesAppareil()), UC04.
+   * @param array $_capacites Profil de capacités détecté (UC04 du MVP).
+   * @param array $_configuration Clés de configuration SUPPLÉMENTAIRES à poser.
    * @return smartclim
    */
-  private static function creerEquipement($_logicalId, array $_appareil, $_macNorm, array &$_noms, array $_capacites) {
+  private static function creerEquipement($_logicalId, $_nomBrut, $_macNorm, array &$_noms, array $_capacites, array $_configuration = array()) {
     $eqLogic = new smartclim();
     $eqLogic->setEqType_name('smartclim');
     $eqLogic->setLogicalId($_logicalId);
@@ -1174,8 +1327,7 @@ class smartclim extends eqLogic {
     // Même fonction que celle appliquée par setName() (§ 6.4 de la spec technique) :
     // un alias non vide après nettoyage côté transport peut le redevenir une fois
     // passé au filtre du core -> repli sur le nom par défaut dans ce cas.
-    $alias = $_appareil['nom'];
-    $souhaite = (trim(cleanComponanteName($alias)) !== '') ? $alias : self::nomAppareilParDefaut($_macNorm);
+    $souhaite = (trim(cleanComponanteName($_nomBrut)) !== '') ? $_nomBrut : self::nomAppareilParDefaut($_macNorm);
     $eqLogic->setName(self::nomUnique($souhaite, $_noms));
 
     $eqLogic->setIsEnable(1);
@@ -1184,14 +1336,43 @@ class smartclim extends eqLogic {
     if ($_macNorm !== '') {
       $eqLogic->setConfiguration('mac', $_macNorm);
     }
-    $eqLogic->setConfiguration('auxhome_device_id', $_appareil['identifiant']);
-    $eqLogic->setConfiguration('modele', $_appareil['modele']);
+    foreach ($_configuration as $cle => $valeur) {
+      $eqLogic->setConfiguration($cle, $valeur);
+    }
     // Pose le profil de capacités AVANT le save() unique (UC04) : jamais un 2e save()
     // dédié, qui romprait l'invariant « une création = un seul save() ».
     $eqLogic->appliquerCapacites($_capacites);
     $eqLogic->save();
 
     return $eqLogic;
+  }
+
+  /**
+   * Pose `configuration.mac` d'un équipement EXISTANT SI ET SEULEMENT SI elle est
+   * actuellement VIDE et que la MAC fournie ne l'est pas (UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.4 de sa spec technique) — N'ÉCRASE
+   * JAMAIS une MAC déjà connue. N'émet AUCUN save() : c'est à l'appelant de décider.
+   *
+   * Trois motifs, par ordre d'importance : (1) idempotence de l'écriture (AC4) ; (2)
+   * empêche un cloud annonçant la MAC dans l'autre ordre de désynchroniser
+   * configuration.mac du suffixe du logicalId et de provoquer un save() à CHAQUE scan ;
+   * (3) c'est LA migration du parc — un équipement `auxhome:<deviceId>` acquiert sa
+   * MAC au premier scan qui la connaît, sans script de migration.
+   *
+   * @param smartclim $_eqLogic
+   * @param string $_macNorm
+   * @return bool true si l'objet a été modifié (l'appelant doit alors appeler save()).
+   */
+  private static function memoriserMacEquipement(smartclim $_eqLogic, $_macNorm) {
+    if ($_macNorm === '') {
+      return false;
+    }
+    $macActuelle = self::normaliserMac($_eqLogic->getConfiguration('mac'));
+    if ($macActuelle !== '') {
+      return false;
+    }
+    $_eqLogic->setConfiguration('mac', $_macNorm);
+    return true;
   }
 
   /**
@@ -1264,14 +1445,17 @@ class smartclim extends eqLogic {
   }
 
   /**
-   * Équipements smartclim déjà connus, plausiblement issus d'AUX Home (§ 1 AC6 / § 5.2
-   * de la spec technique — `auxhome_device_id` OU `mac` non vide), mais non retrouvés
-   * dans la réponse de ce scan (AC6) : jamais supprimés ni désactivés ici — écran de
-   * résultat + log 'warning' uniquement (§ 0 de la spec technique, décision actée avec
-   * l'utilisateur). ⚠️ Un équipement smartclim créé manuellement (ou plus tard par un
-   * autre transport) sans AUCUNE des deux clés n'est jamais candidat "disparu" : rien
-   * ne le rapprochera jamais d'un scan AUX Home, il serait sinon signalé à chaque
-   * cycle, indéfiniment (finding MAJOR de la revue croisée UC03, tour 1).
+   * Équipements smartclim déjà connus, plausiblement issus d'AUX Home, mais non
+   * retrouvés dans la réponse de ce scan (AC6) : jamais supprimés ni désactivés ici —
+   * écran de résultat + log 'warning' uniquement (§ 0 de la spec technique, décision
+   * actée avec l'utilisateur).
+   *
+   * ⚠️ CRITÈRE CORRIGÉ (UC04 du domaine post-mvp/01-transport-broadlink-lan, § 5.12 de
+   * sa spec technique) : `auxhome_device_id` non vide SEUL, et non plus `OU mac non
+   * vide`. Un équipement créé par le LAN porte une `mac` et AUCUN `auxhome_device_id` —
+   * avec l'ancien critère, il serait signalé "introuvable" à CHAQUE scan cloud,
+   * indéfiniment. C'est aussi le critère sémantiquement juste : « disparu du compte AUX
+   * Home » ne veut rien dire pour un appareil qui n'y a JAMAIS été.
    *
    * @param array $_index Index construit par indexerEquipements().
    * @param array $_consommes logicalId des équipements rapprochés PENDANT ce scan.
@@ -1285,7 +1469,7 @@ class smartclim extends eqLogic {
       }
       $deviceId = $eqLogic->getConfiguration('auxhome_device_id');
       $mac = $eqLogic->getConfiguration('mac');
-      $issuAuxHome = (is_string($deviceId) && $deviceId !== '') || (is_string($mac) && $mac !== '');
+      $issuAuxHome = is_string($deviceId) && $deviceId !== '';
       if (!$issuAuxHome) {
         continue;
       }
@@ -1303,6 +1487,105 @@ class smartclim extends eqLogic {
       );
     }
     return $disparus;
+  }
+
+  /**
+   * Libellé traduit d'une disponibilité (Oui/Non), UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan (§ 5.9 de sa spec technique). SEUL endroit du
+   * plugin où vivent ces deux __() (même règle que libelleStatutLan()/
+   * messageErreurAuxHome()).
+   *
+   * @param bool $_disponible
+   * @return string
+   */
+  private static function libelleDisponibilite($_disponible) {
+    return $_disponible ? __('Oui', __FILE__) : __('Non', __FILE__);
+  }
+
+  /**
+   * Table de synthèse d'AC3 (UC04 du domaine post-mvp/01-transport-broadlink-lan, §
+   * 5.8 de sa spec technique) : UNE ligne par eqLogic référencé par au moins une ligne
+   * de scan (`equipementId` > 0, LAN ou cloud), triée par nom.
+   *
+   * *Arbitrage* (§ 5.8) : UNE requête SQL de plus (eqLogic::byType()) sur une opération
+   * de ~40 s, plutôt que de faire remonter trois nouvelles clés par les deux phases —
+   * la requête est le moindre coût.
+   *
+   * ⚠️ Ne LÈVE JAMAIS (try/catch(Throwable) global, tableau vide en dernier recours) :
+   * cette méthode tourne APRÈS deux phases coûteuses, elle ne doit jamais faire perdre
+   * leur résultat.
+   *
+   * @param array $_lignesLan Lignes normalisées par ligneResultatLan() (scannerReseauLocal()).
+   * @param array $_lignesCloud Lignes normalisées par ligneResultatScan() (scannerAuxHome()).
+   * @param array $_etatsConnexion Carte id eqLogic => etatConnexionAffichable(), déjà FUSIONNÉE (LAN puis cloud).
+   * @return array<int, array{nom:string, mac:string, lan:string, cloud:string, transport:string}>
+   */
+  private static function lignesFusionScan(array $_lignesLan, array $_lignesCloud, array $_etatsConnexion) {
+    try {
+      $ids = array();
+      foreach ($_lignesLan as $ligneLan) {
+        if (isset($ligneLan['equipementId']) && (int) $ligneLan['equipementId'] > 0) {
+          $ids[(int) $ligneLan['equipementId']] = true;
+        }
+      }
+      foreach ($_lignesCloud as $ligneCloud) {
+        if (isset($ligneCloud['equipementId']) && (int) $ligneCloud['equipementId'] > 0) {
+          $ids[(int) $ligneCloud['equipementId']] = true;
+        }
+      }
+      if (empty($ids)) {
+        return array();
+      }
+
+      $eqLogics = array();
+      foreach (eqLogic::byType('smartclim') as $eqLogic) {
+        $eqLogics[$eqLogic->getId()] = $eqLogic;
+      }
+
+      $lignes = array();
+      foreach (array_keys($ids) as $id) {
+        if (!isset($eqLogics[$id])) {
+          continue;
+        }
+        $eqLogic = $eqLogics[$id];
+
+        $lan = false;
+        foreach ($_lignesLan as $ligneLan) {
+          if (isset($ligneLan['equipementId']) && (int) $ligneLan['equipementId'] === $id && isset($ligneLan['statut']) && !self::statutEnEchec($ligneLan['statut'])) {
+            $lan = true;
+            break;
+          }
+        }
+        $cloud = false;
+        foreach ($_lignesCloud as $ligneCloud) {
+          if (isset($ligneCloud['equipementId']) && (int) $ligneCloud['equipementId'] === $id && isset($ligneCloud['statut']) && in_array($ligneCloud['statut'], array('cree', 'existant'), true)) {
+            $cloud = true;
+            break;
+          }
+        }
+
+        $transport = (isset($_etatsConnexion[$id]['transport']) && is_string($_etatsConnexion[$id]['transport']) && $_etatsConnexion[$id]['transport'] !== '')
+          ? $_etatsConnexion[$id]['transport']
+          : __('Inconnu', __FILE__);
+
+        $lignes[] = array(
+          'nom' => $eqLogic->getName(),
+          'mac' => $eqLogic->macEquipement(),
+          'lan' => self::libelleDisponibilite($lan),
+          'cloud' => self::libelleDisponibilite($cloud),
+          'transport' => $transport,
+        );
+      }
+
+      usort($lignes, function ($_a, $_b) {
+        return strnatcasecmp($_a['nom'], $_b['nom']);
+      });
+
+      return $lignes;
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Synthèse LAN/cloud du scan impossible : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return array();
+    }
   }
 
   /**
@@ -2231,12 +2514,62 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Mémoire de sonde LAN de CET équipement (UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.11 de sa spec technique) — cherche dans
+   * l'ordre : `lan_mac` SAISIE, `macEquipement()`, puis leurs INVERSES (candidats
+   * dédoublonnés, garde palindrome comprise). UNIQUE porteur de la règle "essayer aussi
+   * l'ordre inversé" côté équipement, réclamée par le docblock de sondeLanMemorisee()
+   * ("c'est aux appelants de le faire") — jusqu'ici dupliquée entre adresseLan() et
+   * etatConnexionAffichable().
+   *
+   * ⚠️ EXTENSION FONCTIONNELLE ADDITIVE, pas une factorisation neutre (§ 5.11) : c'est
+   * ce qui détecte enfin l'IP d'un équipement dont l'utilisateur n'a saisi QUE
+   * `lan_mac` (AC1 en configuration VLAN). Régression sur le chemin recetté : NULLE —
+   * pour tout équipement sans `lan_mac` (100 % du parc actuel), le résultat est
+   * identique à une recherche par `macEquipement()` seule.
+   *
+   * @return array|null
+   */
+  public function sondeLanEquipement() {
+    $candidats = array();
+    $lanMac = $this->getConfiguration(self::CLE_CONF_LAN_MAC);
+    $lanMac = is_string($lanMac) ? self::normaliserMac($lanMac) : '';
+    if ($lanMac !== '') {
+      $candidats[] = $lanMac;
+    }
+    $macEquipement = $this->macEquipement();
+    if ($macEquipement !== '') {
+      $candidats[] = $macEquipement;
+    }
+
+    $macsAEssayer = array();
+    foreach ($candidats as $mac) {
+      if (!in_array($mac, $macsAEssayer, true)) {
+        $macsAEssayer[] = $mac;
+      }
+      $inversee = self::macInversee($mac);
+      if ($inversee !== '' && !in_array($inversee, $macsAEssayer, true)) {
+        $macsAEssayer[] = $inversee;
+      }
+    }
+
+    foreach ($macsAEssayer as $mac) {
+      $sonde = self::sondeLanMemorisee($mac);
+      if (is_array($sonde)) {
+        return $sonde;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Adresse LAN EFFECTIVE de cet équipement (UC01 du domaine
-   * post-mvp/01-transport-broadlink-lan, § 5.2 de la spec technique) : règle de lecture
-   * UNIQUE, analogue de bornesTemperature() — lan_ip PERSONNALISÉE (revalidée À LA
-   * LECTURE, double barrière) en priorité, sinon l'IP mémorisée en cache pour la MAC de
-   * l'équipement (MAC inversée essayée aussi, D-POSTMVP0101-09), sinon ''. lan_mac
-   * PERSONNALISÉE en priorité pour la MAC, sinon macEquipement().
+   * post-mvp/01-transport-broadlink-lan, § 5.2 de la spec technique, ENRICHIE en UC04 —
+   * § 5.11 de sa spec technique) : règle de lecture UNIQUE, analogue de
+   * bornesTemperature() — lan_ip PERSONNALISÉE (revalidée À LA LECTURE, double
+   * barrière) en priorité, sinon la sonde retrouvée par sondeLanEquipement() (qui
+   * essaie désormais aussi `lan_mac`), sinon ''. lan_mac PERSONNALISÉE en priorité
+   * pour la MAC, sinon macEquipement().
    *
    * @return array{ip:string, mac:string, port:int, source:string} source = 'manuel'|'detecte'|'aucun'.
    */
@@ -2257,21 +2590,14 @@ class smartclim extends eqLogic {
       );
     }
 
-    $macEquipement = $this->macEquipement();
-    if ($macEquipement !== '') {
-      $sonde = self::sondeLanMemorisee($macEquipement);
-      if (!is_array($sonde)) {
-        $macInversee = self::macInversee($macEquipement);
-        $sonde = ($macInversee !== '') ? self::sondeLanMemorisee($macInversee) : null;
-      }
-      if (is_array($sonde) && isset($sonde['ip']) && is_string($sonde['ip']) && $sonde['ip'] !== '') {
-        return array(
-          'ip' => $sonde['ip'],
-          'mac' => $mac,
-          'port' => isset($sonde['port']) && is_numeric($sonde['port']) ? (int) $sonde['port'] : smartclimBroadlinkLan::PORT,
-          'source' => 'detecte',
-        );
-      }
+    $sonde = $this->sondeLanEquipement();
+    if (is_array($sonde) && isset($sonde['ip']) && is_string($sonde['ip']) && $sonde['ip'] !== '') {
+      return array(
+        'ip' => $sonde['ip'],
+        'mac' => $mac,
+        'port' => isset($sonde['port']) && is_numeric($sonde['port']) ? (int) $sonde['port'] : smartclimBroadlinkLan::PORT,
+        'source' => 'detecte',
+      );
     }
 
     return array(
@@ -2432,16 +2758,13 @@ class smartclim extends eqLogic {
     $cmdOnline = isset($commandesInfo[smartclimCapabilities::CONCEPT_ONLINE]) ? $commandesInfo[smartclimCapabilities::CONCEPT_ONLINE] : null;
     $valeurOnline = ($cmdOnline instanceof cmd) ? $cmdOnline->execCmd() : '';
 
-    // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.2 de la spec technique) :
-    // 2 clés ADDITIVES 'lan'/'lanAdresse', calculées UNE fois ici et reportées dans
-    // CHAQUE branche de retour ci-dessous (⚠️ y compris le repli catch(Throwable) de
-    // etatsConnexionAffichables() — piège jQuery .text(undefined) documenté § 5.2).
-    $macEqPourLan = $this->macEquipement();
-    $sondeLan = ($macEqPourLan !== '') ? self::sondeLanMemorisee($macEqPourLan) : null;
-    if (!is_array($sondeLan) && $macEqPourLan !== '') {
-      $macEqPourLanInversee = self::macInversee($macEqPourLan);
-      $sondeLan = ($macEqPourLanInversee !== '') ? self::sondeLanMemorisee($macEqPourLanInversee) : null;
-    }
+    // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.2 de la spec technique),
+    // ENRICHI en UC04 (§ 5.11 de sa spec technique) : 2 clés ADDITIVES 'lan'/'lanAdresse',
+    // calculées UNE fois ici via sondeLanEquipement() (essaie désormais aussi `lan_mac`)
+    // et reportées dans CHAQUE branche de retour ci-dessous (⚠️ y compris le repli
+    // catch(Throwable) de etatsConnexionAffichables() — piège jQuery .text(undefined)
+    // documenté § 5.2).
+    $sondeLan = $this->sondeLanEquipement();
     $lan = self::libelleStatutLan(is_array($sondeLan) && isset($sondeLan['statut']) && is_string($sondeLan['statut']) ? $sondeLan['statut'] : '');
     $lanAdresse = '';
     if (is_array($sondeLan)) {

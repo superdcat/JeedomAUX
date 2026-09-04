@@ -391,6 +391,15 @@ class smartclimBroadlinkLan {
       self::libererVerrou($ressource);
     }
 
+    // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.6 de sa spec technique) :
+    // journalisation NON BLOQUANTE — statut et retour restent déterminés par
+    // conceptsLisibles() ci-dessous, jamais par ce préfixe. Instrumentation de recette
+    // du seul acte irréversible d'UC04 (création d'équipement depuis le LAN), en
+    // l'absence de matériel Broadlink pour confirmer R3.
+    if ($trameControle !== '' && !smartclimFrame::estTrameHvac($trameControle)) {
+      log::add('smartclim', 'warning', 'Broadlink LAN : trame de contrôle sans le préfixe HVAC attendu (' . $macNorm . ') : ' . strtoupper(substr($trameControle, 0, 8)));
+    }
+
     $lisibles = smartclimFrame::conceptsLisibles($trameControle, $trameLongue);
     $statut = !empty($lisibles) ? self::STATUT_ETAT_LU : self::STATUT_ETAT_ILLISIBLE;
 
@@ -1372,6 +1381,10 @@ class smartclimBroadlinkLan {
    * smartclimAuxHomeApi::nettoyerTexteExterne() — VOLONTAIREMENT DUPLIQUÉ (un transport ne
    * doit pas dépendre d'un autre transport, et on ne refactore pas du code déjà livré et
    * recetté). ⚠️ Mettre un commentaire croisé dans les deux fichiers si l'un évolue.
+   * ⚠️ Retire aussi `<` et `>` (correctif sécurité, review post-mvp 01-04) : cette réponse de
+   * diffusion UDP n'est pas authentifiée, donc forgeable par toute machine du réseau local ;
+   * le nom traverse ensuite cleanComponanteName() du core, qui ne filtre PAS `<`/`>`, puis
+   * finit dans du HTML rendu sans échappement systématique — XSS stocké sinon possible.
    *
    * @param mixed $_valeur
    * @param int $_max
@@ -1385,6 +1398,7 @@ class smartclimBroadlinkLan {
     if (preg_match('//u', $valeur) !== 1) {
       $valeur = preg_replace('/[^\x20-\x7E]/', ' ', $valeur);
     }
+    $valeur = str_replace(array('<', '>'), '', $valeur);
     $valeur = trim($valeur);
     $valeur = substr($valeur, 0, $_max);
     while ($valeur !== '' && preg_match('//u', $valeur) !== 1) {

@@ -232,3 +232,70 @@ Vaut pour une valeur venue d'une API tierce **comme** d'une requête client (`in
 ⚠️ **Une regex validant une valeur destinée à un en-tête HTTP doit finir par `\z`, pas par `$`** : en
 PCRE, sans modificateur `D`, `$` matche **aussi juste avant un `\n` final** — et ce `\n`, suivi du `\r\n`
 de cURL, **clôt le bloc d'en-têtes**, faisant basculer les en-têtes suivants dans le corps.
+
+## 12. ⚠️⚠️ Rendre une donnée externe dans une page `desktop/` — le squelette Jeedom n'échappe rien
+
+Trouvé en review croisée le **2026-09-03** (UC04 du domaine `post-mvp/01`), sur un **XSS stocké** réel.
+C'est un piège **générique** : la ligne fautive vient du squelette `jeedom/plugin-template`, elle est donc
+présente à l'identique dans beaucoup de plugins.
+
+### 12.1 Le sink
+
+`desktop/php/<id>.php`, boucle « Mes `<id>`s », telle que livrée par le squelette :
+
+```php
+echo '<span class="name">' . $eqLogic->getHumanName(true, true) . '</span>';
+```
+
+`echo` brut, **aucun échappement**. `getHumanName()` renvoie du texte, il ne pré-encode rien. Tout ce qui a
+pu entrer dans le **nom d'un équipement** est donc rendu tel quel, à **chaque** chargement de la page du
+plugin, dans la session d'un **admin authentifié**.
+
+### 12.2 Pourquoi les filtres déjà en place ne protègent pas
+
+⚠️ **`cleanComponanteName()` (appliqué par `setName()`) N'EST PAS un filtre HTML.** Il supprime
+`& # ] [ % \ / ' " *` (cf. `jeedom-widgets-commandes.md` § 8.1) — **ni `<`, ni `>`**. Il nettoie pour
+**son** usage (un nom de composant affichable et exploitable en base), pas pour le **contexte de sortie**
+d'un appelant.
+
+Corollaire opérationnel : un payload qui n'a besoin **ni de guillemet ni de barre oblique** traverse
+intact. `<img src=x onerror=…>` en est un.
+
+C'est la règle générale à retenir : **un assainissement hérité (core ou transport) ne couvre que son
+propre contexte ; il ne dispense jamais d'échapper au point de sortie.**
+
+### 12.3 Ce qui transforme le défaut en vulnérabilité
+
+Le risque dépend entièrement de **qui peut écrire le nom** :
+
+| Source du nom | Gravité |
+|---|---|
+| Compte cloud de l'utilisateur lui-même | self-XSS — faible |
+| Réponse d'un protocole de **découverte LAN non authentifié** (diffusion UDP forgeable par n'importe quelle machine du réseau) | **XSS stocké, sans aucun identifiant requis** |
+
+⚠️ **Le jour où un plugin ajoute une source de découverte non authentifiée, ce sink pré-existant change de
+sévérité** — même si le code du sink, lui, n'a pas bougé. C'est exactement ce qui s'est produit ici : la
+ligne datait du MVP, c'est l'ouverture d'un second chemin de création qui l'a rendue exploitable.
+
+### 12.4 La correction, en deux couches
+
+1. **Échapper au point de sortie** — `htmlspecialchars($valeur, ENT_QUOTES, 'UTF-8')`. **C'est la
+   correction qui ferme le trou**, quelle que soit l'origine de la valeur (cloud, LAN, renommage manuel,
+   future intégration tierce). Ne pas s'en dispenser sous prétexte que l'entrée est filtrée en amont.
+2. **Retirer `<` et `>` à la frontière d'assainissement du transport** — défense en profondeur, pour que la
+   donnée ne soit pas seulement inoffensive à l'affichage mais aussi **propre en base**.
+   ⚠️ Si le plugin a **plusieurs** transports, ce retrait doit être **symétrique** : même jeu de caractères,
+   même emplacement dans le pipeline (après la validation UTF-8, avant le `trim()`). Sinon le même appareil
+   porte deux noms différents selon le chemin par lequel il a été découvert.
+
+### 12.5 Vérifier avant de conclure
+
+Deux contrôles qui ont chacun trouvé quelque chose de réel sur ce cycle :
+
+- **Relire TOUT le fichier de page**, pas seulement la ligne signalée : ici, la ligne voisine (badge
+  d'état) était **déjà** correctement échappée — l'incohérence à sept lignes d'écart était le meilleur
+  indice que le sink était un oubli, pas un choix.
+- **Tracer les autres appelants de la fonction de nettoyage** avant de la durcir. Retirer des caractères
+  d'une valeur qui sert aussi à construire une **clé** (`logicalId`, clé de cache, index) change cette clé
+  et peut casser un rapprochement d'objets existants. Vérifier qu'une valeur vidée par le nouveau filtrage
+  est **rattrapée par une garde** en aval, et non utilisée telle quelle.

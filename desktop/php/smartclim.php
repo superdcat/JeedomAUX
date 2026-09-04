@@ -50,6 +50,24 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 		<div class="col-xs-12" id="div_scanResultat" style="display:none;">
 			<legend><i class="fas fa-search"></i> {{Résultat}}</legend>
 			<p id="span_scanResume"></p>
+			<div id="div_scanClimatiseursWrapper">
+				<h4>{{Climatiseurs (LAN + cloud)}}</h4>
+				<div class="table-responsive">
+					<table id="table_scanClimatiseurs" class="table table-bordered table-condensed">
+						<thead>
+							<tr>
+								<th>{{Nom}}</th>
+								<th>{{Adresse MAC}}</th>
+								<th>{{Disponible en LAN}}</th>
+								<th>{{Disponible dans le cloud}}</th>
+								<th>{{Transport actif}}</th>
+							</tr>
+						</thead>
+						<tbody>
+						</tbody>
+					</table>
+				</div>
+			</div>
 			<div id="div_scanTrouvesWrapper">
 				<h4>{{Climatiseurs trouvés}}</h4>
 				<div class="table-responsive">
@@ -134,7 +152,9 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 				echo '<div class="eqLogicDisplayCard cursor ' . $opacity . '" data-eqLogic_id="' . $eqLogic->getId() . '">';
 				echo '<img src="' . $eqLogic->getImage() . '"/>';
 				echo '<br>';
-				echo '<span class="name">' . $eqLogic->getHumanName(true, true) . '</span>';
+				// Nom d'équipement = donnée d'origine externe (cloud AUX Home ou diffusion LAN Broadlink
+				// non authentifiée, post-mvp 01-04) : échapper avant rendu HTML (XSS stocké corrigé en review).
+				echo '<span class="name">' . htmlspecialchars($eqLogic->getHumanName(true, true), ENT_QUOTES, 'UTF-8') . '</span>';
 				// UC08 (AC8) : badge d'état de connexion, DÉJÀ traduit côté serveur
 				// (smartclim::etatsConnexionAffichables() ci-dessus, calculé une seule fois).
 				$sc_etatCarte = isset($smartclimEtatsConnexion[$eqLogic->getId()]) ? $smartclimEtatsConnexion[$eqLogic->getId()] : null;

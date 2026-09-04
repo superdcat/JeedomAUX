@@ -957,6 +957,10 @@ class smartclimAuxHomeApi {
    * messages backend d'erreur) : on ne refactore pas du code UC02 déjà livré.
    * Jumeau côté transport LAN : smartclimBroadlinkLan::nettoyerNomExterne() (même
    * frontière d'assainissement, pour le transport Broadlink LAN).
+   * ⚠️ Retire aussi `<` et `>` (correctif sécurité, review post-mvp 01-04) : ces champs
+   * (nom, modèle, identifiant backend) finissent dans du HTML rendu (desktop/php/smartclim.php)
+   * après cleanComponanteName() du core, qui ne filtre PAS `<`/`>` — XSS stocké sinon possible
+   * si le backend cloud republie un champ non fiable.
    *
    * @param mixed $_valeur
    * @param int $_longueurMax
@@ -970,6 +974,7 @@ class smartclimAuxHomeApi {
     if (preg_match('//u', $valeur) !== 1) {
       $valeur = preg_replace('/[^\x20-\x7E]/', ' ', $valeur);
     }
+    $valeur = str_replace(array('<', '>'), '', $valeur);
     $valeur = trim($valeur);
     $valeur = substr($valeur, 0, $_longueurMax);
     while ($valeur !== '' && preg_match('//u', $valeur) !== 1) {

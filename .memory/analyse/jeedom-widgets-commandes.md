@@ -137,6 +137,12 @@ les caractères `& # ] [ % \ / ' " *` puis compacte les espaces.
 - **Règle** : réserver une table de libellés **dédiée aux noms de commandes**, distincte de celle des
   libellés de phrase, et bannir ces caractères dans les deux sens (source et cibles).
 
+⚠️⚠️ **Ce que `cleanComponanteName()` ne filtre PAS : `<` et `>`.** Ce n'est pas un filtre HTML — il
+nettoie pour son propre usage, pas pour le contexte de sortie de l'appelant. Un nom d'équipement ou de
+commande peut donc porter du balisage, et le squelette `jeedom/plugin-template` le rend **sans
+échappement**. Détail, sink exact et correction :
+`jeedom-config-plugin-et-cycle-de-vie.md` § 12.
+
 ### 8.2 `checkAndUpdateCmd()` : ce que renvoie son booléen, et ce qu'il écrit vraiment
 
 `eqLogic::checkAndUpdateCmd($logicalId, $value)` appelé **sans** `$_updateTime` :

@@ -281,6 +281,7 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
   var libelleInitial = $bouton.find('span').text()
   $bouton.addClass('disableCard')
   $bouton.find('span').text("{{Scan en cours…}}")
+  $('#table_scanClimatiseurs tbody').empty()
   $('#table_scanTrouves tbody').empty()
   $('#table_scanDisparus tbody').empty()
   $('#table_scanLan tbody').empty()
@@ -310,6 +311,18 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
       }
       var resultat = data.result
       $('#span_scanResume').text(resultat.resume)
+      // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 3/5.10 de la spec
+      // technique) : table de synthèse, DÉJÀ curatée côté serveur (lignesFusionScan())
+      // — ce JS n'assemble rien, il injecte les 5 valeurs déjà traduites.
+      $.each(resultat.climatiseurs, function (index, climatiseur) {
+        ajouterLigneScan($('#table_scanClimatiseurs'), [
+          climatiseur.nom,
+          climatiseur.mac,
+          climatiseur.lan,
+          climatiseur.cloud,
+          climatiseur.transport
+        ])
+      })
       // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 3/5.6 de la spec
       // technique) : le scan cloud a pu échouer SANS empêcher le scan LAN (D-POSTMVP0101-10)
       // — un cloudErreur non vide est un avertissement (warning), jamais une panne (danger).
@@ -346,7 +359,11 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
           appareil.statutLibelle
         ])
       })
-      if (resultat.compteurs.crees > 0) {
+      // UC04 du domaine post-mvp/01-transport-broadlink-lan : une création peut venir
+      // du LAN (resultat.lan.compteurs.crees) tout autant que du cloud
+      // (resultat.compteurs.crees) — les deux comptent pour proposer le rechargement.
+      var lanCrees = (resultat.lan && resultat.lan.compteurs) ? resultat.lan.compteurs.crees : 0
+      if (resultat.compteurs.crees > 0 || lanCrees > 0) {
         $('#bt_scanRecharger').find('span').text("{{Afficher les nouveaux équipements}}")
         $('#bt_scanRecharger').removeClass('hidden')
       }

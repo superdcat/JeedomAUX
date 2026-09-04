@@ -83,6 +83,13 @@ class smartclimFrame {
   const CONTEXTE_BASE_ILLISIBLE = 'trame_base_illisible';
   const CONTEXTE_CONSIGNE_HORS_PLAGE = 'consigne_hors_plage';
 
+  // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 2.2/5.6 de sa spec
+  // technique) : préfixe des trames de CONTRÔLE, établi côté cloud (recetté) et par les
+  // magics de lecture — JAMAIS observé sur une réponse LAN réelle (R3). Utilisé
+  // UNIQUEMENT comme signal de journalisation par le transport appelant, jamais comme
+  // critère bloquant.
+  const MAGIC_TRAME_HVAC = 'bb00';
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -177,6 +184,20 @@ class smartclimFrame {
       $concepts[] = smartclimCapabilities::CONCEPT_AMBIENT_TEMP;
     }
     return $concepts;
+  }
+
+  /**
+   * true si $_trame commence par le magic MAGIC_TRAME_HVAC (UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan, § 5.6 de sa spec technique). PRÉDICAT PUR,
+   * AUCUNE E/S — la classe reste une table de données. Ne sert QUE de signal de
+   * journalisation à l'appelant (smartclimBroadlinkLan::lireEtat()) : jamais un critère
+   * bloquant, cf. le docblock de la constante ci-dessus.
+   *
+   * @param mixed $_trame
+   * @return bool
+   */
+  public static function estTrameHvac($_trame) {
+    return is_string($_trame) && strpos($_trame, self::MAGIC_TRAME_HVAC) === 0;
   }
 
   /**

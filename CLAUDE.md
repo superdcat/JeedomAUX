@@ -166,6 +166,25 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   se signale par `echecType` dans le tableau de retour, **jamais** par une exception : c'est ce qui évite
   qu'un clic sur « Rafraîchir » rende un succès silencieux. `setStatus()` n'est **pas** utilisé — la
   commande info `online` est le seul porteur de l'état de joignabilité.
+
+  Depuis l'UC04 du domaine post-MVP 01, elle porte enfin la **fusion multi-transport** : le rapprochement
+  unique `chercherEquipementExistant()` (cf. § Modèle de données), `memoriserMacEquipement()`,
+  `creerEquipement()` rendue **neutre de transport** (elle sert les deux sens de scan), et la synthèse
+  d'affichage `lignesFusionScan()` — une ligne par climatiseur : LAN oui/non, cloud oui/non, transport
+  actif. **`scannerReseauLocal()` peut désormais CRÉER un équipement** depuis la seule découverte LAN,
+  conditionné à la preuve `STATUT_ETAT_LU`.
+  ⚠️ **Ce garde-fou est plus faible qu'il n'en a l'air** : `conceptsLisibles()` ne teste que des
+  **longueurs** (≥ 13 octets), **jamais** le magic `bb00`. Il vaut « un appareil Broadlink a répondu à
+  `0x6A` avec un code d'erreur nul et une charge exploitable » — rien de plus. Arbitré avec l'utilisateur
+  le 2026-09-03 en connaissance de ce risque (conséquence d'un faux positif bornée : un équipement de
+  trop, supprimable). Le durcissement est en dette, cf. la spec technique d'UC04 § 12.2.
+  ⚠️ **Un équipement créé par le LAN n'entre PAS dans le cycle cron** : `equipementsParIdentifiant()`
+  n'indexe que par `auxhome_device_id`. Voulu — il n'est donc jamais basculé `online = false` par un cycle
+  auquel il n'appartient pas. Ses commandes d'action échouent proprement (`executerCommandeAction()` reste
+  **cloud**) ; le pilotage local passe par la CLI. Cela changera au domaine post-MVP 02.
+  ⚠️ **`appareilsDisparus()` ne teste plus que `auxhome_device_id`**, et **plus** la MAC : un équipement
+  créé par le LAN en porte une sans avoir jamais existé sur le compte cloud — l'ancien critère l'aurait
+  signalé « introuvable au dernier scan » à chaque cycle, indéfiniment.
 - **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
   plugin. Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
   aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification
@@ -197,6 +216,15 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   seule, qui garantit qu'un champ du cloud (dont l'`identifiant` d'où dérive un `logicalId`) ne porte pas
   de caractère de contrôle. Toute nouvelle source d'appareil doit passer par un nettoyage équivalent
   **avant** de construire un `logicalId` ou d'être journalisée.
+  ⚠️ Depuis l'UC04 du domaine post-MVP 01, elle retire aussi **`<` et `>`**, exactement comme son jumeau
+  `smartclimBroadlinkLan::nettoyerNomExterne()` : `cleanComponanteName()` du core **n'est pas un filtre
+  HTML** (il ne retire ni l'un ni l'autre), et un nom d'équipement finit dans du HTML rendu. Ces deux
+  fonctions doivent rester **symétriques** — même jeu de caractères, même emplacement dans le pipeline
+  (après la validation UTF-8, avant le `trim()`) : sinon un appareil vu par les deux transports porterait
+  deux noms différents selon le chemin de découverte. ⚠️ Ce filtrage est de la **défense en profondeur**,
+  jamais la protection principale : l'échappement se fait **au point de sortie**
+  (`htmlspecialchars(..., ENT_QUOTES, 'UTF-8')` dans `desktop/php/smartclim.php`). Détail :
+  `.memory/analyse/jeedom-config-plugin-et-cycle-de-vie.md` § 12.
   ⚠️ **Budget de temps global** : un login enchaîne **deux** requêtes, donc les timeouts par requête ne
   suffisent pas à tenir une exigence exprimée en budget total — cf.
   `.memory/analyse/smartclim-transport-aux-home.md` § 8.3.
@@ -311,7 +339,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   aucune E/S, aucun `cache::`, aucun `config::`, aucun `eqLogic`, aucun réseau. Elle ne connaît ni AUX
   Home ni Broadlink — elle reçoit deux trames en hexadécimal et un identifiant de transport. Porte
   `champs()` (concept → trame + index d'octet), `longueursMinimales()` (dérivée de `champs()` : une seule
-  source d'offsets), `octet()`, `conceptsLisibles()` et `decoderEtat()`. Depuis l'**UC03 du même
+  source d'offsets), `octet()`, `conceptsLisibles()`, `decoderEtat()` et — depuis l'**UC04 du même
+  domaine** — le prédicat pur `estTrameHvac()` (préfixe `MAGIC_TRAME_HVAC` = `bb00`).
+  ⚠️ `estTrameHvac()` n'est **qu'un signal de journalisation** pour le transport appelant, **jamais** un
+  critère bloquant : le préfixe est établi côté cloud et par les magics de lecture, mais **jamais observé
+  sur une réponse LAN réelle**. Le rendre bloquant rendrait le chemin LAN inopérant **en silence**. Depuis
+  l'**UC03 du même
   domaine**, elle porte **symétriquement l'encodage d'écriture** : `enteteEcriture()`,
   `champsEcriture()`, `conceptsEncodables()`, `encoderConsigne()` et `encoderOrdre()`.
   ⚠️ **« Ne lève jamais » ne vaut que pour le DÉCODAGE** : `encoderOrdre()` lève, elle, une
@@ -393,6 +426,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `template` de cette ligne n'est pas l'ancien id du plugin).
   ⚠️ **Ces fichiers `desktop/php/*.php` sont indentés en tabulations + fins de ligne CRLF** (contrairement
   à `core/class/*.php` en 2 espaces) — cf. mémoire d'agent `feedback-edit-tool-tab-indented-files`.
+  ⚠️⚠️ **Toute donnée d'origine externe rendue par un `echo` ici s'échappe** —
+  `htmlspecialchars($valeur, ENT_QUOTES, 'UTF-8')`. Le squelette `jeedom/plugin-template` livrait
+  `echo '<span class="name">' . $eqLogic->getHumanName(true, true) . '</span>';` **sans échappement** :
+  XSS stocké corrigé à l'UC04 du domaine post-MVP 01, exploitable **sans aucun identifiant** dès lors
+  qu'un nom d'équipement pouvait venir d'une découverte LAN non authentifiée. ⚠️ Ne jamais se fier au
+  filtrage d'entrée pour s'en dispenser : `cleanComponanteName()` ne retire **ni `<` ni `>`**. Détail :
+  `.memory/analyse/jeedom-config-plugin-et-cycle-de-vie.md` § 12.
 - **`desktop/js/smartclim.js`** — front-end (lignes de commandes, tri, helpers `jeedom.*`).
 - **`desktop/modal/modal.smartclim.php`** — modale(s) de la page de config.
 - **`desktop/php/<fichier>.php` déclaré par `info.json "display"`** — page-panneau optionnelle au **menu
@@ -458,6 +498,21 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   documentés si la MAC manque : `auxhome:<deviceId>`, `auxcloud:<endpointId>`, `lan:<mac>`.
   ⚠️ Le rapprochement doit tester la MAC **et la MAC inversée** : les implémentations Broadlink de
   référence lisent des ordres d'octets opposés.
+  **Depuis l'UC04 du domaine post-MVP 01**, ce rapprochement est implémenté et **unique** :
+  `smartclim::chercherEquipementExistant($mac, $deviceId, $index, $transport = '')`, empruntée par les
+  **deux** sens de scan, essaie 7 clés dans un ordre figé — les trois **directes**
+  (`logicalId`, `configuration.mac`, `lan_mac`) **avant** les trois **inversées**, puis
+  `auxhome_device_id`. Deux gardes non négociables : `lan_mac` ne rapproche **que** pour le transport LAN
+  (c'est une déclaration de l'utilisateur *pour le LAN* ; s'en servir côté cloud attacherait, sur une
+  faute de frappe, un appareil neuf à l'équipement d'un autre), et les étapes inversées sont **sautées sur
+  une MAC palindrome** (sinon un `warning` trompeur sur ce qui est le même équipement que l'étape 1).
+  ⚠️ **Un `logicalId` d'équipement n'est JAMAIS réécrit** — rien n'en garantit l'unicité au niveau SQL (un
+  renommage vers un `mac:<x>` déjà pris rendrait `eqLogic::byLogicalId()` non déterministe), et c'est
+  l'identité exposée à l'API Jeedom. La fusion passe par `configuration.mac`, posée **seulement si elle
+  est vide** par `memoriserMacEquipement()` : c'est **la** migration du parc, sans script.
+  ⚠️ **Corollaire** : `configuration.mac` peut désormais **diverger du suffixe du `logicalId`** sur un
+  équipement resté en `auxhome:<id>`. Tout lecteur passe par `macEquipement()`, **jamais** par un
+  `substr()` du `logicalId`.
 - **`logicalId` de commande = générique et stable** (`power`, `mode`, `target_temp`, `fan_speed`,
   `mode_cool`, `fan_turbo`…). Il ne change **jamais** lors d'une bascule de transport : c'est ce qui
   garantit qu'un scénario utilisateur survit au passage LAN ↔ cloud.

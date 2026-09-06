@@ -1910,6 +1910,29 @@ class smartclim extends eqLogic {
         'ordre' => 24,
         'meta' => false,
       ),
+      // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.5.1 de sa spec technique) :
+      // même patron que les fonctions de confort ci-dessus (créées SEULEMENT si le
+      // concept figure dans capacites['concepts'], donc conceptsOscillationLivres()
+      // 'confirme' => true). Le NOM porte, ou non, le suffixe « (état commandé) » selon
+      // 'lecture' — cf. smartclimCapabilities::libelleCommande() (§ 5.1.3, porteur d'AC5).
+      smartclimCapabilities::CONCEPT_SWING_V => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_SWING_V),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 25,
+        'meta' => false,
+      ),
+      smartclimCapabilities::CONCEPT_SWING_H => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_SWING_H),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 26,
+        'meta' => false,
+      ),
       self::CMD_TRANSPORT => array(
         'name' => __('Transport actif', __FILE__),
         'subType' => 'string',
@@ -3140,7 +3163,41 @@ class smartclim extends eqLogic {
 
     $existantes = array();
     foreach ($this->getCmd(null, null) as $cmdExistante) {
-      $existantes[$cmdExistante->getLogicalId()] = true;
+      $existantes[$cmdExistante->getLogicalId()] = $cmdExistante;
+    }
+
+    // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.5.3 de sa spec technique) :
+    // réalignement CIBLÉ du nom des commandes info d'oscillation déjà existantes. Le nom
+    // n'est posé qu'À LA CRÉATION (boucle ci-dessous, `continue` si déjà existante) ; sans
+    // ce correctif, un appareil où AC4 finit par être satisfait ('lecture' bascule à
+    // true APRÈS que la commande a été créée avec 'confirme' => true) afficherait
+    // INDÉFINIMENT « (état commandé) » alors que la valeur est réellement relue. Ne
+    // renomme QUE si le nom courant est EXACTEMENT l'autre variante (nu <-> suffixé) —
+    // jamais un nom personnalisé par l'utilisateur — et n'émet un save() QUE si le nom
+    // change effectivement. Précédent identique : realignerBornesConsigne() (§ 8.3).
+    foreach (smartclimCapabilities::conceptsOscillation() as $concept) {
+      if (!isset($existantes[$concept])) {
+        continue;
+      }
+      $fonction = smartclimCapabilities::fonctionOscillation($concept);
+      if (empty($fonction) || $fonction['libelle'] === '') {
+        continue;
+      }
+      $nomAttendu = smartclimCapabilities::libelleCommande($concept);
+      // Le nom courant doit être EXACTEMENT l'AUTRE variante de $nomAttendu : jamais un
+      // nom personnalisé par l'utilisateur, jamais un renommage si le nom est déjà juste.
+      // Aucun __() ICI (§ 7 de la spec technique) : la contrepartie est calculée par
+      // smartclimCapabilities, seul endroit qui porte la chaîne '%s (état commandé)'.
+      $autreVariante = smartclimCapabilities::libelleCommandeAutreVariante($concept);
+      $nomCourant = $existantes[$concept]->getName();
+      if ($nomCourant === $autreVariante && $nomCourant !== $nomAttendu) {
+        try {
+          $existantes[$concept]->setName($nomAttendu);
+          $existantes[$concept]->save();
+        } catch (Throwable $t) {
+          log::add('smartclim', 'error', 'Réalignement du nom de "' . $concept . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        }
+      }
     }
 
     $crees = 0;
@@ -3314,6 +3371,38 @@ class smartclim extends eqLogic {
         'infoLiee' => $concept,
         // Jamais de power ici : désactiver une fonction de confort n'éteint jamais
         // l'appareil (contrat identique pour les 5 fonctions).
+        'ordre' => array($concept => 0),
+        'ordreCmd' => $fonction['ordre'] + 1,
+      );
+    }
+
+    // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.5.2 de sa spec technique) :
+    // deux commandes par concept d'oscillation LIVRÉ (conceptsOscillationLivres()) ET
+    // détecté sur CET appareil — STRICTEMENT calqué sur le bloc confort ci-dessus.
+    // Gabarits '%s - Activer'/'%s - Désactiver' déjà déclarés (UC01) : AUCUNE clé i18n
+    // nouvelle ici. L'ordre ON porte TOUJOURS power => 1 (§ 2.2 de la spec technique :
+    // les deux axes exigent l'appareil allumé) ; l'ordre OFF n'en porte JAMAIS (§ 2.2 :
+    // désactiver une fonction ne doit pas allumer l'appareil).
+    foreach (smartclimCapabilities::conceptsOscillationLivres() as $concept) {
+      if (!in_array($concept, $concepts, true)) {
+        continue;
+      }
+      $fonction = smartclimCapabilities::fonctionOscillation($concept);
+      if (empty($fonction) || $fonction['libelle'] === '') {
+        continue;
+      }
+      $definitions[$concept . self::SUFFIXE_CMD_ON] = array(
+        'name' => sprintf(__('%s - Activer', __FILE__), $fonction['libelle']),
+        'subType' => 'other',
+        'infoLiee' => $concept,
+        'ordre' => array($concept => 1, smartclimCapabilities::CONCEPT_POWER => 1),
+        'ordreCmd' => $fonction['ordre'],
+      );
+      $definitions[$concept . self::SUFFIXE_CMD_OFF] = array(
+        'name' => sprintf(__('%s - Désactiver', __FILE__), $fonction['libelle']),
+        'subType' => 'other',
+        'infoLiee' => $concept,
+        // Jamais de power ici : désactiver une oscillation n'éteint jamais l'appareil.
         'ordre' => array($concept => 0),
         'ordreCmd' => $fonction['ordre'] + 1,
       );
@@ -3804,10 +3893,15 @@ class smartclim extends eqLogic {
    * clés de concept (tableau indexé, la clé de concept n'étant pas une colonne du
    * sous-tableau) — la boucle foreach explicite est OBLIGATOIRE.
    *
-   * Ne retient que smartclimFrame::conceptsEncodables() (LISTE BLANCHE) : une entrée de
-   * cache portant un concept futur (oscillation, domaine post-mvp/04) ferait sinon
-   * lever TYPE_INTERNE à smartclimFrame::encoderOrdre() et casserait TOUTES les
-   * commandes LAN pendant 60 s — l'inverse exact de ce que ce mécanisme est là pour faire.
+   * Ne retient que smartclimFrame::conceptsEncodables() (LISTE BLANCHE) : cette liste
+   * s'élargit MÉCANIQUEMENT avec smartclimFrame::champsEcriture(), et depuis l'UC02 du
+   * domaine post-mvp/04-fonctions-avancees, swing_v/swing_h y figurent et DOIVENT y
+   * figurer — le cas est désormais COUVERT, y compris avant recette : ces deux concepts
+   * sont encodables même à 'confirme' => false (champsEcriture() n'est PAS filtrée par
+   * ce marqueur), ce qui rend le déploiement transitoire sûr dans les deux sens. Ne
+   * retenir qu'un concept réellement ABSENT de conceptsEncodables() ferait sinon lever
+   * TYPE_INTERNE à smartclimFrame::encoderOrdre() et casserait TOUTES les commandes LAN
+   * pendant 60 s — l'inverse exact de ce que ce mécanisme est là pour faire.
    *
    * @return array<string, mixed> concept => valeur GÉNÉRIQUE scalaire.
    */

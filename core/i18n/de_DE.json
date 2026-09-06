@@ -194,7 +194,10 @@
         "Mode sommeil": "Schlafmodus",
         "Ioniseur": "Ionisator",
         "Nettoyage automatique": "Selbstreinigung",
-        "Anti-moisissure": "Schimmelschutz"
+        "Anti-moisissure": "Schimmelschutz",
+        "Oscillation verticale": "Vertikales Schwenken",
+        "Oscillation horizontale": "Horizontales Schwenken",
+        "%s (état commandé)": "%s (zuletzt gesendeter Befehl)"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Befehlsname",

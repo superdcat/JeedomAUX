@@ -433,8 +433,8 @@ défaut. Cas particulier : changer de mode alors que l'appareil est éteint impo
 | `temperature` | consigne | **entier en °C** dans la réf. EU (`22`), arrondi au demi-degré côté client | ✅ EU / ⚠️ **le backend CN envoie ×10** (`int(round(t*10))`) → **❓ à confirmer en recette EU** |
 | `air_con_func` | mode | `0` AUTO, `1` COOL, `2` DRY, `4` HEAT, `6` FAN | ✅ (`constants.ts::AuxMode`, identique côté CN) |
 | `wind_speed` | vitesse ventilation | **contradiction entre sources — cf. § 4.3** | ❓ |
-| `up_down_swing` | oscillation verticale | `0` = oscille, `7` = fixe | ⚠️ (`ha-aux-a-plus/climate.py::set_swing_mode`) — cohérent avec le LAN Broadlink (`Fixation.ON = 0`, `OFF = 7`) |
-| `left_right_swing` | oscillation horizontale | idem | ⚠️ |
+| `up_down_swing` | oscillation verticale | `0` = oscille, `1`-`5` = positions figées, `7` = fixe | ✅ **CONFIRMÉ PAR LE BACKEND** (2026-09-06, UC02 du domaine post-MVP 04) : `getConfig?id=deviceMutex` → `configContent.up_down_swing.specs`, dictionnaire à clés `0,1,2,3,4,5,7` (le code `6` est **absent**), libellés constructeur `0` 开启 / `1`-`5` 定格1-5 / `7` 关闭. Même autorité que celle qui a clos `wind_speed` (§ 4.3). Cohérent avec le LAN Broadlink (`Fixation.ON = 0`, `OFF = 7`) |
+| `left_right_swing` | oscillation horizontale | idem | ✅ **CONFIRMÉ**, même source. ⚠️ Anomalie de la source à connaître : `left_right_swing.specs` est une **liste** de 8 entrées (là où la verticale est un dictionnaire), avec `4` 开启 en **doublon** de `0` et une **inversion** `5` 定格5 / `6` 定格4. Sans effet sur `0`/`7` |
 | `screen` / `screen_on_off` | afficheur | `0` arrêt, `1` marche, **`2` capteur de luminosité** | ⚠️ nom exact incertain (`screen` dans `deviceMutex`, `screen_on_off` dans l'état CN) — codes ✅ **déclarés par le backend** (§ 4.4) |
 | `sleep_mode`, `clean`, `healthy`, `anti_fungus`, `eco` | fonctions de confort | `0` / `1` | ✅ noms **et** codes **déclarés par le backend** (§ 4.4) ; ⚠️ acceptation par `v2/control` non vérifiée |
 | `ultra_silence` | ultra-silence | ⚠️ **`1` = arrêt, `2` = marche** — *pas* `0`/`1` | ✅ déclaré par le backend ; forme de `specs` différente des autres (§ 4.4) |
@@ -566,7 +566,7 @@ Les deux champs sont des **trames HVAC hexadécimales** (même famille que le LA
 | mode | `octet[15] >> 5` | valeurs `AuxMode` (§ 4.2) |
 | consigne | `(octet[10] >> 3) + 8` **+ 0,5** si `octet[12] & 0x80` | |
 | vitesse (fil) | `octet[13] >> 5` | **table du fil**, ≠ `wind_speed` de l'intent — cf. § 6.3 |
-| oscillation active | `octet[11] != 0x20` | ⚠️ **ne distingue pas vertical / horizontal** — limitation assumée par la référence |
+| oscillation active | `octet[11] != 0x20` | ❌ **HEURISTIQUE FAUSSE — ne pas la porter** (établi en UC02 du domaine post-MVP 04, 2026-09-06). Ce n'est **pas** une limite du protocole mais de `com.zwegersit.auxairco`, qui la porte : sur la trame réelle du 2026-08-26 (`…115be000…`), `0xe0 != 0x20` rend « oscillation active » alors que le champ déclare `7` = 关闭 (arrêt) sur un appareil **éteint**. L'octet 11 porte en réalité un champ à **3 bits** (7-5), et l'oscillation **verticale** est un champ distinct (octet 10 bits 2-0) |
 
 **Bits des fonctions de confort** (ajout du 2026-09-04, cycle UC01 du domaine post-MVP 04) — offsets dans
 l'espace **charge HVAC nue**, celui de `smartclimFrame` :
@@ -718,5 +718,10 @@ l'application officielle. Conséquences pour SmartClim :
 - [ ] `POST /app/device/control` (sans `v2`) existe-t-il en EU ?
 - [ ] Durée de vie du jeton ; code d'erreur exact d'expiration.
 - [ ] Existence d'un push (MQTT/WebSocket) EU.
-- [ ] Séparation vertical/horizontal de l'oscillation dans `status.control` (octet 11 : `!= 0x20` ne
-      suffit pas).
+- [x] ~~Séparation vertical/horizontal de l'oscillation dans `status.control` (octet 11 : `!= 0x20` ne
+      suffit pas).~~ → **la séparation EST possible** (UC02 du domaine post-MVP 04, 2026-09-06) : `!= 0x20`
+      était une heuristique d'implémentation fausse, pas une limite du protocole (§ 6.1). Les deux axes
+      sont **deux champs distincts** : vertical = octet 10 bits 2-0, horizontal = octet 11 bits 7-5.
+      ⚠️ Le champ horizontal reste une **hypothèse forte** — un seul échantillon, appareil éteint, jamais
+      vu varier : d'où le marqueur `'lecture' => false` de `smartclimCapabilities::fonctionsOscillation()`.
+      À confirmer par la mesure (§ 11 de la spec technique d'UC02).

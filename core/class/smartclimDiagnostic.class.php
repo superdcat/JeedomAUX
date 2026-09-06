@@ -493,14 +493,18 @@ class smartclimDiagnostic {
    * smartclim::sonderIntentAuxHome() : une ligne par octet (index, hexadécimal,
    * binaire, marqueur de différence), puis un bloc « bits documentés » (concept,
    * octet, bit, avant -> après) construit depuis smartclimFrame::champsBinaires(),
-   * puis les deux états génériques déjà décodés.
+   * puis — depuis l'UC02 du domaine post-mvp/04-fonctions-avancees, § 5.7 de sa spec
+   * technique — un second bloc « champs d'oscillation » (concept, octet, masque, code
+   * avant -> après) construit depuis smartclimFrame::champsOscillation(), enfin les
+   * deux états génériques déjà décodés.
    *
-   * ⚠️ AUCUN offset en dur ici (lit champsBinaires()), AUCUNE E/S, AUCUN masquage :
-   * une trame HVAC n'est PAS un secret, et CLAUDE.md interdit explicitement de
-   * masquer du 12-hex nu (ce sont les trames, la donnée la plus utile d'un rapport).
-   * Affiche TOUS les octets, pas seulement ceux qu'on suppose porteurs : si le bit
-   * qui bascule n'est pas celui attendu, c'est la SEULE façon de le voir (leçon de la
-   * température ambiante, cf. .memory/analyse/smartclim-transport-aux-home.md § 6.2).
+   * ⚠️ AUCUN offset en dur ici (lit champsBinaires() ET champsOscillation()), AUCUNE
+   * E/S, AUCUN masquage : une trame HVAC n'est PAS un secret, et CLAUDE.md interdit
+   * explicitement de masquer du 12-hex nu (ce sont les trames, la donnée la plus utile
+   * d'un rapport). Affiche TOUS les octets, pas seulement ceux qu'on suppose porteurs :
+   * si le bit qui bascule n'est pas celui attendu, c'est la SEULE façon de le voir
+   * (leçon de la température ambiante, cf.
+   * .memory/analyse/smartclim-transport-aux-home.md § 6.2).
    *
    * @param string $_avant Trame de contrôle hexadécimale AVANT écriture.
    * @param string $_apres Trame de contrôle hexadécimale APRÈS écriture.
@@ -541,6 +545,16 @@ class smartclimDiagnostic {
       $bitAvant = ($octetAvant === null) ? '-' : (($octetAvant >> $champ['bit']) & 1);
       $bitApres = ($octetApres === null) ? '-' : (($octetApres >> $champ['bit']) & 1);
       $lignes[] = '  ' . $concept . ' : octet ' . $champ['octet'] . ' bit ' . $champ['bit'] . ' : ' . $bitAvant . ' -> ' . $bitApres;
+    }
+
+    $lignes[] = '';
+    $lignes[] = '-- Champs d\'oscillation (concept : octet.masque avant -> apres) --';
+    foreach (smartclimFrame::champsOscillation() as $concept => $champ) {
+      $octetAvant = ($champ['octet'] < $octetsAvant) ? hexdec(substr($avant, $champ['octet'] * 2, 2)) : null;
+      $octetApres = ($champ['octet'] < $octetsApres) ? hexdec(substr($apres, $champ['octet'] * 2, 2)) : null;
+      $codeAvant = ($octetAvant === null) ? '-' : (($octetAvant & $champ['masque']) >> $champ['decalage']);
+      $codeApres = ($octetApres === null) ? '-' : (($octetApres & $champ['masque']) >> $champ['decalage']);
+      $lignes[] = '  ' . $concept . ' : octet ' . $champ['octet'] . ' masque 0x' . sprintf('%02x', $champ['masque']) . ' : ' . $codeAvant . ' -> ' . $codeApres;
     }
 
     $lignes[] = '';

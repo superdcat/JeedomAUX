@@ -519,7 +519,11 @@ class smartclimAuxHomeApi {
    * spec technique). SEUL endroit du plugin où vivent les noms de champs "on_off",
    * "air_con_func", "wind_speed", "temperature" (CLAUDE.md § Conventions : "aucun code
    * propriétaire hors des adaptateurs de transport"). 'nature' vaut 'booleen',
-   * 'table' (colonne 'intent' de smartclimCapabilities) ou 'temperature'.
+   * 'table' (colonne 'intent' de smartclimCapabilities), 'temperature' ou, depuis
+   * l'UC02 du domaine post-mvp/04-fonctions-avancees, 'oscillation'. ⚠️ 'oscillation'
+   * n'est PAS réutilisable en 'booleen' : ces intents portent des codes propriétaires
+   * PARTAGÉS intent/fil qui valent 0 (actif) / 7 (fixe), pas 0/1 — cf. appliquerOrdre()
+   * ci-dessous pour la conversion vers/depuis le booléen générique.
    *
    * @return array<string, array{cle:string, nature:string}>
    */
@@ -539,6 +543,13 @@ class smartclimAuxHomeApi {
       smartclimCapabilities::CONCEPT_HEALTH => array('cle' => 'healthy', 'nature' => 'booleen'),
       smartclimCapabilities::CONCEPT_CLEAN => array('cle' => 'clean', 'nature' => 'booleen'),
       smartclimCapabilities::CONCEPT_MILDEW => array('cle' => 'anti_fungus', 'nature' => 'booleen'),
+      // UC02 du domaine post-mvp/04-fonctions-avancees (§ 2.1/5.3 de sa spec technique) :
+      // clés déclarées par le backend lui-même (GET /app/getConfig?id=deviceMutex). SEUL
+      // endroit du plugin où ces deux noms propriétaires apparaissent. 'nature' =>
+      // 'oscillation' est NEUVE : 'booleen' n'est pas réutilisable, les codes valent 0/7
+      // et non 0/1.
+      smartclimCapabilities::CONCEPT_SWING_V => array('cle' => 'up_down_swing', 'nature' => 'oscillation'),
+      smartclimCapabilities::CONCEPT_SWING_H => array('cle' => 'left_right_swing', 'nature' => 'oscillation'),
     );
   }
 
@@ -601,6 +612,17 @@ class smartclimAuxHomeApi {
           // telle quelle : sans cette division inverse, l'état optimiste afficherait
           // une consigne que le cloud n'a pas forcément appliquée à ce degré près.
           $ordreApplique[$concept] = ($echelle['facteur'] != 0) ? ($valeurIntent / $echelle['facteur']) : (float) $valeurGenerique;
+        } elseif ($definition['nature'] === 'oscillation') {
+          // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.3 de sa spec technique) :
+          // codes propriétaires PARTAGÉS intent/fil (0 = balayage actif, 7 = arrêt/fixe).
+          // L'ordre appliqué rendu est GÉNÉRIQUE et BOOLÉEN (0/1), JAMAIS le code
+          // propriétaire — c'est lui qui part en état optimiste et en mémoire d'ordres.
+          $fonction = smartclimCapabilities::fonctionOscillation($concept);
+          if (!isset($fonction['code_actif']) || !isset($fonction['code_fixe'])) {
+            throw new smartclimException('AUX Home control : concept d\'oscillation sans codes déclarés (' . $concept . ')', smartclimException::TYPE_INTERNE);
+          }
+          $valeurIntent = $valeurGenerique ? $fonction['code_actif'] : $fonction['code_fixe'];
+          $ordreApplique[$concept] = $valeurGenerique ? 1 : 0;
         } else {
           throw new smartclimException('AUX Home control : nature d\'intent inconnue (' . $definition['nature'] . ')', smartclimException::TYPE_INTERNE);
         }
@@ -969,7 +991,15 @@ class smartclimAuxHomeApi {
     $trameControle = isset($_appareil['trame_controle']) && is_string($_appareil['trame_controle']) ? $_appareil['trame_controle'] : '';
     $trameRunning = isset($_appareil['trame_running']) && is_string($_appareil['trame_running']) ? $_appareil['trame_running'] : '';
 
-    $concepts = array_merge(array(smartclimCapabilities::CONCEPT_ONLINE), smartclimFrame::conceptsLisibles($trameControle, $trameRunning));
+    // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.3 de sa spec technique) :
+    // array_unique() est de la défense en profondeur — la déduplication AUTORITAIRE vit
+    // dans smartclim::appliquerCapacites() (array_unique() puis ordonnerParReference(),
+    // AVANT la comparaison json_encode).
+    $concepts = array_values(array_unique(array_merge(
+      array(smartclimCapabilities::CONCEPT_ONLINE),
+      smartclimFrame::conceptsLisibles($trameControle, $trameRunning),
+      smartclimFrame::conceptsOscillables($trameControle, $trameRunning)
+    )));
 
     $capacitesBrutes = isset($_appareil['capacites_brutes']) && is_array($_appareil['capacites_brutes']) ? $_appareil['capacites_brutes'] : array();
     $modesExclus = self::modesExclusAuxHome($capacitesBrutes);

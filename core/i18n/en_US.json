@@ -194,7 +194,10 @@
         "Mode sommeil": "Sleep mode",
         "Ioniseur": "Ioniser",
         "Nettoyage automatique": "Self-cleaning",
-        "Anti-moisissure": "Mildew protection"
+        "Anti-moisissure": "Mildew protection",
+        "Oscillation verticale": "Vertical swing",
+        "Oscillation horizontale": "Horizontal swing",
+        "%s (état commandé)": "%s (last command sent)"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Command name",

@@ -15,7 +15,16 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-09-04** (UC01 du domaine `post-mvp/04` : § 4.4 ajouté à
+> **Dernière mise à jour de cet index : 2026-09-06** (UC02 du domaine `post-mvp/04` — **deux
+> affirmations de ces analyses étaient FAUSSES et sont corrigées** : `smartclim-transport-aux-home.md`
+> §§ 4.2/6.1/9 — le test `octet[11] != 0x20` (« une oscillation est active, sans distinguer les axes »)
+> n'est **pas** une limite du protocole mais l'heuristique d'**une implémentation tierce**, réfutée par
+> la trame réelle versionnée ; les deux axes sont **deux champs distincts** (vertical = octet 10
+> bits 2-0, horizontal = octet 11 bits **7-5**), et les codes `0` = oscille / `7` = fixe sont désormais
+> **déclarés par le backend**. `smartclim-transport-broadlink-lan.md` §§ 10/13.4 — la divergence
+> d'offset horizontal, déclarée « non refermable par l'analyse », est **tranchée provisoirement** par
+> cette même trame en faveur des bits 7-5 ⚠️ **sans être refermée** : un seul échantillon, appareil
+> éteint, jamais vu varier. Précédente : 2026-09-04, UC01 du domaine `post-mvp/04` : § 4.4 ajouté à
 > `smartclim-transport-aux-home.md` — les **fonctions de confort** cessent d'être une liste de noms au
 > statut ⚠️ : le backend en déclare les codes (⚠️ **pas tous booléens**) *et* les **conditions de
 > disponibilité**, dont le fait que `clean`/`anti_fungus` ne s'utilisent qu'appareil **éteint** ;
@@ -94,6 +103,8 @@
 | **Fonctions de confort** (afficheur, sommeil, ioniseur, nettoyage, anti-moisissure, éco, ultra-silence) : noms d'intent, codes ⚠️ **non booléens pour `screen` et `ultra_silence`**, et **conditions de disponibilité** déclarées par le backend | `smartclim-transport-aux-home.md` § 4.4 |
 | ⚠️ Une fonction utilisable **seulement appareil ÉTEINT** (`clean`, `anti_fungus`) — donc son ordre ne porte **jamais** `power => 1` | `smartclim-transport-aux-home.md` § 4.4 |
 | **Bits de confort** dans la trame HVAC (octets 15/18/20, partagés avec mode et marche) ; pourquoi **`eco` n'a aucun bit connu** | `smartclim-transport-aux-home.md` § 6.1 |
+| **Oscillations par axe** : où lire chaque axe (vertical = octet 10 bits 2-0, horizontal = octet 11 bits 7-5), codes `0` oscille / `1`-`5` positions figées / `7` fixe déclarés par le backend, et ⚠️ pourquoi `octet[11] != 0x20` est une **heuristique fausse** à ne pas porter | `smartclim-transport-aux-home.md` §§ 4.2 et 6.1 |
+| ⚠️ Une capacité **décodable mais non exposée** (marqueur `lecture`) : pourquoi un champ lisible sur **un seul échantillon** ne se livre pas activé | `smartclim-transport-broadlink-lan.md` § 13.4 |
 | **Broadlink LAN** : découverte broadcast, auth `0x65`, AES-128-CBC, structure de paquet, décodage/encodage d'état | `smartclim-transport-broadlink-lan.md` §§ 1-6 |
 | **Deux sources de reverse engineering se contredisent sur un offset ?** Vérifier D'ABORD dans quel **espace** chacune compte : réponse LAN déchiffrée (préfixe de longueur de 2 octets) *contre* charge HVAC nue. `offset charge HVAC = offset réponse LAN - 2` | `smartclim-transport-broadlink-lan.md` § 5.2 (encadré) et § 12 |
 | **Où vit le décodeur de trame HVAC** (offsets d'octets), et pourquoi il est mutualisé entre les transports | `smartclim-transport-broadlink-lan.md` § 12 |

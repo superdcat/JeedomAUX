@@ -91,6 +91,12 @@ class smartclimCapabilities {
   // inatteignables par construction (un execCmd() forgé ne peut viser une constante qui
   // n'existe pas), pas un oubli — ne pas les ajouter « pour compléter la table ».
 
+  // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.1 de sa spec technique) :
+  // concepts booléens d'OSCILLATION, deux axes INDÉPENDANTS. Ces logicalId sont
+  // STABLES par contrat, exactement comme les CONCEPT_* ci-dessus.
+  const CONCEPT_SWING_V = 'swing_v';
+  const CONCEPT_SWING_H = 'swing_h';
+
   const MODE_AUTO = 'AUTO';
   const MODE_COOL = 'COOL';
   const MODE_DRY = 'DRY';
@@ -291,6 +297,12 @@ class smartclimCapabilities {
    *    pour faire passer une fonction en production après recette (§ 11 : au minimum
    *    l'ordre accepté, le bit qui bascule dans les deux sens, un effet constatable).
    *
+   * ⚠️ Depuis l'UC02 du domaine post-mvp/04-fonctions-avancees, fonctionsOscillation()
+   * ci-dessous réutilise 'confirme' au SENS IDENTIQUE (exposition) et introduit un
+   * QUATRIÈME puis CINQUIÈME marqueur ('lecture', et la paire 'code_actif'/'code_fixe') :
+   * voir son propre docblock pour le détail complet des CINQ marqueurs désormais actifs
+   * dans ce fichier.
+   *
    * - 'libelle' : chaîne LITTÉRALE dans __() (scan i18n statique) — sert À LA FOIS de
    *   libellé de concept et de base du nom des deux commandes action (un seul __() par
    *   fonction, jamais deux pour un texte identique).
@@ -356,6 +368,102 @@ class smartclimCapabilities {
   }
 
   /**
+   * LA table des fonctions d'OSCILLATION (UC02 du domaine post-mvp/04-fonctions-avancees,
+   * § 5.1 de sa spec technique). RÉPLIQUE STRUCTURELLE de fonctionsConfort() ci-dessus,
+   * avec UN mécanisme neuf : la colonne 'lecture'.
+   *
+   * ⚠️ La famille des marqueurs de recette de ce plugin passe ainsi de TROIS à CINQ :
+   * 1. 'intent_confirme' (table tables()) : DÉCLARATIF, jamais lu.
+   * 2. 'fil' => null (table tables()) : FAIT DE PROTOCOLE — aucune correspondance de
+   *    lecture n'EXISTE.
+   * 3. 'confirme' (fonctionsConfort() ET ici) : EXPOSITION (profil, commandes info,
+   *    commandes action) — LU et décisionnel.
+   * 4. 'lecture' (ICI SEULEMENT) : gouverne le DÉCODAGE (smartclimFrame::decoderEtat()).
+   *    NEUF et INDÉPENDANT de 'confirme' — c'est lui qui matérialise la frontière entre
+   *    AC4 (relecture séparée confirmée) et AC5 (état optimiste, relecture non
+   *    disponible). Consommé par conceptsOscillationRelus() ci-dessous, SEUL
+   *    consommateur.
+   *
+   * ⚠️ DEUX invariants à respecter, non vérifiés mécaniquement :
+   * 1. 'lecture' => true IMPLIQUE 'confirme' => true (appliqué par
+   *    conceptsOscillationRelus(), qui exige les deux).
+   * 2. 'code_actif'/'code_fixe' ET 'lecture' sont modélisés TRANSPORT-AGNOSTIQUES —
+   *    inoffensif tant que les deux transports partagent smartclimFrame::decoderEtat().
+   *    Si un transport divergeait un jour, introduire une dimension « transport » DANS
+   *    cette table, jamais un second littéral ailleurs.
+   *
+   * - 'libelle' : chaîne LITTÉRALE dans __() — sert de libellé de concept ET de base des
+   *   noms des deux commandes action (un seul __() par fonction).
+   * - 'code_actif' / 'code_fixe' : codes propriétaires PARTAGÉS par l'intent cloud et le
+   *   fil HVAC (0 = balayage actif, 7 = arrêt/fixe — § 2.1/2.4 de la spec technique).
+   * - 'ordre' : base d'affichage Jeedom (ON = ordre, OFF = ordre + 1).
+   *
+   * @return array<string, array{libelle:string, confirme:bool, lecture:bool, code_actif:int, code_fixe:int, ordre:int}>
+   */
+  private static function fonctionsOscillation() {
+    return array(
+      self::CONCEPT_SWING_V => array('libelle' => __('Oscillation verticale', __FILE__), 'confirme' => false, 'lecture' => false, 'code_actif' => 0, 'code_fixe' => 7, 'ordre' => 50),
+      self::CONCEPT_SWING_H => array('libelle' => __('Oscillation horizontale', __FILE__), 'confirme' => false, 'lecture' => false, 'code_actif' => 0, 'code_fixe' => 7, 'ordre' => 52),
+    );
+  }
+
+  /**
+   * Les 2 concepts d'oscillation, TOUJOURS (recette ou non) — dans l'ordre de la table.
+   *
+   * @return array<int,string>
+   */
+  public static function conceptsOscillation() {
+    return array_keys(self::fonctionsOscillation());
+  }
+
+  /**
+   * Les concepts d'oscillation dont 'confirme' === true : UNIQUE point de filtrage de
+   * l'EXPOSITION, consommé par conceptsConnus() et smartclim::definitionsCommandesAction().
+   *
+   * @return array<int,string>
+   */
+  public static function conceptsOscillationLivres() {
+    $livres = array();
+    foreach (self::fonctionsOscillation() as $concept => $colonnes) {
+      if (!empty($colonnes['confirme'])) {
+        $livres[] = $concept;
+      }
+    }
+    return $livres;
+  }
+
+  /**
+   * Les concepts d'oscillation dont 'confirme' === true ET 'lecture' === true : UNIQUE
+   * point de filtrage du DÉCODAGE, consommé par smartclimFrame::conceptsLisibles()/
+   * decoderEtat(). C'est ce filtre, et lui seul, qui matérialise la frontière AC4/AC5 —
+   * tant qu'un concept n'y figure pas, sa commande info n'est JAMAIS écrasée par une
+   * lecture (l'état optimiste posé par l'écriture y survit indéfiniment).
+   *
+   * @return array<int,string>
+   */
+  public static function conceptsOscillationRelus() {
+    $relus = array();
+    foreach (self::fonctionsOscillation() as $concept => $colonnes) {
+      if (!empty($colonnes['confirme']) && !empty($colonnes['lecture'])) {
+        $relus[] = $concept;
+      }
+    }
+    return $relus;
+  }
+
+  /**
+   * Colonnes de fonctionsOscillation() pour un concept d'oscillation donné, ou array()
+   * si le concept est inconnu — jamais de repli silencieux.
+   *
+   * @param string $_concept
+   * @return array{libelle:string, confirme:bool, lecture:bool, code_actif:int, code_fixe:int, ordre:int}|array
+   */
+  public static function fonctionOscillation($_concept) {
+    $fonctions = self::fonctionsOscillation();
+    return isset($fonctions[$_concept]) ? $fonctions[$_concept] : array();
+  }
+
+  /**
    * Libellé français déjà traduit d'une valeur générique de mode ou de vitesse. Chaîne
    * vide si le concept ou la valeur est inconnu(e) — jamais de code brut affiché (AC4).
    * Cherche dans TOUS les transports connus de la table (un même concept/valeur porte
@@ -399,7 +507,14 @@ class smartclimCapabilities {
       return $libelles[$_concept];
     }
     $confort = self::fonctionConfort($_concept);
-    return isset($confort['libelle']) ? $confort['libelle'] : '';
+    if (isset($confort['libelle'])) {
+      return $confort['libelle'];
+    }
+    // UC02 du domaine post-mvp/04-fonctions-avancees : même repli que pour le confort
+    // ci-dessus — un concept d'oscillation NON livré ('confirme' => false) n'a de toute
+    // façon jamais de commande créée, ce repli ne relâche donc rien.
+    $oscillation = self::fonctionOscillation($_concept);
+    return isset($oscillation['libelle']) ? $oscillation['libelle'] : '';
   }
 
   /**
@@ -409,6 +524,12 @@ class smartclimCapabilities {
    * « Marche-Arrêt » ici, alors que libelleConcept() (destiné à une PHRASE, pas à un nom
    * de composant) garde « Marche/Arrêt ». Chaîne vide si le concept est inconnu :
    * l'appelant (creerCommandesInfo()) ne crée alors AUCUNE commande.
+   *
+   * ⚠️ Depuis l'UC02 du domaine post-mvp/04-fonctions-avancees : pour un concept
+   * d'oscillation dont 'lecture' === false, le nom porte un SUFFIXE
+   * « (état commandé) » — c'est LE porteur d'AC5 (§ 5.1.3 de la spec technique). Repli
+   * sur le libellé NU dès que 'lecture' === true. Un seul appelant, creerCommandesInfo() :
+   * ce repli n'a AUCUN effet de bord ailleurs.
    *
    * @param string $_concept
    * @return string
@@ -431,7 +552,59 @@ class smartclimCapabilities {
     // technique UC01 post-mvp/04 — « Santé / Ioniseur » a d'ailleurs été raccourci en
     // « Ioniseur » pour cette même raison, en amont, dans fonctionsConfort()).
     $confort = self::fonctionConfort($_concept);
-    return isset($confort['libelle']) ? $confort['libelle'] : '';
+    if (isset($confort['libelle'])) {
+      return $confort['libelle'];
+    }
+    $oscillation = self::fonctionOscillation($_concept);
+    if (!isset($oscillation['libelle'])) {
+      return '';
+    }
+    if (empty($oscillation['lecture'])) {
+      // Repli sans risque signalé § 7 de la spec technique : les parenthèses ne figurent
+      // pas dans la liste de cleanComponanteName() (`& # ] [ % \ / ' " *`), vérifié.
+      return self::nomSuffixe($oscillation['libelle']);
+    }
+    return $oscillation['libelle'];
+  }
+
+  /**
+   * Gabarit UNIQUE du suffixe « (état commandé) » (UC02 du domaine post-mvp/04-
+   * fonctions-avancees, § 5.5.3 de sa spec technique) : appelé par libelleCommande() ET
+   * libelleCommandeAutreVariante() ci-dessous — un SEUL __() pour ce texte dans tout le
+   * plugin. Motif de la factorisation : creerCommandesInfo() (smartclim.class.php)
+   * compare le nom COURANT d'une commande à ce gabarit pour décider d'un réalignement
+   * ciblé (§ 5.5.3) ; si les deux appelants retapaient chacun leur propre
+   * `sprintf(__(...))`, un futur changement du texte français dans l'un des deux SANS
+   * le répercuter dans l'autre ferait échouer cette comparaison SILENCIEUSEMENT, et le
+   * réalignement de nom s'arrêterait sans aucune erreur visible.
+   *
+   * @param string $_libelle Libellé NU du concept.
+   * @return string
+   */
+  private static function nomSuffixe($_libelle) {
+    return sprintf(__('%s (état commandé)', __FILE__), $_libelle);
+  }
+
+  /**
+   * Contrepartie de libelleCommande() ci-dessus : renvoie l'AUTRE variante (nu <->
+   * suffixée) du nom d'un concept d'oscillation (UC02 du domaine post-mvp/04-fonctions-
+   * avancees, § 5.5.3 de sa spec technique). SEUL consommateur :
+   * smartclim::creerCommandesInfo(), qui compare le nom COURANT d'une commande déjà
+   * existante à cette contrepartie pour décider d'un réalignement ciblé — sans introduire
+   * un second __() dans smartclim.class.php (§ 7 : « zéro littéral nouveau »). Réutilise
+   * le MÊME gabarit que libelleCommande() ci-dessus (nomSuffixe(), même clé de
+   * traduction). Chaîne vide si le concept est inconnu.
+   *
+   * @param string $_concept
+   * @return string
+   */
+  public static function libelleCommandeAutreVariante($_concept) {
+    $oscillation = self::fonctionOscillation($_concept);
+    if (!isset($oscillation['libelle'])) {
+      return '';
+    }
+    $nomNu = $oscillation['libelle'];
+    return empty($oscillation['lecture']) ? $nomNu : self::nomSuffixe($nomNu);
   }
 
   /**
@@ -463,6 +636,12 @@ class smartclimCapabilities {
    * les nouveaux concepts dans le cycle info existant, sans une ligne dans
    * appliquerEtat().
    *
+   * ⚠️ Depuis l'UC02 du domaine post-mvp/04-fonctions-avancees : PUIS
+   * conceptsOscillationLivres() — PRÉREQUIS MÉCANIQUE d'AC5 (§ 1.4 de la spec
+   * technique) : sans cette extension, appliquerEtat() n'itérerait jamais sur swing_v/
+   * swing_h et l'état optimiste posé après une commande d'oscillation ne serait JAMAIS
+   * poussé.
+   *
    * @return array<int,string>
    */
   public static function conceptsConnus() {
@@ -475,7 +654,8 @@ class smartclimCapabilities {
         self::CONCEPT_AMBIENT_TEMP,
         self::CONCEPT_FAN_SPEED,
       ),
-      self::conceptsConfortLivres()
+      self::conceptsConfortLivres(),
+      self::conceptsOscillationLivres()
     );
   }
 

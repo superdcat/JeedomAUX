@@ -450,7 +450,17 @@ class smartclimBroadlinkLan {
     $trameControle = isset($_lecture['trame_controle']) && is_string($_lecture['trame_controle']) ? $_lecture['trame_controle'] : '';
     $trameLongue = isset($_lecture['trame_longue']) && is_string($_lecture['trame_longue']) ? $_lecture['trame_longue'] : '';
 
-    $concepts = array_merge(array(smartclimCapabilities::CONCEPT_ONLINE), smartclimFrame::conceptsLisibles($trameControle, $trameLongue));
+    // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) : MÊME
+    // fusion que smartclimAuxHomeApi::capacitesAppareil(), strictement symétrique. Le
+    // profil LAN continue de publier 'modes'/'vitesses' vides (aucun équivalent de
+    // feature.coolType), mais PEUT publier les concepts d'oscillation : contrairement aux
+    // modes, l'union n'y réintroduit rien qui aurait été exclu sur preuve, puisqu'aucune
+    // exclusion d'oscillation n'existe côté cloud (§ 2.6 de la spec technique).
+    $concepts = array_values(array_unique(array_merge(
+      array(smartclimCapabilities::CONCEPT_ONLINE),
+      smartclimFrame::conceptsLisibles($trameControle, $trameLongue),
+      smartclimFrame::conceptsOscillables($trameControle, $trameLongue)
+    )));
 
     return array(
       'concepts' => $concepts,

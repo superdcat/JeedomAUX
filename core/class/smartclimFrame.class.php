@@ -109,6 +109,11 @@ class smartclimFrame {
    * ioniseur/nettoyage sur l'octet 18) — TROISIÈME table à vérifier avant toute
    * modification de ces deux octets, en plus de champsEcriture().
    *
+   * ⚠️ Depuis l'UC02 du domaine post-mvp/04-fonctions-avancees : l'octet 10 est EN PLUS
+   * PARTAGÉ avec champsOscillation() ci-dessous — consigne sur les bits 7-3 (masque
+   * 0xF8) contre swing_v sur les bits 2-0 (masque 0x07). QUATRIÈME table à vérifier
+   * avant toute modification de cet octet.
+   *
    * @return array<string, array{trame:string, octets:array<int,int>}>
    */
   private static function champs() {
@@ -152,15 +157,39 @@ class smartclimFrame {
   }
 
   /**
+   * Emplacement des concepts d'OSCILLATION (UC02 du domaine post-mvp/04-fonctions-
+   * avancees, § 5.2.1 de sa spec technique) : schéma (octet, masque, décalage) — comme
+   * champsEcriture() ci-dessous, PAS comme champsBinaires() (octet/bit). PUBLIQUE
+   * (comme champsBinaires()) : second consommateur smartclimDiagnostic::texteTrameHvac().
+   * NON filtrée par 'confirme'/'lecture' : des offsets restent des offsets, quel que soit
+   * l'état de recette — c'est conceptsOscillables()/decoderEtat() qui appliquent le
+   * filtre.
+   *
+   * ⚠️ Commentaire croisé OBLIGATOIRE avec champs() (octet 10 = consigne, bits 7-3) et
+   * champsBinaires() : masques VÉRIFIÉS DISJOINTS — octet 10 : consigne 0xF8 contre
+   * swing_v 0x07 ; octet 11 : swing_h 0xE0, aucun autre écrivain de cet octet.
+   *
+   * @return array<string, array{trame:string, octet:int, masque:int, decalage:int}>
+   */
+  public static function champsOscillation() {
+    return array(
+      smartclimCapabilities::CONCEPT_SWING_V => array('trame' => self::TRAME_CONTROLE, 'octet' => 10, 'masque' => 0x07, 'decalage' => 0),
+      smartclimCapabilities::CONCEPT_SWING_H => array('trame' => self::TRAME_CONTROLE, 'octet' => 11, 'masque' => 0xE0, 'decalage' => 5),
+    );
+  }
+
+  /**
    * Longueur MINIMALE (en octets) de chaque trame requise par concept, avant d'en tirer
    * une correspondance générique : offsets 0-based, donc une trame de longueur N couvre
-   * l'octet d'indice N-1. DÉRIVÉE de champs() UNION champsBinaires() (longueur minimale
-   * = max(octets) + 1 pour champs(), octet + 1 pour champsBinaires()) — SOURCE UNIQUE
-   * des longueurs, ne pas coder de seuil ailleurs. Copie VERBATIM de l'ex-
-   * smartclimAuxHomeApi::offsetsAuxHome() (même forme de retour) pour la partie champs().
+   * l'octet d'indice N-1. DÉRIVÉE de champs() UNION champsBinaires() UNION
+   * champsOscillation() (longueur minimale = max(octets) + 1 pour champs(), octet + 1
+   * pour champsBinaires() et champsOscillation()) — SOURCE UNIQUE des longueurs, ne pas
+   * coder de seuil ailleurs. Copie VERBATIM de l'ex-smartclimAuxHomeApi::offsetsAuxHome()
+   * (même forme de retour) pour la partie champs().
    *
-   * ⚠️ Deux boucles DISTINCTES : champs() porte 'octets' (pluriel, liste d'indices),
-   * champsBinaires() porte 'octet' (singulier, un entier) — ne jamais confondre les deux
+   * ⚠️ TROIS boucles DISTINCTES depuis l'UC02 du domaine post-mvp/04-fonctions-avancees :
+   * champs() porte 'octets' (pluriel, liste d'indices), champsBinaires() ET
+   * champsOscillation() portent 'octet' (singulier, un entier) — ne jamais confondre les
    * schémas dans une même boucle.
    *
    * @return array{controle:array<string,int>, longue:array<string,int>}
@@ -171,6 +200,9 @@ class smartclimFrame {
       $offsets[$champ['trame']][$concept] = max($champ['octets']) + 1;
     }
     foreach (self::champsBinaires() as $concept => $champ) {
+      $offsets[$champ['trame']][$concept] = $champ['octet'] + 1;
+    }
+    foreach (self::champsOscillation() as $concept => $champ) {
       $offsets[$champ['trame']][$concept] = $champ['octet'] + 1;
     }
     return $offsets;
@@ -238,6 +270,57 @@ class smartclimFrame {
       }
       $octetsDisponibles = ($champ['trame'] === self::TRAME_CONTROLE) ? $octetsControle : $octetsLongue;
       if ($octetsDisponibles >= $offsets[$champ['trame']][$concept]) {
+        $concepts[] = $concept;
+      }
+    }
+    return $concepts;
+  }
+
+  /**
+   * Concepts d'OSCILLATION dont la trame de CONTRÔLE couvre l'octet requis (UC02 du
+   * domaine post-mvp/04-fonctions-avancees, § 5.2.2 de sa spec technique) : swing_v ->
+   * 11 octets, swing_h -> 12 octets. SEUL point d'entrée du profil pour les oscillations ;
+   * appelée par les DEUX capacitesAppareil() (AUX Home et Broadlink LAN).
+   *
+   * ⚠️⚠️ Garde en tête de méthode, NON NÉGOCIABLE : le seuil testé est celui de la trame
+   * de CONTRÔLE SEULE (13 octets, le seuil de conceptsLisibles() sur cette trame), pas
+   * celui de conceptsLisibles() prise dans son ensemble. conceptsLisibles() est lue par
+   * smartclimBroadlinkLan::lireEtat() pour produire STATUT_ETAT_LU, SEUL garde-fou de
+   * la création d'équipement depuis le LAN (UC04 du domaine post-mvp/01-transport-
+   * broadlink-lan). Les DEUX offsets d'oscillation vivent dans la trame de CONTRÔLE ; si
+   * le test portait sur conceptsLisibles($_trameControle, $_trameLongue) (les deux
+   * trames), une trame de contrôle COURTE (11 octets, sous le seuil de 13) accompagnée
+   * d'une trame LONGUE valide (CONCEPT_AMBIENT_TEMP, seuil 16 octets) franchirait quand
+   * même la garde — la trame longue n'a AUCUN rapport avec les offsets d'oscillation.
+   * D'où l'appel avec une trame longue vide en dur : on teste explicitement le seuil de
+   * la trame de contrôle, rien d'autre. Ne pas toucher conceptsLisibles() elle-même :
+   * l'abaisser à 11 pour les oscillations AFFAIBLIRAIT ce garde-fou. Mais ne pas la
+   * toucher ne suffit pas : smartclim::appliquerLectureLan() appelle
+   * appliquerCapacites(capacitesAppareil()) sur TOUT équipement déjà rapproché, quel que
+   * soit le statut de lecture. Sans cette garde, une trame de 11 octets (appareil
+   * Broadlink non-climatiseur, réponse tronquée) suffirait à faire entrer swing_v dans un
+   * profil — et l'union d'appliquerCapacites() est IRRÉVERSIBLE (aucun équivalent de
+   * modes_exclus pour les concepts, dette D4 d'UC01).
+   *
+   * @param string $_trameControle
+   * @param string $_trameLongue
+   * @return array<int,string>
+   */
+  public static function conceptsOscillables($_trameControle, $_trameLongue) {
+    if (empty(self::conceptsLisibles($_trameControle, ''))) {
+      return array();
+    }
+    $trameControle = is_string($_trameControle) ? $_trameControle : '';
+    $octetsControle = strlen($trameControle) / 2;
+    $offsets = self::longueursMinimales();
+
+    $concepts = array();
+    $livres = smartclimCapabilities::conceptsOscillationLivres();
+    foreach (self::champsOscillation() as $concept => $champ) {
+      if (!in_array($concept, $livres, true)) {
+        continue;
+      }
+      if ($octetsControle >= $offsets[$champ['trame']][$concept]) {
         $concepts[] = $concept;
       }
     }
@@ -367,6 +450,34 @@ class smartclimFrame {
       }
     }
 
+    // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.2.3 de sa spec technique) :
+    // concepts d'oscillation, filtrés par conceptsOscillationRelus() — exige 'confirme'
+    // ET 'lecture'. Une clé absente reste absente (c'est l'invariant qui tient AC5) :
+    // ne JAMAIS substituer 0. ⚠️ Une position FIGÉE (1-5) est rendue « inactif » — c'est
+    // vrai (le volet ne balaie pas) et c'est le seul mappage honnête d'un champ à 7
+    // valeurs sur un booléen.
+    $relus = smartclimCapabilities::conceptsOscillationRelus();
+    foreach (self::champsOscillation() as $concept => $champ) {
+      if (!in_array($concept, $relus, true)) {
+        continue;
+      }
+      $trame = ($champ['trame'] === self::TRAME_CONTROLE) ? $trameControle : $trameLongue;
+      $octetsDisponibles = ($champ['trame'] === self::TRAME_CONTROLE) ? $octetsControle : $octetsLongue;
+      if ($octetsDisponibles < $offsets[$champ['trame']][$concept]) {
+        continue;
+      }
+      $valeurOctet = self::octet($trame, $champ['octet']);
+      if ($valeurOctet === null) {
+        continue;
+      }
+      $codeLu = ($valeurOctet & $champ['masque']) >> $champ['decalage'];
+      $fonction = smartclimCapabilities::fonctionOscillation($concept);
+      if (!isset($fonction['code_actif'])) {
+        continue;
+      }
+      $etat[$concept] = ($codeLu === $fonction['code_actif']) ? 1 : 0;
+    }
+
     return $etat;
   }
 
@@ -403,10 +514,18 @@ class smartclimFrame {
    * énumérées), donc versTransport() y renverrait systématiquement null et lèverait
    * TYPE_INTERNE à chaque commande LAN.
    *
-   * @return array<string, array{octet:int, masque:int, decalage:int, binaire?:bool}>
+   * ⚠️ Depuis l'UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.2.4 de sa spec
+   * technique) : les lignes d'oscillation (swing_v, swing_h) sont CONSTRUITES depuis
+   * champsOscillation() ci-dessus, JAMAIS retapées à la main — contrairement aux lignes
+   * 'binaire' ci-dessous (schéma octet/bit, non dérivable), champsOscillation() porte
+   * EXACTEMENT le schéma octet/masque/decalage requis ici. Retaper les offsets ferait
+   * qu'une faute de frappe écrirait SILENCIEUSEMENT les mauvais bits, sur le chemin LAN,
+   * NON RECETTABLE (R3 de la spec technique). Une source d'offsets, pas deux.
+   *
+   * @return array<string, array{octet:int, masque:int, decalage:int, binaire?:bool, oscillation?:bool}>
    */
   private static function champsEcriture() {
-    return array(
+    $champs = array(
       smartclimCapabilities::CONCEPT_FAN_SPEED => array('octet' => 13, 'masque' => 0xE0, 'decalage' => 5),
       smartclimCapabilities::CONCEPT_MODE => array('octet' => 15, 'masque' => 0xE0, 'decalage' => 5),
       smartclimCapabilities::CONCEPT_POWER => array('octet' => 18, 'masque' => 0x20, 'decalage' => 5),
@@ -416,15 +535,24 @@ class smartclimFrame {
       smartclimCapabilities::CONCEPT_DISPLAY => array('octet' => 20, 'masque' => 0x10, 'decalage' => 4, 'binaire' => true),
       smartclimCapabilities::CONCEPT_MILDEW => array('octet' => 20, 'masque' => 0x08, 'decalage' => 3, 'binaire' => true),
     );
+    foreach (self::champsOscillation() as $concept => $champ) {
+      $champs[$concept] = array('octet' => $champ['octet'], 'masque' => $champ['masque'], 'decalage' => $champ['decalage'], 'oscillation' => true);
+    }
+    return $champs;
   }
 
   /**
    * Concepts que encoderOrdre() sait ÉCRIRE (§ 5.1 de la spec technique UC03) :
    * champsEcriture() + la consigne (encodage dédié sur 2 octets). Consommée en LISTE
-   * BLANCHE par smartclim::valeursCommandees() — une entrée de mémoire d'ordres portant
-   * un concept futur (oscillation, domaine post-mvp/04) ne doit JAMAIS atteindre
-   * encoderOrdre(), sous peine de TYPE_INTERNE sur TOUTE commande LAN pendant la
-   * fenêtre de grâce (§ 6.2/R14 de la spec technique).
+   * BLANCHE par smartclim::valeursCommandees() — cette liste s'élargit MÉCANIQUEMENT
+   * avec champsEcriture() : depuis l'UC02 du domaine post-mvp/04-fonctions-avancees,
+   * swing_v/swing_h y figurent et DOIVENT y figurer (§ 5.2.4 de sa spec technique),
+   * exactement comme les concepts de confort de l'UC01 du même domaine. Ne PAS
+   * « nettoyer » cette liste en excluant un concept qui y arrive via champsEcriture() :
+   * cela ferait lever TYPE_INTERNE sur toutes les commandes LAN visant ce concept
+   * pendant la fenêtre de grâce (§ 6.2/R14 de la spec technique). Un concept réellement
+   * ABSENT de champsEcriture() (ex. CONCEPT_AMBIENT_TEMP, lecture seule) ne doit
+   * évidemment jamais y être ajouté.
    *
    * @return array<int, string>
    */
@@ -522,6 +650,16 @@ class smartclimFrame {
         // versTransport() y renverrait null systématiquement. Le code est simplement le
         // booléen générique, 0 ou 1.
         $code = $valeurGenerique ? 1 : 0;
+      } elseif (!empty($definition['oscillation'])) {
+        // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.2.4 de sa spec technique) :
+        // concept d'oscillation, ABSENT lui aussi de smartclimCapabilities::tables() —
+        // versTransport() y renverrait null systématiquement et lèverait TYPE_INTERNE.
+        // Codes propriétaires PARTAGÉS intent/fil (code_actif/code_fixe).
+        $fonction = smartclimCapabilities::fonctionOscillation($concept);
+        if (!isset($fonction['code_actif']) || !isset($fonction['code_fixe'])) {
+          throw new smartclimException('Trame HVAC : concept d\'oscillation sans codes déclarés (' . $concept . ')', smartclimException::TYPE_INTERNE);
+        }
+        $code = $valeurGenerique ? $fonction['code_actif'] : $fonction['code_fixe'];
       } else {
         $code = smartclimCapabilities::versTransport($_transport, $concept, $valeurGenerique);
         if ($code === null) {

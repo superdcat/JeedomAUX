@@ -251,12 +251,23 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `CONCEPT_DISPLAY`, `CONCEPT_SLEEP`, `CONCEPT_HEALTH`, `CONCEPT_CLEAN`, `CONCEPT_MILDEW`, la table
   `fonctionsConfort()` et ses accesseurs `conceptsConfort()` / `conceptsConfortLivres()` /
   `fonctionConfort()`.
-  ⚠️⚠️ **TROIS familles de marqueurs coexistent maintenant, et une seule est LUE — ne pas les
+  Depuis l'UC02 du même domaine, elle porte **symétriquement les concepts d'oscillation** :
+  `CONCEPT_SWING_V`, `CONCEPT_SWING_H`, la table `fonctionsOscillation()` et ses accesseurs
+  `conceptsOscillation()` / `conceptsOscillationLivres()` / `conceptsOscillationRelus()` /
+  `fonctionOscillation()`, plus le gabarit **unique** `nomSuffixe()` (suffixe « (état commandé) »).
+  ⚠️⚠️ **CINQ familles de marqueurs coexistent maintenant, et trois seulement sont LUES — ne pas les
   confondre** : `'fil' => null` est un **fait de protocole** (aucune correspondance de lecture n'existe) ;
   `intent_confirme`, dans `tables()`, est **déclaratif et jamais lu** (une note de traçabilité sur la
-  solidité d'un code d'écriture) ; `'confirme'`, dans `fonctionsConfort()`, est **effectivement lu et
-  gouverne l'exposition** — c'est le premier marqueur de recette *actif* du plugin. Prendre le deuxième
-  pour le troisième, c'est croire qu'on a livré une fonction qui n'apparaîtra jamais, ou l'inverse.
+  solidité d'un code d'écriture) ; `'confirme'`, dans `fonctionsConfort()` **et** dans
+  `fonctionsOscillation()`, est **effectivement lu et gouverne l'exposition** ; `'lecture'`, dans
+  `fonctionsOscillation()` seule, est **lu et gouverne le DÉCODAGE**. Prendre le déclaratif pour un
+  marqueur lu, c'est croire qu'on a livré une fonction qui n'apparaîtra jamais, ou l'inverse.
+  ⚠️ **`confirme` et `lecture` sont INDÉPENDANTS, et c'est le mécanisme d'UC02** : `confirme` fait
+  apparaître les commandes (écriture), `lecture` autorise `decoderEtat()` à produire la clé. Tant que
+  `lecture => false`, la lecture ne peut **jamais** écraser l'état optimiste posé à l'écriture — c'est
+  ainsi, et sans exception à l'invariant « une clé absente ne touche pas sa commande », qu'est tenue
+  l'exigence d'afficher le dernier état **commandé** quand la relecture par axe n'est pas confirmée.
+  Invariant à respecter : `lecture => true` **implique** `confirme => true`.
   ⚠️ **`conceptsConfortLivres()` est le point d'édition UNIQUE pour activer une fonction** (consommé par
   `conceptsConnus()`, `smartclimFrame::conceptsLisibles()`/`decoderEtat()` et
   `definitionsCommandesAction()`). Les cinq fonctions sont livrées à `false` : **rien n'apparaît** avant
@@ -365,8 +376,9 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   dérivée de `champs()` **et**, depuis l'UC01 du domaine post-MVP 04, de `champsBinaires()`), `octet()`,
   `conceptsLisibles()`, `decoderEtat()` et — depuis l'**UC04 du même
   domaine** — le prédicat pur `estTrameHvac()` (préfixe `MAGIC_TRAME_HVAC` = `bb00`).
-  ⚠️ **`champs()` porte `'octets'` (PLURIEL, une liste d'indices) et `champsBinaires()` porte `'octet'`
-  (singulier)** : `longueursMinimales()` les fusionne en **deux boucles distinctes**. Confondre les deux
+  ⚠️ **`champs()` porte `'octets'` (PLURIEL, une liste d'indices) tandis que `champsBinaires()` et
+  `champsOscillation()` portent `'octet'`
+  (singulier)** : `longueursMinimales()` les fusionne en **trois boucles distinctes**. Confondre les deux
   schémas casse silencieusement le calcul de longueur, donc les garde-fous de trame courte.
   Depuis l'UC01 du domaine post-MVP 04, elle porte les **bits des fonctions de confort** :
   `champsBinaires()` (publique — second appelant `smartclimDiagnostic::texteTrameHvac()`), et les cinq
@@ -374,13 +386,27 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **`encoderOrdre()` court-circuite `versTransport()` pour une ligne `'binaire'`** : ces concepts sont
   absents de `tables()`, donc `versTransport()` renverrait `null` et **chaque** commande LAN lèverait
   `TYPE_INTERNE`.
-  ⚠️ **Les octets 15 et 18 sont PARTAGÉS entre les trois tables** (15 : mode + sommeil ; 18 : marche +
-  ioniseur + nettoyage) — d'où le commentaire croisé qu'elles portent toutes les trois. Écrire un octet
-  entier au lieu de masquer casserait deux concepts d'un coup.
+  ⚠️ **Des octets sont PARTAGÉS entre les QUATRE tables** — `champs()`, `champsBinaires()`,
+  `champsEcriture()` et, depuis l'UC02 du domaine post-MVP 04, `champsOscillation()` : octet 15 (mode +
+  sommeil), octet 18 (marche + ioniseur + nettoyage), et **octet 10 (consigne bits 7-3 `0xF8` +
+  `swing_v` bits 2-0 `0x07`)**. D'où le commentaire croisé que les quatre portent. Écrire un octet entier
+  au lieu de masquer casserait deux concepts d'un coup. ⚠️ La commutativité consigne/`swing_v` sur
+  l'octet 10 tient parce qu'`encoderConsigne()` fait `($octet10 & 0x07) | …` : elle **préserve** les bits
+  de l'oscillation. À re-vérifier si elle est un jour retouchée.
   ⚠️ **`conceptsLisibles()` et `decoderEtat()` filtrent les concepts de confort** par
-  `smartclimCapabilities::conceptsConfortLivres()` — seule dépendance de ce décodeur vers la table de
+  `smartclimCapabilities::conceptsConfortLivres()` — dépendance de ce décodeur vers la table de
   capacités, assumée pour ne pas dupliquer le filtre dans les deux `capacitesAppareil()`, où il
-  divergerait.
+  divergerait. `decoderEtat()` filtre de même les oscillations par `conceptsOscillationRelus()`.
+  ⚠️⚠️ **Les oscillations n'entrent PAS au profil par `conceptsLisibles()`, mais par la voie séparée
+  `conceptsOscillables()`** (UC02 du domaine post-MVP 04) — et ce n'est pas un doublon : `conceptsLisibles()`
+  produit `STATUT_ETAT_LU`, **seul garde-fou de la création d'équipement depuis le LAN**, et y ajouter les
+  oscillations abaisserait son seuil de 13 à 11 octets. `conceptsOscillables()` ouvre donc par la garde
+  `empty(conceptsLisibles($_trameControle, ''))` — ⚠️ **trame longue passée VIDE, délibérément** : sans
+  cela, une température ambiante lisible (seuil 16 octets) compenserait une trame de contrôle **courte**,
+  et un concept entrerait dans un profil sur une trame qui ne le porte pas. L'entrée d'un concept dans un
+  profil est **irréversible** (`appliquerCapacites()` unionne, sans équivalent de `modes_exclus`).
+  ⚠️ Leçon générale : réutiliser un prédicat existant comme garde ne suffit pas — vérifier **sur quelles
+  entrées** il se prononce.
   ⚠️ `estTrameHvac()` n'est **qu'un signal de journalisation** pour le transport appelant, **jamais** un
   critère bloquant : le préfixe est établi côté cloud et par les magics de lecture, mais **jamais observé
   sur une réponse LAN réelle**. Le rendre bloquant rendrait le chemin LAN inopérant **en silence**. Depuis

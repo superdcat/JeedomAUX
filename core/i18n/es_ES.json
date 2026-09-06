@@ -194,7 +194,10 @@
         "Mode sommeil": "Modo nocturno",
         "Ioniseur": "Ionizador",
         "Nettoyage automatique": "Autolimpieza",
-        "Anti-moisissure": "Protección antimoho"
+        "Anti-moisissure": "Protección antimoho",
+        "Oscillation verticale": "Oscilación vertical",
+        "Oscillation horizontale": "Oscilación horizontal",
+        "%s (état commandé)": "%s (último comando enviado)"
     },
     "plugins/smartclim/desktop/js/smartclim.js": {
         "Nom de la commande": "Nombre del comando",

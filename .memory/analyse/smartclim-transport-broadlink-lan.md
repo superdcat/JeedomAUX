@@ -260,8 +260,11 @@ Le seul gain d'un démon serait de **maintenir la session ouverte** entre deux c
       **fausse divergence** : décalage d'espace d'offsets, `12 + 2 = 14`, même bit (UC02, § 5.2).
       Le plugin le lit déjà côté cloud. ⚠️ Reste non **mesuré** sur matériel — mais **aucune branche
       alternative ne doit être codée**.
-- [ ] Offset réel de l'oscillation horizontale en **lecture** (12 ou 13) — **vraie** divergence celle-là
-      (cf. § 5.2), sans objet tant qu'aucun concept d'oscillation n'existe (domaine `post-mvp/04`).
+- [ ] Offset réel de l'oscillation horizontale en **lecture** — **tranché provisoirement** en UC02 du
+      domaine `post-mvp/04` (2026-09-06) en faveur de l'**octet 11 bits 7-5**, donc **aligné sur
+      l'écriture** et contre les bits 2-0 d'`ac_freedom` (cf. § 13.4). ⚠️ **Hypothèse forte, PAS une
+      mesure** : un seul échantillon, appareil éteint, jamais vu varier. Reste à confirmer sur matériel
+      (§ 11 étape 4 de la spec technique d'UC02) avant de cocher cette ligne.
 - [x] ~~Bornes exactes du remplissage ASCII `'1'` de la charge utile d'auth~~ → **`0x04`–`0x13`** (UC01, § 4).
 - [x] ~~Utilité réelle des ports de découverte 15001 et 2415~~ → **aucune** pour un climatiseur, port
       **80 seul** (UC01, § 1).
@@ -389,7 +392,15 @@ Seuls les octets **6** et **8** diffèrent. ⚠️ Ne pas confondre l'octet 6 de
 - **La réponse à une écriture n'est parsée par aucune référence.** La seule confirmation disponible est
   le **code d'erreur `0x22` nul**. Si un appareil accusait `0` sans appliquer, seule la recette le
   montrerait.
-- **L'oscillation horizontale reste une VRAIE divergence** (§ 10) : octet 11 bits 7-5 en écriture, bits
-  2-0 en lecture selon `ac_freedom`. Contrairement au demi-degré (fausse divergence d'espace, refermée en
-  UC02), celle-ci ne se referme pas par l'analyse. En attendant, **l'octet 11 se recopie tel quel** —
-  toute transformation reposerait sur le choix arbitraire d'une des deux lectures.
+- **L'oscillation horizontale : divergence TRANCHÉE PROVISOIREMENT, pas refermée** (§ 10). Octet 11 bits
+  7-5 en écriture, bits 2-0 en lecture selon `ac_freedom`. État au 2026-09-06 (UC02 du domaine
+  `post-mvp/04`) : la **trame réelle versionnée** du 2026-08-26 départage les deux lectures — octet 11 =
+  `0xe0` donne `7` = 关闭 (arrêt) en bits 7-5, cohérent avec un appareil **éteint** (octet 18 = `0x00`),
+  là où les bits 2-0 donneraient `0` = 开启 (balayage), **incohérent**. Le plugin retient donc les **bits
+  7-5**.
+  ⚠️ **Ce n'est PAS une mesure** : un seul échantillon, appareil éteint, champ **jamais vu varier**, et
+  l'argument est une **inférence de cohérence**. C'est exactement le motif du marqueur
+  `'lecture' => false` livré par UC02 : le champ est **décodé mais non exposé** tant que la mesure
+  (§ 11 étape 4 de sa spec technique) n'a pas montré qu'il bascule **dans les deux sens** aux bits prévus.
+  ⚠️ Contrairement à l'état antérieur, **l'octet 11 ne se recopie plus tel quel** : `encoderOrdre()` y
+  patche le masque `0xE0` quand un ordre porte `swing_h`. Le reste de l'octet traverse intact.

@@ -97,6 +97,11 @@ class smartclimCapabilities {
   const CONCEPT_SWING_V = 'swing_v';
   const CONCEPT_SWING_H = 'swing_h';
 
+  // UC03 du domaine post-mvp/04-fonctions-avancees (§ 5.1 de sa spec technique) : sécurité
+  // enfant. logicalId DÉJÀ acté (.memory/analyse/smartclim-architecture-jeedom.md § 5.1),
+  // STABLE par contrat comme tous les CONCEPT_* ci-dessus.
+  const CONCEPT_CHILD_LOCK = 'child_lock';
+
   const MODE_AUTO = 'AUTO';
   const MODE_COOL = 'COOL';
   const MODE_DRY = 'DRY';
@@ -303,6 +308,12 @@ class smartclimCapabilities {
    * voir son propre docblock pour le détail complet des CINQ marqueurs désormais actifs
    * dans ce fichier.
    *
+   * ⚠️ Depuis l'UC03 du domaine post-mvp/04-fonctions-avancees, fonctionsProtection()
+   * introduit un SIXIÈME marqueur : son 'confirme' est d'une nature NOUVELLE, il
+   * gouverne l'exposition d'un concept qui n'a AUCUN offset de trame (contrairement à
+   * 'confirme' ici, toujours adossé à un bit identifié dans champsBinaires()). Voir son
+   * docblock pour le détail.
+   *
    * - 'libelle' : chaîne LITTÉRALE dans __() (scan i18n statique) — sert À LA FOIS de
    *   libellé de concept et de base du nom des deux commandes action (un seul __() par
    *   fonction, jamais deux pour un texte identique).
@@ -392,6 +403,11 @@ class smartclimCapabilities {
    *    Si un transport divergeait un jour, introduire une dimension « transport » DANS
    *    cette table, jamais un second littéral ailleurs.
    *
+   * ⚠️ Depuis l'UC03 du domaine post-mvp/04-fonctions-avancees, fonctionsProtection()
+   * introduit un SIXIÈME marqueur : contrairement à 'confirme' ICI (toujours adossé à
+   * un bit identifié dans champsBinaires()), le sien gouverne l'exposition d'un concept
+   * qui N'A AUCUN offset de trame — voir son docblock.
+   *
    * - 'libelle' : chaîne LITTÉRALE dans __() — sert de libellé de concept ET de base des
    *   noms des deux commandes action (un seul __() par fonction).
    * - 'code_actif' / 'code_fixe' : codes propriétaires PARTAGÉS par l'intent cloud et le
@@ -464,6 +480,90 @@ class smartclimCapabilities {
   }
 
   /**
+   * LA table des fonctions de PROTECTION (UC03 du domaine post-mvp/04-fonctions-avancees,
+   * § 5.1 de sa spec technique). Un seul concept livré : la sécurité enfant.
+   *
+   * ⚠️ Pourquoi une table SÉPARÉE et pas une 6ᵉ ligne de fonctionsConfort() ci-dessus,
+   * alors que les colonnes sont identiques : (1) conceptsConfortLivres() est consommée
+   * par smartclimFrame (conceptsLisibles()/decoderEtat()), où CHAQUE concept possède un
+   * bit dans champsBinaires() — y glisser un concept SANS AUCUN offset casserait cette
+   * propriété, la table cesserait de signifier « fonction booléenne portée par un bit de
+   * trame ». (2) fonctionsProtection() est l'ancrage du domaine protection, où
+   * power_limit (sélecteur à 4 niveaux, différé — D-UC03-02) viendra avec une forme
+   * DIFFÉRENTE de celle du confort. (3) séparation par domaine fonctionnel, cohérente
+   * avec fonctionsOscillation() ci-dessus.
+   *
+   * ⚠️ PAS de colonne 'lecture', et c'est un FAIT, pas un oubli : aucun bit de la trame
+   * HVAC ne porte la sécurité enfant (négatif établi sur quatre implémentations de
+   * référence, § 2.3 de la spec technique) — la lecture est STRUCTURELLEMENT
+   * impossible sur ce transport, pas « non encore confirmée ». Une colonne 'lecture'
+   * suggérerait qu'elle pourrait un jour passer à true ; elle ne le peut pas. Si un bit
+   * était découvert (mesure § 11 point 2b de la spec technique), cette fonction
+   * migrerait vers le patron fonctionsConfort() + champsBinaires().
+   *
+   * ⚠️ La famille des marqueurs de recette de ce plugin passe ainsi de CINQ à SIX : le
+   * 'confirme' ci-dessous est d'une nature NOUVELLE — il gouverne l'exposition d'un
+   * concept SANS AUCUN offset de trame (contrairement à fonctionsConfort() et
+   * fonctionsOscillation(), où 'confirme' porte toujours sur un concept dont un bit est
+   * identifié). Seuls trois marqueurs sur six sont effectivement LUS : 'fil' => null
+   * (tables(), exclusion transport), 'confirme' (ici, fonctionsConfort(),
+   * fonctionsOscillation(), exposition) et 'lecture' (fonctionsOscillation() seule,
+   * décodage). Voir le docblock de fonctionsOscillation() ci-dessus pour la liste
+   * complète.
+   *
+   * - 'libelle' : chaîne LITTÉRALE dans __() — sert de libellé de concept ET de base des
+   *   deux noms de commandes action (un seul __() pour ce texte dans tout le plugin).
+   * - 'allumer' : l'ordre ON de cette fonction porte-t-il power => 1 ? true pour la
+   *   sécurité enfant (§ 2.1 de la spec technique : l'ordre ON allume l'appareil).
+   * - 'ordre' : base d'affichage Jeedom (ON = ordre, OFF = ordre + 1).
+   *
+   * @return array<string, array{libelle:string, confirme:bool, allumer:bool, ordre:int}>
+   */
+  private static function fonctionsProtection() {
+    return array(
+      self::CONCEPT_CHILD_LOCK => array('libelle' => __('Sécurité enfant', __FILE__), 'confirme' => false, 'allumer' => true, 'ordre' => 60),
+    );
+  }
+
+  /**
+   * Le concept de protection, TOUJOURS (recette ou non).
+   *
+   * @return array<int,string>
+   */
+  public static function conceptsProtection() {
+    return array_keys(self::fonctionsProtection());
+  }
+
+  /**
+   * Les concepts de protection dont 'confirme' === true (VIDE à la livraison de cette
+   * UC) : UNIQUE point de filtrage, consommé par conceptsConnus() ci-dessous et par
+   * smartclim::definitionsCommandesAction().
+   *
+   * @return array<int,string>
+   */
+  public static function conceptsProtectionLivres() {
+    $livres = array();
+    foreach (self::fonctionsProtection() as $concept => $colonnes) {
+      if (!empty($colonnes['confirme'])) {
+        $livres[] = $concept;
+      }
+    }
+    return $livres;
+  }
+
+  /**
+   * Colonnes de fonctionsProtection() pour un concept donné, ou array() si le concept
+   * est inconnu — jamais de repli silencieux.
+   *
+   * @param string $_concept
+   * @return array{libelle:string, confirme:bool, allumer:bool, ordre:int}|array
+   */
+  public static function fonctionProtection($_concept) {
+    $fonctions = self::fonctionsProtection();
+    return isset($fonctions[$_concept]) ? $fonctions[$_concept] : array();
+  }
+
+  /**
    * Libellé français déjà traduit d'une valeur générique de mode ou de vitesse. Chaîne
    * vide si le concept ou la valeur est inconnu(e) — jamais de code brut affiché (AC4).
    * Cherche dans TOUS les transports connus de la table (un même concept/valeur porte
@@ -514,7 +614,13 @@ class smartclimCapabilities {
     // ci-dessus — un concept d'oscillation NON livré ('confirme' => false) n'a de toute
     // façon jamais de commande créée, ce repli ne relâche donc rien.
     $oscillation = self::fonctionOscillation($_concept);
-    return isset($oscillation['libelle']) ? $oscillation['libelle'] : '';
+    if (isset($oscillation['libelle'])) {
+      return $oscillation['libelle'];
+    }
+    // UC03 du domaine post-mvp/04-fonctions-avancees : même repli, même raisonnement —
+    // un concept de protection NON livré n'a jamais de commande créée.
+    $protection = self::fonctionProtection($_concept);
+    return isset($protection['libelle']) ? $protection['libelle'] : '';
   }
 
   /**
@@ -556,15 +662,24 @@ class smartclimCapabilities {
       return $confort['libelle'];
     }
     $oscillation = self::fonctionOscillation($_concept);
-    if (!isset($oscillation['libelle'])) {
+    if (isset($oscillation['libelle'])) {
+      if (empty($oscillation['lecture'])) {
+        // Repli sans risque signalé § 7 de la spec technique : les parenthèses ne
+        // figurent pas dans la liste de cleanComponanteName() (`& # ] [ % \ / ' " *`),
+        // vérifié.
+        return self::nomSuffixe($oscillation['libelle']);
+      }
+      return $oscillation['libelle'];
+    }
+    // UC03 du domaine post-mvp/04-fonctions-avancees, § 5.1.3 de sa spec technique :
+    // repli INCONDITIONNEL sur nomSuffixe() — un concept de protection n'a structurel-
+    // lement AUCUNE lecture possible (§ 5.1 de fonctionsProtection() ci-dessus), le nom
+    // ne réalignera donc JAMAIS vers sa variante nue, contrairement à l'oscillation.
+    $protection = self::fonctionProtection($_concept);
+    if (!isset($protection['libelle'])) {
       return '';
     }
-    if (empty($oscillation['lecture'])) {
-      // Repli sans risque signalé § 7 de la spec technique : les parenthèses ne figurent
-      // pas dans la liste de cleanComponanteName() (`& # ] [ % \ / ' " *`), vérifié.
-      return self::nomSuffixe($oscillation['libelle']);
-    }
-    return $oscillation['libelle'];
+    return self::nomSuffixe($protection['libelle']);
   }
 
   /**
@@ -642,6 +757,11 @@ class smartclimCapabilities {
    * swing_h et l'état optimiste posé après une commande d'oscillation ne serait JAMAIS
    * poussé.
    *
+   * ⚠️ Depuis l'UC03 du domaine post-mvp/04-fonctions-avancees : PUIS
+   * conceptsProtectionLivres() — même prérequis mécanique (§ 1.4 de sa spec technique) :
+   * sans cette extension, appliquerEtat() n'itérerait jamais sur child_lock et l'état
+   * optimiste posé après une commande de protection ne serait JAMAIS poussé.
+   *
    * @return array<int,string>
    */
   public static function conceptsConnus() {
@@ -655,7 +775,8 @@ class smartclimCapabilities {
         self::CONCEPT_FAN_SPEED,
       ),
       self::conceptsConfortLivres(),
-      self::conceptsOscillationLivres()
+      self::conceptsOscillationLivres(),
+      self::conceptsProtectionLivres()
     );
   }
 

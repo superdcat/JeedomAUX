@@ -1933,6 +1933,21 @@ class smartclim extends eqLogic {
         'ordre' => 26,
         'meta' => false,
       ),
+      // UC03 du domaine post-mvp/04-fonctions-avancees (§ 5.3 de sa spec technique) :
+      // même patron que ci-dessus (créée SEULEMENT si le concept figure dans
+      // capacites['concepts'], donc conceptsProtectionLivres() 'confirme' => true). Le
+      // NOM porte TOUJOURS le suffixe « (état commandé) » — cf. smartclimCapabilities::
+      // libelleCommande(), repli inconditionnel, aucune lecture n'étant possible sur ce
+      // transport (§ 5.1.3 de la spec technique).
+      smartclimCapabilities::CONCEPT_CHILD_LOCK => array(
+        'name' => smartclimCapabilities::libelleCommande(smartclimCapabilities::CONCEPT_CHILD_LOCK),
+        'subType' => 'binary',
+        'unite' => '',
+        'generic_type' => '',
+        'isHistorized' => 0,
+        'ordre' => 27,
+        'meta' => false,
+      ),
       self::CMD_TRANSPORT => array(
         'name' => __('Transport actif', __FILE__),
         'subType' => 'string',
@@ -3408,6 +3423,54 @@ class smartclim extends eqLogic {
       );
     }
 
+    // UC03 du domaine post-mvp/04-fonctions-avancees (§ 5.3 de sa spec technique) :
+    // bloc protection — deux commandes par concept de protection LIVRÉ
+    // (conceptsProtectionLivres()) ET détecté sur CET appareil. ⚠️ Calqué sur DEUX blocs
+    // différents, ne pas chercher le tout dans un seul : la structure de scan et les
+    // ordreCmd viennent du bloc oscillation ci-dessus, mais la construction de l'ordre ON
+    // vient du bloc CONFORT — seules fonctionsConfort() et fonctionsProtection() portent
+    // une colonne 'allumer', là où le bloc oscillation force power => 1 sans condition.
+    // Seul ajout de mécanique du cycle : la colonne 'confirmation' sur
+    // l'ordre ON, consommée UNIQUEMENT par creerCommandesAction() ci-dessous, à la
+    // création (§ 5.3.1 de la spec technique) — un execCmd() forgé ou scénarisé n'est
+    // PAS bloqué par ce drapeau, ce n'est qu'un anti-fausse-manip côté IHM (dialogue
+    // natif du core, cf. core/ajax/cmd.ajax.php).
+    foreach (smartclimCapabilities::conceptsProtectionLivres() as $concept) {
+      if (!in_array($concept, $concepts, true)) {
+        continue;
+      }
+      $fonction = smartclimCapabilities::fonctionProtection($concept);
+      if (empty($fonction) || $fonction['libelle'] === '') {
+        continue;
+      }
+      $ordreOn = array($concept => 1);
+      if (!empty($fonction['allumer'])) {
+        $ordreOn[smartclimCapabilities::CONCEPT_POWER] = 1;
+      }
+      $definitions[$concept . self::SUFFIXE_CMD_ON] = array(
+        'name' => sprintf(__('%s - Activer', __FILE__), $fonction['libelle']),
+        'subType' => 'other',
+        'infoLiee' => $concept,
+        'ordre' => $ordreOn,
+        'ordreCmd' => $fonction['ordre'],
+        // ⚠️ Risque R1 de la spec technique : si le backend applique toastMutex,
+        // activer la sécurité enfant depuis Jeedom rend tout le reste du plugin
+        // inopérant. Ce drapeau (dialogue de confirmation natif) est la mitigation
+        // retenue — pas une garde de sécurité, un anti-fausse-manip.
+        'confirmation' => true,
+      );
+      $definitions[$concept . self::SUFFIXE_CMD_OFF] = array(
+        'name' => sprintf(__('%s - Désactiver', __FILE__), $fonction['libelle']),
+        'subType' => 'other',
+        'infoLiee' => $concept,
+        // Jamais de power ici — même contrat que confort/oscillation ci-dessus. ⚠️ Ne
+        // PAS en ajouter non plus : ce serait une mitigation illusoire de l'impasse
+        // « éteint + verrouillé » (§ 2.2 de la spec technique, R1/D-UC03-05).
+        'ordre' => array($concept => 0),
+        'ordreCmd' => $fonction['ordre'] + 1,
+      );
+    }
+
     // Commande méta hors profil de capacités (UC07, § 7 de la spec technique) —
     // inconditionnelle, comme les commandes méta d'UC05 : rafraîchir a du sens même
     // sur un équipement au profil vide. ordreCmd = 40 > maximum atteignable par les
@@ -3499,6 +3562,15 @@ class smartclim extends eqLogic {
           // choisi à la main.
           $cmd->setTemplate('dashboard', 'smartclim::etat');
           $cmd->setTemplate('mobile', 'smartclim::etat');
+        }
+
+        // UC03 du domaine post-mvp/04-fonctions-avancees (§ 5.3.1 de sa spec technique) :
+        // seul ajout de mécanique du cycle. Accès par !empty() UNIQUEMENT — l'absence de
+        // la clé (toutes les définitions existantes, dont les boucles mode_*/fan_*) est
+        // traitée exactement comme false, aucune n'est donc affectée. Posé qu'À LA
+        // CRÉATION (commande neuve ici, sans conséquence).
+        if (!empty($definition['confirmation'])) {
+          $cmd->setConfiguration('actionConfirm', 1);
         }
 
         $cmd->save();

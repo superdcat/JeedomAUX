@@ -550,6 +550,11 @@ class smartclimAuxHomeApi {
       // et non 0/1.
       smartclimCapabilities::CONCEPT_SWING_V => array('cle' => 'up_down_swing', 'nature' => 'oscillation'),
       smartclimCapabilities::CONCEPT_SWING_H => array('cle' => 'left_right_swing', 'nature' => 'oscillation'),
+      // UC03 du domaine post-mvp/04-fonctions-avancees (§ 2.1/5.2 de sa spec technique) :
+      // clé déclarée par le backend lui-même (GET /app/getConfig?id=deviceMutex).
+      // 'nature' => 'booleen' existe déjà — appliquerOrdre() route ce concept SANS
+      // modification.
+      smartclimCapabilities::CONCEPT_CHILD_LOCK => array('cle' => 'electric_lock', 'nature' => 'booleen'),
     );
   }
 
@@ -919,6 +924,43 @@ class smartclimAuxHomeApi {
   }
 
   /**
+   * Concepts de PROTECTION que ce transport publie (UC03 du domaine post-mvp/04-
+   * fonctions-avancees, § 5.2 de sa spec technique) : c'est la voie d'ENTRÉE au profil
+   * pour smartclimCapabilities::conceptsProtectionLivres() — pendant exact de
+   * modesExclusAuxHome() ci-dessus, la logique PROPRE à ce transport reste ICI (aucun
+   * offset à consulter, donc pas dans smartclimFrame ; smartclimCapabilities ne connaît
+   * pas les trames).
+   *
+   * ⚠️ Garde en tête de méthode, NON NÉGOCIABLE, calquée sur
+   * smartclimFrame::conceptsOscillables() (UC02, § 5.2.2 de sa spec technique) : trame
+   * LONGUE passée VIDE, délibérément. conceptsLisibles() répond « cet appareil expose
+   * des concepts lisibles », PAS « la trame de contrôle est exploitable » — sans ce
+   * vide, une température ambiante lisible (seuil 16 octets) compenserait une trame de
+   * contrôle COURTE, et le concept entrerait au profil, IRRÉVERSIBLEMENT
+   * (smartclim::appliquerCapacites() unionne les concepts, sans équivalent de
+   * modes_exclus), sur une trame qui ne le porte pas.
+   *
+   * ⚠️ Ne PAS toucher smartclimFrame::conceptsLisibles() : elle produit
+   * STATUT_ETAT_LU, seul garde-fou de la création d'équipement depuis le LAN — y
+   * ajouter un concept abaisserait son seuil de longueur.
+   *
+   * Honnêtement, ce que cette garde vaut : « c'est un climatiseur AUX Home dont la trame
+   * de contrôle est exploitable » — PAS « cet appareil supporte la sécurité enfant ».
+   * C'est le mieux disponible (aucun signal de capacité par appareil, § 2.4 de la spec
+   * technique), c'est la limite d'AC8, et c'est le MÊME niveau de garantie que celui
+   * déjà accepté et documenté en UC02 pour conceptsOscillables().
+   *
+   * @param string $_trameControle
+   * @return array<int,string>
+   */
+  private static function conceptsProtectionAuxHome($_trameControle) {
+    if (empty(smartclimFrame::conceptsLisibles($_trameControle, ''))) {
+      return array();
+    }
+    return smartclimCapabilities::conceptsProtectionLivres();
+  }
+
+  /**
    * Nettoie une trame HVAC hexadécimale brute (status.control / status.running) avant
    * tout usage (cf. spec technique UC04 § Architecture) : hex minuscule NU, ou '' si
    * inexploitable (non scalaire, non hexadécimal, longueur impaire, moins de 2
@@ -998,7 +1040,11 @@ class smartclimAuxHomeApi {
     $concepts = array_values(array_unique(array_merge(
       array(smartclimCapabilities::CONCEPT_ONLINE),
       smartclimFrame::conceptsLisibles($trameControle, $trameRunning),
-      smartclimFrame::conceptsOscillables($trameControle, $trameRunning)
+      smartclimFrame::conceptsOscillables($trameControle, $trameRunning),
+      // UC03 du domaine post-mvp/04-fonctions-avancees (§ 5.2 de sa spec technique) :
+      // 3ᵉ terme de fusion, AUX Home SEUL — le LAN ne publie pas ce concept (il ne sait
+      // pas l'écrire), cf. smartclimBroadlinkLan::capacitesAppareil().
+      self::conceptsProtectionAuxHome($trameControle)
     )));
 
     $capacitesBrutes = isset($_appareil['capacites_brutes']) && is_array($_appareil['capacites_brutes']) ? $_appareil['capacites_brutes'] : array();

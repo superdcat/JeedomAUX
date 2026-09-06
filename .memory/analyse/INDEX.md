@@ -15,7 +15,17 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-09-06** (UC02 du domaine `post-mvp/04` — **deux
+> **Dernière mise à jour de cet index : 2026-09-06** (UC03 du domaine `post-mvp/04` — § 4.5 ajouté à
+> `smartclim-transport-aux-home.md` : contrat d'écriture d'`electric_lock` (sécurité enfant) et son
+> **effet de bord majeur** — verrou actif = **toutes** les commandes du plugin refusées, avec une impasse
+> « éteint + verrouillé » ; `power_limit` **n'est pas un booléen** mais un sélecteur à 4 niveaux ; et
+> surtout un **NÉGATIF ÉTABLI** : *aucun canal de lecture d'erreur d'appareil n'existe sur ce transport*
+> (trois sources passées, quatre implémentations de référence lues) — les codes d'erreur appartiennent au
+> cloud **legacy**, donc au domaine post-MVP 03. ⚠️ Au passage, **une appellation de ces analyses était
+> trompeuse et est corrigée** : `smartclim-transport-broadlink-lan.md` § 11 nommait « code d'erreur
+> **appareil** » ce qui est le code d'erreur du **protocole** (l'échange réseau a-t-il réussi), laissant
+> croire qu'un canal de diagnostic existait déjà en LAN. **Les deux couches d'erreur portent le même
+> mot** — c'est le piège central de ce cycle. Précédente : 2026-09-06, UC02 du domaine `post-mvp/04` — **deux
 > affirmations de ces analyses étaient FAUSSES et sont corrigées** : `smartclim-transport-aux-home.md`
 > §§ 4.2/6.1/9 — le test `octet[11] != 0x20` (« une oscillation est active, sans distinguer les axes »)
 > n'est **pas** une limite du protocole mais l'heuristique d'**une implémentation tierce**, réfutée par
@@ -105,6 +115,10 @@
 | **Bits de confort** dans la trame HVAC (octets 15/18/20, partagés avec mode et marche) ; pourquoi **`eco` n'a aucun bit connu** | `smartclim-transport-aux-home.md` § 6.1 |
 | **Oscillations par axe** : où lire chaque axe (vertical = octet 10 bits 2-0, horizontal = octet 11 bits 7-5), codes `0` oscille / `1`-`5` positions figées / `7` fixe déclarés par le backend, et ⚠️ pourquoi `octet[11] != 0x20` est une **heuristique fausse** à ne pas porter | `smartclim-transport-aux-home.md` §§ 4.2 et 6.1 |
 | ⚠️ Une capacité **décodable mais non exposée** (marqueur `lecture`) : pourquoi un champ lisible sur **un seul échantillon** ne se livre pas activé | `smartclim-transport-broadlink-lan.md` § 13.4 |
+| ⚠️⚠️ **« Mon climatiseur est-il en défaut ? »** → **AUCUN canal de lecture d'erreur d'appareil** sur AUX Home **ni** en LAN (négatif établi sur 3 sources et 4 implémentations). Les codes d'erreur sont au cloud **legacy** (domaine 03). ⚠️ **Le piège** : le code d'erreur du **protocole** Broadlink porte le même mot et ne dit que si l'échange réseau a réussi | `smartclim-transport-aux-home.md` § 4.5, et `smartclim-transport-broadlink-lan.md` § 11 |
+| **Sécurité enfant** (`electric_lock`) : codes, `power => 1` sur l'ordre ON, et ⚠️ **verrou actif = TOUTES les commandes du plugin refusées** (+ impasse « éteint + verrouillé ») | `smartclim-transport-aux-home.md` § 4.5 |
+| ⚠️ **Limitation de puissance** : `power_limit` (AUX Home) est un **sélecteur à 4 niveaux**, pas un booléen — et `pwrlimit`/`pwrlimitswitch` (legacy) est **un autre modèle**, malgré le nom | `smartclim-transport-aux-home.md` § 4.5 |
+| Livrer une capacité **sans aucun offset de trame** (écriture connue, lecture structurellement impossible) : quelle table, pourquoi pas de marqueur `lecture`, et comment le nom l'annonce | spec technique `post-mvp/04-fonctions-avancees/03-diagnostic-et-erreurs-tech.md` §§ 1 et 5.1 |
 | **Broadlink LAN** : découverte broadcast, auth `0x65`, AES-128-CBC, structure de paquet, décodage/encodage d'état | `smartclim-transport-broadlink-lan.md` §§ 1-6 |
 | **Deux sources de reverse engineering se contredisent sur un offset ?** Vérifier D'ABORD dans quel **espace** chacune compte : réponse LAN déchiffrée (préfixe de longueur de 2 octets) *contre* charge HVAC nue. `offset charge HVAC = offset réponse LAN - 2` | `smartclim-transport-broadlink-lan.md` § 5.2 (encadré) et § 12 |
 | **Où vit le décodeur de trame HVAC** (offsets d'octets), et pourquoi il est mutualisé entre les transports | `smartclim-transport-broadlink-lan.md` § 12 |

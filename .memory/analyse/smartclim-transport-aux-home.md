@@ -530,6 +530,68 @@ contient pas `37`). Et `feature.screen = "1"` ne prouve rien dans un sens ni dan
 la longueur de trame, rien ne permet de savoir si un appareil donné supporte une fonction de confort** —
 ne pas rouvrir ce chantier sans un second appareil de référence.
 
+### 4.5 Protection et diagnostic : `electric_lock`, `power_limit`, et le canal d'erreur **qui n'existe pas** (2026-09-06)
+
+Établi au cycle UC03 du domaine post-MVP 04, sur le **même** dump de `getConfig?id=deviceMutex`.
+
+**`electric_lock` (sécurité enfant) — écriture ✅, lecture ❌.**
+
+```
+key = "electric_lock" · keyN = 童锁 (« verrou enfant »)
+specs = [ 关闭 , 开启 ]   → 0 = arrêt, 1 = marche — BOOLÉEN, celui-là (contrairement à screen/ultra_silence)
+toastMutex = [ { key: "on_off", value: "0" } ]      → refusé appareil éteint ⇒ l'ordre ON porte power => 1
+controlMutex = [ { control: [ { key: "ai_ctl", value: "0" } ] } ]
+```
+
+⚠️⚠️ **L'effet de bord qui commande toute la conception** : `specs[1].showMutex[0].func` masque **26
+fonctions**, et — preuve plus forte — les `toastMutex` des commandes de **base** portent explicitement le
+refus quand `electric_lock = 1` : `on_off` (**seule** règle de cette clé), `temperature`, `air_con_func`,
+`wind_speed`, `up_down_swing`, `left_right_swing`, plus toutes les fonctions de confort du § 4.4.
+⇒ **Verrou actif = toutes les commandes du plugin refusées.** `electric_lock` n'est pas dans sa propre
+liste : « Désactiver » reste possible. ⚠️ **Impasse** : appareil **éteint** ET **verrouillé** ⇒ `on_off`
+refusé par le verrou, `electric_lock` refusé par `on_off = 0` — plus aucune sortie depuis Jeedom. ⚠️ Ne pas
+croire la « corriger » en ajoutant `power => 1` à l'ordre OFF : `on_off` est lui-même refusé, la mitigation
+serait **illusoire**.
+⚠️ Statut : `toastMutex` décrit une règle d'**IHM**. Que le **backend** l'applique aussi est **plausible,
+non prouvé** — les deux réponses sont mauvaises différemment (auto-verrouillage du plugin d'un côté,
+divergence verrou physique / pilotage cloud de l'autre).
+
+**`power_limit` — ⚠️ ce n'est PAS un booléen.**
+
+```
+key = "power_limit" · keyN = 匹数可调 (« puissance/tonnage ajustable »)
+specs = [ 关闭 , 低（最省电）, 中 , 高（强性能） ]   → sélecteur à 4 niveaux : 0 arrêt · 1 bas · 2 moyen · 3 haut
+toastMutex : refusé si electric_lock=1 · on_off=0 · eco=1 · ai_eco=1 · eight_heat=2
+```
+
+⚠️ Le nom du cloud **legacy** (`pwrlimit` / `pwrlimitswitch`, 0/1 **plus** une valeur) est **un autre
+modèle** : deux transports, deux contrats — ne pas les fusionner sur la foi du nom.
+
+**⚠️⚠️ NÉGATIF ÉTABLI — aucun canal de lecture d'erreur d'appareil sur ce transport.** Trois sources
+passées, **rien** :
+
+1. **Trame HVAC** : quatre implémentations de référence lues (`liaan/broadlink_ac_mqtt` → `ac_db.py`,
+   `fparrav/homebridge-aux-cloud` → `Protocol.ts`, `azadaydinli/ac_freedom`, `com.zwegersit.auxairco`) —
+   **aucune** ne décode un défaut, un verrou ou une puissance. ⚠️ **Le piège** : le
+   `err = response[0x22] | (response[0x23] << 8)` de `ac_db.py` est le **code d'erreur du protocole
+   Broadlink** (`smartclim-transport-broadlink-lan.md` § 11) — il dit si l'**échange réseau** a réussi,
+   **jamais** si le climatiseur est en défaut. Les deux couches d'erreur portent le même mot.
+2. **Réponse `/app/user_device?getStatus=1`** : les 22 champs réénumérés depuis le dump — aucun champ de
+   défaut, d'alarme ou de code d'erreur.
+3. **`deviceMutex`** : table de contrôle, aucune entrée de diagnostic.
+
+Le seul indice est `feature.faultSupport = ["0","0"]` (couple `[valeur, drapeau]`, § 3.2) — et il ne
+suffit pas : le sens de `1` est inconnu, et **même à `1` on ne saurait pas OÙ lire le code**. C'est un
+drapeau de capacité, **pas un canal**. ⚠️ Ne rien construire dessus.
+
+⇒ **Les codes d'erreur appartiennent au cloud legacy** (`err_flag`, `ac_errcode1`,
+`smartclim-transport-aux-cloud-legacy.md` § 5), donc au domaine post-MVP 03. ⚠️ **Négatif non refermé sur
+un point** : les routes `getConfig?id=deviceFault` / `faultCode` / `deviceAlarm` n'ont **pas** été sondées
+(chemin libre déjà supporté par la CLI `diagnostic-auxhome.php`, coût nul) ; et les octets **16, 17, 19,
+21, 22** de la trame de contrôle restent **non identifiés** — tous à `0x00` sur l'unique échantillon,
+appareil éteint. Un champ de défaut pourrait s'y trouver : la façon de le savoir est d'afficher la trame
+d'un appareil **réellement en défaut**.
+
 ## 5. En-tête `country` : cause d'échec de login documentée
 
 > Le `country` (ISO-3) était figé à `NLD` jusqu'à ce qu'un utilisateur slovaque échoue au login avec

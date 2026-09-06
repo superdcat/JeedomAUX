@@ -185,6 +185,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **`appareilsDisparus()` ne teste plus que `auxhome_device_id`**, et **plus** la MAC : un équipement
   créé par le LAN en porte une sans avoir jamais existé sur le compte cloud — l'ancien critère l'aurait
   signalé « introuvable au dernier scan » à chaque cycle, indéfiniment.
+
+  Depuis l'UC03 du domaine post-MVP 04, `definitionsCommandesAction()` porte une colonne **`'confirmation'`**,
+  consommée **uniquement à la création** par `creerCommandesAction()`
+  (`setConfiguration('actionConfirm', 1)` → dialogue de confirmation **natif du core**, `-32006` levé par
+  `core/ajax/cmd.ajax.php` : zéro JS, zéro HTML, zéro clé i18n).
+  ⚠️ **Ce n'est PAS une frontière d'autorisation** — un scénario, l'API JSON-RPC ou un `execCmd()` d'un
+  autre plugin la contournent : c'est un **anti-fausse-manip**, et la seule garde reste la liste blanche
+  de `definitionsCommandesAction()`. ⚠️ Elle se lit par **`!empty()`**, jamais par `isset()` : l'absence de
+  la clé vaut `false`, ce qui laisse **intactes** toutes les définitions antérieures (dont les boucles
+  dynamiques `mode_*` / `fan_*`) — ne pas « compléter » celles-ci par un `'confirmation' => false`.
 - **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
   plugin. Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
   aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification
@@ -206,6 +216,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   couples `[valeur, drapeau]`) et l'expose sous la clé générique `capacites_brutes` — destination
   **exclusive** `capacitesAppareil()`, même statut que les trames ; `exclusionsAuxHome()` est la table
   `valeur observée => codes génériques NON supportés`.
+  Depuis l'UC03 du domaine post-MVP 04, elle porte aussi `conceptsProtectionAuxHome()` — **voie d'entrée
+  au profil** de `child_lock`, 3ᵉ terme de fusion de `capacitesAppareil()`, **AUX Home seul** (le LAN ne
+  publie pas ce concept : il ne sait pas l'écrire, et cette asymétrie **est** le contrat). Elle vit ici,
+  et pas dans `smartclimFrame`, parce qu'il n'y a **aucun offset** à consulter — c'est le pendant exact
+  de `modesExclusAuxHome()`. ⚠️ Sa garde `empty(smartclimFrame::conceptsLisibles($trame, ''))` passe la
+  **trame longue VIDE, délibérément**, pour la raison exacte décrite plus bas à `conceptsOscillables()`.
   ⚠️ **Exclusions, jamais inclusions, et ce sens ne s'inverse pas** : une exclusion s'appuie sur une
   preuve positive (valeur observée sur un appareil dont l'IHM constructeur masque la fonction) et tient
   donc avec un seul appareil de référence ; une inclusion exigerait de décoder la liste complète des
@@ -255,11 +271,24 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `CONCEPT_SWING_V`, `CONCEPT_SWING_H`, la table `fonctionsOscillation()` et ses accesseurs
   `conceptsOscillation()` / `conceptsOscillationLivres()` / `conceptsOscillationRelus()` /
   `fonctionOscillation()`, plus le gabarit **unique** `nomSuffixe()` (suffixe « (état commandé) »).
-  ⚠️⚠️ **CINQ familles de marqueurs coexistent maintenant, et trois seulement sont LUES — ne pas les
+  Depuis l'UC03 du même domaine, elle porte enfin les **concepts de protection** : `CONCEPT_CHILD_LOCK`,
+  la table `fonctionsProtection()` et ses accesseurs `conceptsProtection()` /
+  `conceptsProtectionLivres()` / `fonctionProtection()`.
+  ⚠️ **`fonctionsProtection()` est une table SÉPARÉE bien que ses colonnes soient identiques à celles de
+  `fonctionsConfort()`**, et la raison est dirimante : `conceptsConfortLivres()` est consommée par
+  `smartclimFrame`, où **chaque** concept de confort possède un bit dans `champsBinaires()` — y glisser un
+  concept **sans aucun offset** ferait cesser cette table de signifier « fonction booléenne portée par un
+  bit de trame ». `child_lock` est en effet la **première capacité du plugin sans aucun offset** : écriture
+  connue (`electric_lock`), lecture **structurellement impossible**. D'où l'absence délibérée de colonne
+  `lecture` — elle suggérerait qu'elle pourrait un jour passer à `true` — et un `libelleCommande()` qui
+  **suffixe inconditionnellement** (le nom ne réalignera jamais, contrairement à l'oscillation).
+  ⚠️⚠️ **SIX familles de marqueurs coexistent maintenant, et trois seulement sont LUES — ne pas les
   confondre** : `'fil' => null` est un **fait de protocole** (aucune correspondance de lecture n'existe) ;
   `intent_confirme`, dans `tables()`, est **déclaratif et jamais lu** (une note de traçabilité sur la
-  solidité d'un code d'écriture) ; `'confirme'`, dans `fonctionsConfort()` **et** dans
-  `fonctionsOscillation()`, est **effectivement lu et gouverne l'exposition** ; `'lecture'`, dans
+  solidité d'un code d'écriture) ; `'confirme'`, dans `fonctionsConfort()`, `fonctionsOscillation()` **et**
+  `fonctionsProtection()`, est **effectivement lu et gouverne l'exposition** — ⚠️ celui de
+  `fonctionsProtection()` étant d'une **nature à part** : il expose un concept qu'**aucun bit ne porte**,
+  là où les deux autres s'adossent toujours à un offset identifié ; `'lecture'`, dans
   `fonctionsOscillation()` seule, est **lu et gouverne le DÉCODAGE**. Prendre le déclaratif pour un
   marqueur lu, c'est croire qu'on a livré une fonction qui n'apparaîtra jamais, ou l'inverse.
   ⚠️ **`confirme` et `lecture` sont INDÉPENDANTS, et c'est le mécanisme d'UC02** : `confirme` fait

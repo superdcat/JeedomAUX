@@ -15,7 +15,15 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-09-07** (UC01 du domaine `post-mvp/05` — **spike de push
+> **Dernière mise à jour de cet index : 2026-09-07** (UC02 du domaine `post-mvp/05` — **socle du démon
+> Python livré**, le plugin cesse d'être 100 % PHP sans dépendance : § 7 **ajouté** à
+> `smartclim-daemon-choix.md`, entièrement générique Jeedom et vérifié contre la source du core —
+> **venv pip PAR PLUGIN sur Debian ≥ 12** (§ 7.1), **la version de `packages.json` se choisit contre
+> `os.min`, jamais contre la dernière publiée**, sous peine d'une boucle de réinstallation toutes les
+> 5 min (§ 7.2), **le squelette de démon officiel est cassé à la sortie de la boîte** — 4 défauts dont
+> une fuite d'`apikey` en journal et un DoS local silencieux (§ 7.3), et la distinction
+> `plugin::cron` / `plugin::checkDeamon` (§ 7.4).)
+> Précédente : 2026-09-07 (UC01 du domaine `post-mvp/05` — **spike de push
 > AUX Home** : § 7 de `smartclim-transport-aux-home.md` **entièrement réécrit**, l'hypothèse d'un
 > broker MQTT européen est **levée dans le sens positif** (`eu-smthome-m2m.aux-global.com`), mais avec
 > deux réserves dirimantes — identifiants non testés et **certificat TLS expiré et non couvrant** ;
@@ -155,6 +163,10 @@
 | **Quel hook cron utiliser** pour un intervalle réglable (1..N min), garde d'échéance en cache, un seul appel réseau par cycle | `smartclim-architecture-jeedom.md` § 6 |
 | **État optimiste / anti-état-périmé** après une commande, durée de la période de grâce | `smartclim-architecture-jeedom.md` § 7 |
 | **Démon ou pas ?** Python vs Node vs PHP pur, dépendances `packages.json`, ce qui déclencherait une révision | `smartclim-daemon-choix.md` |
+| ⚠️⚠️ **Où vivent les paquets pip d'un plugin ?** → sur **Debian ≥ 12, dans un venv PAR PLUGIN** (`resources/python_venv`), créé **seulement s'il y a un paquet à déclarer** ⇒ lancer le démon par `system::getCmdPython3()` (⚠️ **espace finale**), jamais `python3` en dur ; une section `pip3` **vide** rend le démon **inlançable en silence** | `smartclim-daemon-choix.md` § 7.1 |
+| ⚠️⚠️ **Quelle version déclarer dans `packages.json` ?** → la plus **BASSE** qui couvre le Python de `os.min`, **jamais la dernière publiée** : un `Requires-Python` trop haut fait échouer pip, et le script du core **n'a pas de `set -e`** ⇒ **relance toutes les 5 min, sans borne**. Commande de vérification d'une candidate | `smartclim-daemon-choix.md` § 7.2 |
+| ⚠️⚠️ **Le squelette de démon officiel (`jeedom/plugin-template`) est CASSÉ à la sortie de la boîte** : `stripped()` tue le démon au 1ᵉʳ message, `import pyudev` non déclaré, `handle()` journalise la charge brute (⇒ **apikey en clair**) et lit **sans timeout ni taille max** sur un serveur **mono-thread** | `smartclim-daemon-choix.md` § 7.3 |
+| **`plugin::cron` (`* * * * *`) vs `plugin::checkDeamon` (`*/5 * * * *`)** : deux crons distincts, chacun dans son processus détaché ⇒ une installation de dépendances ne retarde **pas** les autres plugins. Les 2 gardes du core (45 s entre lancements, relance auto) à connaître **avant** de conclure qu'une recette échoue | `smartclim-daemon-choix.md` § 7.4 |
 
 > Si aucun fichier ne couvre le sujet : ce n'est pas (encore) analysé en interne → passer à la doc externe
 > (`.memory/external/doc/jeedom/INDEX.md` pour le core Jeedom, ou la doc de l'API tierce du plugin), et

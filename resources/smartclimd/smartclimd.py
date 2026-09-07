@@ -53,8 +53,10 @@ import argparse
 from jeedom.jeedom import jeedom_socket, jeedom_utils, jeedom_com, JEEDOM_SOCKET_MESSAGE
 
 # Meme forme que smartclimDemon::enregistrerPong() (core/class/smartclimDemon.class.php)
-# cote PHP : les deux barrieres doivent rester identiques.
-REGEX_JETON = re.compile(r'^[0-9a-f]{8,32}$')
+# cote PHP : les deux barrieres doivent rester identiques. fullmatch() (et non match()
+# avec un motif ancre par ^/$) : $ tolere aussi une position juste avant un '\n' final,
+# ce qui laisserait passer un jeton du type "abcd1234\n".
+REGEX_JETON = re.compile(r'[0-9a-f]{8,32}')
 
 
 def read_socket():
@@ -70,7 +72,7 @@ def read_socket():
             commande = message.get('cmd')
             if commande == 'ping':
                 jeton = message.get('jeton')
-                if not isinstance(jeton, str) or not REGEX_JETON.match(jeton):
+                if not isinstance(jeton, str) or not REGEX_JETON.fullmatch(jeton):
                     logging.warning("Ping recu avec un jeton de forme invalide, ignore")
                     return
                 logging.info("Ping recu (jeton %s), envoi du pong", jeton)

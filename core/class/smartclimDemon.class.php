@@ -361,13 +361,16 @@ class smartclimDemon {
   /**
    * Appelée UNIQUEMENT par core/php/jeeSmartclim.php (rappel du démon). Valide
    * la FORME du jeton avant toute écriture en cache : jamais une valeur reçue
-   * non validée en clé ou en valeur de cache.
+   * non validée en clé ou en valeur de cache. Forme identique à REGEX_JETON de
+   * resources/smartclimd/smartclimd.py — les deux barrières doivent rester
+   * identiques. \A/\z (et non ^/$) : ancres strictes, insensibles à un '\n'
+   * final qui ferait passer un jeton du type "abcd1234\n".
    *
    * @param mixed $_jeton
    */
   public static function enregistrerPong($_jeton) {
     $jeton = (string) $_jeton;
-    if (preg_match('/^[0-9a-f]{8,32}$/', $jeton) !== 1) {
+    if (preg_match('/\A[0-9a-f]{8,32}\z/', $jeton) !== 1) {
       log::add('smartclim', 'warning', 'Pont : jeton de pong reçu de forme invalide, ignoré');
       return;
     }

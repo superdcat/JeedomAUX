@@ -467,6 +467,47 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   et modifie au passage le chemin cloud, le seul qui soit réellement recetté.
   ⚠️ **`decoderEtat()` ne pose NI `online` NI `source`** : la joignabilité et l'identité du transport sont
   l'affaire de l'appelant, pas de la trame. Et `conceptsLisibles()` n'inclut jamais `CONCEPT_ONLINE`.
+- **`core/class/smartclimDemon.class.php`** — **existe** depuis l'UC02 du domaine post-MVP 05. Toute la
+  mécanique du **démon Python** et du **pont** : port (constante `PORT_DEMON` = 55112 + clé de config
+  `demon_port` **sans champ de formulaire**), chemins, détection d'état, lancement/arrêt, ping/pong — et
+  **seul point du plugin qui ouvre un socket vers le démon** (`envoyer()`, en `stream_socket_client` :
+  l'extension `sockets` n'est pas garantie, cf. `smartclimBroadlinkLan`). Aucun `eqLogic`, aucune commande,
+  aucun accès AUX/LAN.
+  ⚠️ Les trois hooks `smartclim::deamon_info()` / `deamon_start()` / `deamon_stop()` vivent
+  **obligatoirement** dans `smartclim.class.php` — le core les appelle en **statique sur la classe
+  principale** — mais ce ne sont que des **délégations** vers cette classe. `deamon_start()` est déclarée
+  **sans paramètre** : le core résout sa signature par `ReflectionMethod` et ne transmet `$_auto` que si la
+  méthode déclare au moins un paramètre obligatoire.
+  ⚠️⚠️ **`etat()` ne lève JAMAIS, et c'est structurel** : `plugin::deamon_info()` n'est **pas** entourée
+  d'un `try/catch` par le core (contrairement à `deamon_start`/`deamon_stop`), donc un jet ici casserait la
+  tâche cron `plugin::checkDeamon` **de tous les plugins** du Jeedom. Elle ne fait pour la même raison
+  **aucun appel shell sur le chemin nominal** (elle est appelée toutes les 5 min **et** à chaque affichage
+  du panneau) : la sonde `system::ps()` est un **repli**, jamais le chemin principal.
+  ⚠️ **`etat()` ne renvoie que `log`/`state`/`launchable`/`launchable_message`** — jamais la commande de
+  lancement, ni la clé d'API, ni un chemin de venv : `setIsEnable(1)` journalise
+  `json_encode(deamon_info())` **en clair**, côté core.
+  ⚠️ Le repli par sonde `ps` n'est pas un confort de diagnostic : `plugin::deamon_stop()` ne délègue que si
+  `state == 'ok'`, et `state` dérive du fichier PID — or `systemd-tmpfiles-clean` purge `/tmp` des fichiers
+  non touchés depuis **10 jours**. Sans ce repli, un démon vivant depuis plus longtemps devient un
+  **orphelin** que rien ne sait plus arrêter.
+- **`core/php/jeeSmartclim.php`** — **existe** depuis l'UC02 du domaine post-MVP 05. Point d'entrée du
+  **rappel HTTP du démon vers Jeedom** (sens démon → PHP du pont), gardé par
+  `jeedom::apiAccess(init('apikey'), 'smartclim')` — **pas** par `isConnect` : il est appelé par un
+  processus, pas par un navigateur authentifié. ⚠️ Il est le **seul** fichier mis en liste blanche dans
+  `core/php/.htaccess` (bloc `<Files>`, sur le modèle de `plugin_info/.htaccess`) : sans cela, le
+  `Deny from all` du dossier rendrait un **403** et le démon s'arrêterait au démarrage. ⚠️ Il renvoie
+  **401** sur clé invalide, là où le patron officiel renvoie 200 : `jeedom_com.test()` traite tout code
+  ≠ 200 comme fatal, donc une clé fausse se voit **au démarrage** au lieu de dégénérer en pont muet.
+  ⚠️ Pas de `session_write_close()` ici, contrairement à `core/ajax/smartclim.ajax.php` : ce point d'entrée
+  n'inclut pas `authentification`, aucune session n'est ouverte.
+- **`core/php/pont-demon.php`** — **existe** depuis l'UC02 du domaine post-MVP 05. **4ᵉ CLI** du plugin
+  (même moule que les trois autres : garde `php_sapi_name() === 'cli'` **avant tout `require_once`**, aucun
+  POST, aucune écriture en base, sorties FR **sans `__()`**). `--etat` affiche l'état sans rien émettre ;
+  `--ping [--attente=<s>]` fait l'**aller-retour complet du pont** et sort en code 0/1. C'est
+  l'instrument qui démontre le pont dans les deux sens — retenu contre un bouton de page pour ne pas
+  ajouter de chaîne UI ni de surface web à un outil d'infrastructure.
+  ⚠️ À lancer sous `www-data` (`sudo -u www-data php …`) : le pong est écrit par le processus Apache dans
+  le cache, et la CLI le relit. Vaut aussi pour les trois CLI existantes.
 - **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
   chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
   introuvable au runtime, cf. Conventions → Autoload) : `smartclimTransport` (sélection du transport
@@ -592,15 +633,27 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   se met **dans `info.json`** (objet à clés de langue), pas dans les fichiers i18n (cf. i18n).
 - **`plugin_info/install.php`** — `smartclim_install/update/remove()` ; `pre_install.php` →
   `smartclim_pre_update()`.
-- **`plugin_info/packages.json`** — dépendances système/pip du démon (voir Démon & dépendances). **Vide au
-  MVP** : le plugin n'a aucune dépendance.
+- **`plugin_info/packages.json`** — dépendances système/pip du démon (voir Démon & dépendances). Depuis
+  l'UC02 du domaine post-MVP 05, il déclare **un seul paquet** : `requests`, version **`2.31.0`** — un
+  plancher contraint par `os.min: 10`, **pas** un choix esthétique (cf. Démon & dépendances).
 - **`plugin_info/helperConfiguration.php` / `.py`** — assistant de renommage du squelette. **Déjà joué**
   (`template` → `smartclim`) : ces fichiers ne servent plus, ils sont conservés comme outillage hérité du
   template d'origine.
-- **`resources/`** — **supprimé au renommage** (le plugin n'a pas de démon au MVP). Le squelette de démon
-  Python (`demond.py` + lib `jeedom/`) reste récupérable à tout moment :
-  `git checkout ceed01b -- resources/` (commit initial du dépôt), ou depuis `jeedom/plugin-template`.
-  Il sera restauré au domaine post-MVP 05, si et seulement si un canal temps réel le justifie.
+- **`resources/smartclimd/`** — **restauré à l'UC02 du domaine post-MVP 05** (il avait été supprimé au
+  renommage, le MVP n'ayant pas de démon). Contient `smartclimd.py` (point d'entrée) et la lib
+  `jeedom/` (`jeedom_com`, `jeedom_socket`, `jeedom_utils`). Restauré depuis `git checkout ceed01b --
+  resources/` — commit initial du dépôt, dont il a été vérifié **octet à octet** qu'il est identique à
+  `jeedom/plugin-template@master` : la question « ce dépôt ou l'amont ? » est donc **sans enjeu**.
+  ⚠️ **`demond/demond.py` a été renommé en `smartclimd/smartclimd.py`, et ce n'est pas cosmétique** :
+  `system::kill()` et `system::ps()` du core travaillent par **motif `grep` sur la ligne de commande**, et
+  `demond.py` est le nom que produit **tout** plugin dérivé du même gabarit — un `system::kill('demond.py')`
+  d'un autre plugin tuerait notre démon, et réciproquement. Le renommage est la seule protection possible.
+  ⚠️ `jeedom/jeedom.js` (lib Node du gabarit) n'a **pas** été restauré. ⚠️ `resources/python_venv/` est
+  créé **par le core** dans cette arborescence : il est en `.gitignore`, et `resources/.htaccess` le couvre
+  (il est **hors** de `smartclimd/`).
+  ⚠️ **Les `.py` sont en 4 espaces / LF, et se vérifient sur l'INDEX git** (`git show ":<f>"`), pas sur le
+  blob source : ce clone est en `core.autocrlf=true`, donc un `git checkout` écrit du CRLF sur disque. Sur
+  disque `LF-pur` comme `CRLF` sont acceptables (aucune règle projet pour `.py`) ; **`MIXTE` est interdit**.
 
 ## Modèle de données du plugin
 
@@ -653,6 +706,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `auxhome_country` (ISO-3 majuscules, **défaut constant `smartclim::PAYS_DEFAUT` = `FRA`**),
   `refresh_interval` (1..1440 min, défaut 5 via l'INI). Plus tard s'y ajouteront le compte AUX Cloud
   legacy + sa région.
+  **Depuis l'UC02 du domaine post-MVP 05** s'y ajoute `demon_port` (défaut `smartclimDemon::PORT_DEMON`
+  = 55112, **dupliqué en littéral** dans l'INI comme `auxhome_country`). ⚠️ C'est la **seule** clé de
+  config sans **aucun champ de formulaire** : elle n'existe que comme échappatoire en cas de collision de
+  port, réglable par l'API JSON-RPC du core. Corollaire assumé : **pas** de `preConfig_demon_port` — sans
+  chemin d'écriture depuis l'IHM il serait du code mort, et la normalisation (entier, 1024..65535) se fait
+  donc **à la lecture** dans `smartclimDemon::port()`, barrière unique.
   ⚠️ **Aucune déduction du pays depuis le fuseau horaire de Jeedom** — arbitré en recette d'UC01, contre
   la conception d'origine : le fuseau ne dit rien du pays d'un **compte cloud** (une installation
   française réglée sur `Europe/Brussels` se voyait proposer `BEL`), et un pays faux échoue au login sur un
@@ -736,18 +795,50 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
 
 ## Démon & dépendances
 
-**Décision du MVP : pas de démon, aucune dépendance** (`hasOwnDeamon: false`, `hasDependency: false`,
-`packages.json` vide). Motif — le cloud AUX Home ne rafraîchit son état qu'en **quelques minutes à ~30 min**
-(y compris dans l'application officielle) : un démon n'apporterait **aucun gain de fraîcheur**, seulement un
-processus, une dépendance et une surface de panne. PHP couvre nativement tout le besoin (cURL, RSA/AES via
-`openssl_*`, opérations de bits pour la trame HVAC), et le LAN Broadlink (UDP + AES-CBC) reste faisable en
-PHP.
+**Le plugin a un démon Python depuis l'UC02 du domaine post-MVP 05** (`hasOwnDeamon: true`,
+`hasDependency: true`, `packages.json` déclarant `requests`) — il a été **100 % PHP sans aucune dépendance
+de l'init à la fin de ce domaine**, et la section ci-dessous garde le motif de ce choix initial, qui reste
+valable : le cloud AUX Home ne rafraîchit son état qu'en **quelques minutes à ~30 min** (y compris dans
+l'application officielle), donc un démon n'apporte **aucun gain de fraîcheur** sur ce transport. PHP couvre
+nativement tout le besoin du socle (cURL, RSA/AES via `openssl_*`, opérations de bits pour la trame HVAC),
+et le LAN Broadlink (UDP + AES-CBC) est en PHP.
 
-Un démon **Python** (jamais Node) sera introduit **uniquement** quand un canal réellement **persistant**
-arrivera — WebSocket relay du cloud legacy, MQTT, ou session TCP locale à heartbeat : cf. domaine post-MVP
-05 et `.memory/analyse/smartclim-daemon-choix.md`. Raisons du choix Python : le squelette Jeedom
-(`resources/demond/` + pont `jeedom_socket`/`jeedom_com`) est en Python, `packages.json` ne gère
-officiellement que `pip3`, et tout le code public réutilisable (WebSocket/MQTT/TCP) est en Python.
+⚠️⚠️ **Le démon est donc LATÉRAL, et cet invariant est la première chose à préserver** : **aucune** méthode
+du socle MVP (`cron()`, `cycleEchu()`, `rafraichirAuxHome()`, `executerCommandeAction()`,
+`envoyerOrdreLan()`) ni aucune des quatre briques n'appelle `smartclimDemon`. Le pilotage par scrutation
+reste **pleinement opérant** démon arrêté, en erreur, ou dépendances non installées. Le démon **accélère**,
+il ne **conditionne** jamais. Le jour où un protocole réel arrivera (UC03 : WebSocket du cloud legacy), ce
+sera en **ajoutant un appelant**, jamais en insérant le démon sur le chemin de la scrutation.
+
+Raisons du choix Python (jamais Node) : le squelette Jeedom (`resources/smartclimd/` + pont
+`jeedom_socket`/`jeedom_com`) est en Python, `packages.json` ne gère officiellement que `pip3`, et tout le
+code public réutilisable (WebSocket/MQTT/TCP) est en Python.
+
+⚠️⚠️ **Trois pièges génériques Jeedom découverts en livrant ce socle, chacun silencieux** — détail,
+sources et commandes de vérification : `.memory/analyse/smartclim-daemon-choix.md` § 7 :
+- **Sur Debian ≥ 12, les paquets pip d'un plugin vivent dans un venv PAR PLUGIN**
+  (`resources/python_venv`), créé **seulement s'il y a au moins un paquet à déclarer**. Donc : lancer le
+  démon par **`system::getCmdPython3('smartclim')`** (⚠️ sa valeur **finit par une espace**), jamais
+  `python3` en dur — sinon les paquets du venv sont invisibles ; et une section `pip3` **vide** rend le
+  démon **inlançable sans aucun message**.
+- **La version déclarée dans `packages.json` se choisit contre `os.min`, PAS contre la dernière version
+  publiée.** Un `Requires-Python` trop haut fait échouer `pip`, et le script généré par le core **n'a pas
+  de `set -e`** : l'état repasse `nok` et l'installation **repart toutes les 5 minutes, sans borne**. Cas
+  vécu : `requests` 2.34.2 exige Python ≥ 3.10 alors qu'`os.min: 10` vaut Debian 10 (Python 3.7) —
+  d'où le plancher **`2.31.0`**, seul à couvrir toute la matrice. Ne pas le « moderniser » sans relire
+  `.memory/specs/post-mvp/05-temps-reel-et-demon/02-socle-demon-python-tech.md` § 9 R3.
+- **Le squelette de démon officiel est cassé à la sortie de la boîte** : `jeedom_utils.stripped()` **tue le
+  démon au premier message reçu**, `import pyudev` n'est pas déclaré dans le `packages.json` du gabarit, et
+  `jeedom_socket_handler.handle()` journalise la **charge brute** (donc l'`apikey`) tout en lisant **sans
+  timeout ni taille max** sur un serveur **mono-thread**. Les écarts du portage sont consignés dans un bloc
+  d'en-tête de chaque `.py` — **les y maintenir** : sans cette trace, une resynchronisation amont les
+  réintroduit en silence.
+
+⚠️ **Deux crons du core à ne pas confondre** : `plugin::cron` est en `* * * * *`, **`plugin::checkDeamon`
+en `*/5 * * * *`** — deux tâches distinctes, chacune dans son propre processus détaché. Et deux gardes à
+connaître **avant de conclure qu'une recette échoue** : `deamon_start()` refuse deux lancements à moins de
+**45 s** d'intervalle, et `checkDeamon` **relance le démon tout seul** dans les 5 minutes (tester « démon
+arrêté » exige donc de basculer « Gestion automatique » à 0).
 
 ⚠️ **« MQTT » dans la phrase ci-dessus ne vaut que pour une SOUSCRIPTION PERMANENTE** — précision acquise
 au spike du domaine post-MVP 05 (UC01, 2026-09-07), qui a **confirmé l'existence** d'un broker MQTT côté
@@ -873,6 +964,15 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   n'est rattrapé ici : `php` **n'est pas installé** sur la machine de dev, et la CI ne se déclenche ni
   sur push `master` ni hors PR. Le seul filet réellement en place est
   `python .claude/scripts/verif-plugin.py` (colonne **`meta=`**) — **à lancer avant chaque commit**.
+  ⚠️ **Les fichiers Python de `resources/` échappent à ce filet** : le script ne parcourt que `core/`,
+  `desktop/` et `plugin_info/`, et ne balaye ni l'i18n ni les octets de contrôle sur `.py` (il en vérifie
+  en revanche les **fins de ligne** si on les lui passe **explicitement en argument**, et il refuse le
+  `MIXTE`). Contrairement à PHP, **Python EST installé** sur la machine de dev : le contrôle syntaxique
+  existe donc, et il est à lancer avec le script —
+  `python -m py_compile resources/smartclimd/*.py resources/smartclimd/jeedom/*.py`. ⚠️ Il valide la
+  **syntaxe** seulement : ni un import manquant, ni une erreur au niveau module (un `re.compile()` avec
+  `import re` oublié passe `py_compile` et tue le démon à l'import). Tout le reste ne se voit qu'en recette,
+  dans `log/smartclim_demon`.
 - **Centraliser les accès externes** : **tous** les appels HTTP passent par la brique du transport concerné
   (`smartclimAuxHomeApi`, `smartclimAuxCloudApi`) et tout le LAN par `smartclimBroadlinkLan` — jamais de
   cURL ou de socket épars. Le reste du plugin ne parle qu'à l'**API générique**, jamais à un transport.
@@ -892,8 +992,16 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   ⚠️ **Période de grâce après commande** (~60 s) : un état scruté plus ancien qu'une commande envoyée ne
   doit pas écraser les champs commandés (anti-rollback de consigne/marche).
 - Les `.htaccess` interdisent l'accès web direct — **les conserver**. Présents dans `core/php`,
-  `core/class`, `core/config`, `plugin_info`, `.memory`, `.claude`, `.github`. ⚠️ `core/ajax` n'en a
-  **pas** et ne doit pas en avoir : il est appelé par le navigateur.
+  `core/class`, `core/config`, `plugin_info`, `.memory`, `.claude`, `.github`, et **`resources`** (depuis
+  l'UC02 du domaine post-MVP 05 : il couvre `python_venv/`, que le core crée **hors** de `smartclimd/`,
+  lequel a le sien). ⚠️ `core/ajax` n'en a **pas** et ne doit pas en avoir : il est appelé par le
+  navigateur.
+  ⚠️ **`core/php/.htaccess` whiteliste UN SEUL fichier** depuis l'UC02 du domaine post-MVP 05 —
+  `jeeSmartclim.php`, via un bloc `<Files>` sur le modèle de `plugin_info/.htaccess` : c'est le rappel HTTP
+  du démon, il **doit** être joignable, sinon le démon s'arrête au démarrage sur un 403. Le `Deny from all`
+  continue de protéger `smartclim.inc.php` et les **4 CLI** — n'y ajouter aucun autre fichier sans vérifier
+  ce qu'il rendrait public, et ne jamais élargir le bloc à une **extension** (ce serait ouvrir tout le
+  dossier).
   ⚠️ **`plugin_info/.htaccess` whiteliste des extensions** (`allow from all` sur les images) pour servir
   `smartclim_icon.png` — cette section **neutralise** le `Deny from all` du dossier pour les extensions
   listées. `txt` en a été **retiré** : sans quoi le miroir `configuration.txt` était téléchargeable **sans

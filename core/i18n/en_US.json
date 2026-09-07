@@ -305,5 +305,9 @@
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"
+    },
+    "plugins/smartclim/core/class/smartclimDemon.class.php": {
+        "Fichier du démon introuvable — réinstallez le plugin": "Daemon file not found — reinstall the plugin",
+        "Dépendances non installées ou interpréteur Python introuvable": "Dependencies not installed or Python interpreter not found"
     }
 }

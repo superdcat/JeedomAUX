@@ -38,7 +38,11 @@
 #       taille maximale de ligne lue (readline(TAILLE_MAX_MESSAGE)) : sans
 #       cela, un client local qui ouvre la connexion sans jamais envoyer de
 #       "\n" bloque indefiniment l'unique thread du TCPServer non threade
-#       (DoS local silencieux, trouve en revue croisee UC02).
+#       (DoS local silencieux, trouve en revue croisee UC02). Symptome sans le
+#       correctif : le pont cesse de repondre aux "ping" sans que le demon ne
+#       meure ni ne journalise quoi que ce soit, et etat() continue d'afficher
+#       un demon en pleine forme - donc un incident invisible depuis le
+#       panneau "Demon". Voir spec technique, section 9 R13.
 # ---------------------------------------------------------------------------
 
 import time

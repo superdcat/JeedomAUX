@@ -148,3 +148,98 @@ compatibilité `paho-mqtt` 1.x vs 2.x (API cliente incompatible entre les deux m
 - [ ] Confirmation que l'appareil de validation parle **AUXLink TCP 12416** → session persistante +
       heartbeat 4 s ⇒ démon nécessaire pour le pilotage local de CET appareil (fort intérêt utilisateur).
 - [ ] Constat de quotas/limitation de débit sur `/app/user_device` imposant un canal évènementiel.
+
+## 7. Ce que l'implémentation du socle a réellement appris (UC02, 2026-09-07)
+
+Le démon **existe** depuis UC02 du domaine post-mvp/05. Cette section consigne ce qui n'était pas
+prévisible depuis l'arbitrage ci-dessus, et qui vaut pour **tout** plugin Jeedom à démon — pas seulement
+celui-ci. Détail complet et sources dans `.memory/specs/post-mvp/05-temps-reel-et-demon/02-socle-demon-python-tech.md`.
+
+### 7.1 ⚠️⚠️ Sur Debian ≥ 12, les paquets pip d'un plugin vivent dans un venv PAR PLUGIN
+
+`system::getPython3VenvDir()` renvoie `plugins/<id>/resources/python_venv`, et `system::checkAndInstall()`
+le crée (`python3 -m venv --upgrade-deps`) **uniquement s'il y a au moins un paquet à installer** ;
+`pip list` est ensuite lu **dans ce venv**. Trois conséquences, toutes des pièges silencieux :
+
+1. **Le démon doit être lancé par `system::getCmdPython3('<id>')`, jamais par `python3` en dur** — sinon
+   les paquets installés dans le venv sont **invisibles** au processus. ⚠️ La valeur renvoyée **finit par
+   une espace** : ne pas en ajouter une seconde en concaténant.
+2. **Une section `pip3` vide ne crée aucun venv** alors que `getCmdPython3()` pointerait dedans → démon
+   **inlançable, sans aucun message**. Déclarer au moins un paquet réellement utilisé n'est donc pas
+   cosmétique. (C'est une des raisons pour lesquelles `requests` est déclaré ici.)
+3. `resources/python_venv/` doit entrer dans `.gitignore`, et `resources/` recevoir un `.htaccess` — le
+   venv est créé **hors** du sous-dossier du démon.
+
+Debian 10 et 11 n'ont **pas** ce venv : c'est le pip **système**, avec le Python **système**. Cette
+asymétrie est ce qui rend le point 7.2 dangereux.
+
+### 7.2 ⚠️⚠️ La version déclarée dans `packages.json` se choisit contre `os.min`, PAS contre la dernière version publiée
+
+Rappel du mécanisme (`system::checkAndInstall`) : la version déclarée est comparée en **plancher**
+(`version_compare(installé, déclaré) < 0` ⇒ à réinstaller), et l'installation se fait en `==<version>`,
+donc **exactement** cette version.
+
+Le piège : déclarer la **dernière** version publiée d'un paquet maximise la chance que son
+`Requires-Python` dépasse le Python de la plus vieille distribution supportée. Cas réel de cette UC —
+`requests` 2.34.2 exige Python ≥ 3.10, alors que `info.json` porte `os.min: 10` (Debian 10 = Python 3.7,
+Debian 11 = 3.9) :
+
+| version | `Requires-Python` | Debian 10 (3.7) | Debian 11 (3.9) | Debian 12 (3.11) |
+|---|---|---|---|---|
+| 2.31.0 ✅ | `>=3.7` | ✅ | ✅ | ✅ |
+| 2.32.5 | `>=3.9` | ❌ | ✅ | ✅ |
+| 2.34.2 | `>=3.10` | ❌ | ❌ | ✅ |
+
+⚠️ **Et le mode de défaillance est le pire possible** : le script d'installation généré par le core
+**n'a pas de `set -e`** (il commence par `set -x`). Sur échec de `pip`, il déroule jusqu'à sa dernière
+ligne, **supprime son fichier de progression**, l'état repasse `nok` — et `plugin::checkDeamon` relance
+l'installation **toutes les 5 minutes, sans borne de nombre**. Donc : déclarer une version trop récente ne
+« dégrade » pas les vieilles distributions, elle y **casse le plugin en boucle**.
+
+**Règle** : la version déclarée est la plus **basse** qui satisfait le besoin fonctionnel *et* dont le
+`Requires-Python` couvre le Python de `os.min`. Comment vérifier une candidate, sans rien installer :
+
+```bash
+python -m pip download <paquet>==<v> -d /tmp/whl --no-deps
+unzip -p /tmp/whl/<paquet>-<v>-*.whl '*/METADATA' | grep '^Requires-Python'
+```
+
+⚠️ Corollaire à ne pas rater : **relever un plancher plus tard re-déclenche un cycle d'installation sur
+tout le parc**. Et une contrainte `os.min` basse peut **enfermer sur une version portant un CVE** — c'est
+le cas ici (cf. dette D-05-02-06 de la spec technique d'UC02 : `requests` 2.31.0 / CVE-2024-35195, non
+exploitable dans ce motif d'appel, mais infermable tant que `os.min` vaut 10).
+
+### 7.3 ⚠️ Le squelette de démon officiel est CASSÉ à la sortie de la boîte
+
+Vérifié sur `jeedom/plugin-template@master` (identique au commit `ceed01b` de ce dépôt, comparaison octet
+à octet — la question « ce dépôt ou l'amont ? » est donc sans enjeu, on restaure depuis `ceed01b`) :
+
+1. **`jeedom_utils.stripped()` tue le démon au premier message reçu**, et il est sur le chemin de
+   `read_socket()`. `"".join([i for i in s if i in range(32,127)])` lève un `TypeError` sur des `bytes`
+   (`i` est un `int`), et renvoie `''` sur une `str` (`'a' in range(...)` est toujours `False`) → dans les
+   deux cas l'exception naît **hors** du `try` interne, traverse `listen()` (qui n'attrape que
+   `KeyboardInterrupt`) et atteint le `except Exception` du module → `shutdown()`.
+2. **`import serial` / `import pyudev` inconditionnels** en tête de `jeedom/jeedom.py`, alors que le
+   `packages.json` du gabarit ne déclare **pas** `pyudev` → `ImportError` au démarrage dans un venv neuf.
+   Le gabarit est donc incohérent avec lui-même.
+3. `shutdown()` fait `os.remove()`/`close()` **sans garde** → warnings parasites sur un arrêt précoce.
+4. ⚠️ **`jeedom_socket_handler.handle()` journalise la charge brute reçue sur le socket** — et si le côté
+   PHP y ajoute une `apikey` (ce que fait le patron officiel), **c'est le secret en clair dans le journal**,
+   à chaque message. Il fait aussi `readline()` **sans timeout ni taille max** sur un `TCPServer` **non
+   threadé** : une connexion locale qui n'envoie jamais de `\n` immobilise tout le pont, **sans que le
+   démon meure ni journalise**, PID toujours vivant — donc invisible depuis le panneau « Démon ».
+
+Tout portage de ce squelette doit corriger ces quatre points, et **consigner chaque écart dans un bloc
+d'en-tête** du fichier : sans cette trace, une resynchronisation amont future les réintroduit en silence.
+
+### 7.4 Un seul hook de cycle de vie, et deux crons du core à ne pas confondre
+
+`plugin::cron` est en `* * * * *` (`timeout` 2) ; **`plugin::checkDeamon` est en `*/5 * * * *`**
+(`timeout` 5) — deux lignes distinctes de la table `cron`, chacune exécutée dans **son propre processus
+détaché** par `cron::run()`. Une installation de dépendances ne peut donc **pas** retarder le cron d'un
+autre plugin : elle est elle-même détachée (`exec(… &)` ou `at now`). Le partage résiduel est **matériel**
+(CPU/disque, verrou apt), pas logiciel.
+
+⚠️ Deux gardes du core à connaître **avant de conclure qu'une recette échoue** : `deamon_start()` refuse
+deux lancements à moins de **45 s** d'intervalle, et `checkDeamon` **relance le démon tout seul** dans les
+5 minutes — tester un plugin « démon arrêté » exige de basculer « Gestion automatique » à 0.

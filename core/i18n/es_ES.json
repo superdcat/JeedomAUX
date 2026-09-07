@@ -47,6 +47,7 @@
         "Déjà présent": "Ya existente",
         "Ignoré — aucun identifiant exploitable": "Ignorado — sin identificador utilizable",
         "Ignoré — doublon dans la réponse du cloud": "Ignorado — duplicado en la respuesta de la nube",
+        "Ignoré — équipement en mode Cloud": "Omitido — dispositivo en modo Cloud",
         "Erreur lors de la création — consultez les logs du plugin": "Error al crear — consulte los registros del plugin",
         "En ligne": "En línea",
         "Hors ligne": "Fuera de línea",
@@ -225,7 +226,15 @@
         "Copie impossible : sélectionnez le texte du rapport et copiez-le à la main": "No se pudo copiar: seleccione el texto del informe y cópielo manualmente",
         "Adresses réseau local corrigées : vérifiez les valeurs saisies": "Direcciones de red local corregidas: compruebe los valores introducidos"
     },
+    "plugins/smartclim/core/class/smartclimTransport.class.php": {
+        "Automatique": "Automático",
+        "Local": "Local",
+        "Cloud": "Cloud"
+    },
     "plugins/smartclim/desktop/php/smartclim.php": {
+        "Transport": "Transporte",
+        "Mode de transport": "Modo de transporte",
+        "AUTO privilégie le réseau local quand l'appareil y répond, sinon le cloud": "AUTO prioriza la red local cuando el dispositivo responde en ella, y si no, la nube",
         "401 - Accès non autorisé": "401 - Acceso no autorizado",
         "Gestion": "Gestión",
         "Ajouter": "Añadir",

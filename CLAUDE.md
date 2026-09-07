@@ -115,8 +115,9 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   supportée » **hors** de l'interface, pas seulement dans l'UI.
   ⚠️ **Tout ordre de mode ou de consigne porte TOUJOURS `power => 1`** : changer le mode d'un appareil
   éteint l'allume, en **une** requête. Ne pas « optimiser » en retirant cette clé.
-  ⚠️ **Quatre mémoires de cache, quatre rôles distincts, à ne pas confondre** — aucune ne vit en
-  configuration d'équipement :
+  ⚠️ **Cinq mémoires de cache, cinq rôles distincts, à ne pas confondre** — aucune ne vit en
+  configuration d'équipement (la cinquième, `smartclim::dernier_cycle_lan`, est arrivée avec l'UC01 du
+  domaine post-MVP 02 : cf. sa ligne après `dernier_incident`) :
   - `smartclim::ordre_recent::<id>` (`CLE_CACHE_DEDUP`, **10 s**) — empreinte du **contenu** de l'ordre,
     posée **avant** l'appel réseau et supprimée en cas d'échec : anti-double-bip. La clé est le contenu,
     **pas** l'équipement — deux ordres *différents* rapprochés passent donc bien tous les deux.
@@ -139,13 +140,22 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
     ⚠️ **Invariant en une phrase** : *seul le cycle automatique l'écrit ; toute connexion réussie
     l'effface.* Un scan ou un test de connexion en échec ne l'écrit **pas** — ce sont des chemins
     interactifs, dont l'erreur est déjà affichée à l'utilisateur.
+  - `smartclim::dernier_cycle_lan` (`CLE_CACHE_DERNIER_CYCLE_LAN`, `DUREE_MEMOIRE_CYCLE` = 48 h) —
+    horodatage du dernier **cycle de sonde LAN** (UC01 du domaine post-MVP 02), **globale au plugin** comme
+    `dernier_cycle`, dont elle est le jumeau. ⚠️ **Clé SÉPARÉE, et c'est le mécanisme** : le cycle LAN est
+    cadencé à `INTERVALLE_CYCLE_LAN` = **900 s FIXES**, délibérément **découplées de `refresh_interval`** —
+    un utilisateur réglé à 1 min transformerait sinon `plugin::cron` (partagé par tous les plugins) en
+    générateur de trafic UDP. Mutualiser les deux clés lierait deux cadences volontairement distinctes.
   ⚠️ L'**état optimiste** poussé après succès est celui **réellement envoyé** (après quantification), pas
   celui demandé par l'utilisateur.
 
   Depuis l'UC07, elle porte enfin le **cadencement** : `cron()` — **seul hook cron implémenté**, appelé
   chaque minute par le core, `cron5()`…`cronDaily()` restant **commentées donc inexistantes** — ouvre par
   la garde d'échéance `cycleEchu()` (cache `smartclim::dernier_cycle`, marge de 30 s) puis appelle
-  `rafraichirAuxHome()` : **un seul** `listerAppareils()`, puis distribution via
+  `rafraichirAuxHome()` ; ⚠️ **depuis l'UC01 du domaine post-MVP 02 elle porte DEUX cycles**, chacun avec
+  sa **propre** garde d'échéance et son **propre** `try/catch (Throwable)` — jamais de `return` dans le
+  premier bloc, qui court-circuiterait le second (le cycle cloud n'étant presque jamais échu à un tick
+  donné, le cycle LAN ne tournerait **jamais**) : **un seul** `listerAppareils()`, puis distribution via
   `equipementsParIdentifiant()` et `appliquerEtat()`, et `basculerHorsLigne()` sur les équipements dont
   l'appareil n'a pas été renvoyé. La commande d'action `refresh` (`CMD_RAFRAICHIR`, libellé
   « Rafraîchir ») déclenche le **même cycle complet** via `rafraichirMaintenant()`.
@@ -180,8 +190,10 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   trop, supprimable). Le durcissement est en dette, cf. la spec technique d'UC04 § 12.2.
   ⚠️ **Un équipement créé par le LAN n'entre PAS dans le cycle cron** : `equipementsParIdentifiant()`
   n'indexe que par `auxhome_device_id`. Voulu — il n'est donc jamais basculé `online = false` par un cycle
-  auquel il n'appartient pas. Ses commandes d'action échouent proprement (`executerCommandeAction()` reste
-  **cloud**) ; le pilotage local passe par la CLI. Cela changera au domaine post-MVP 02.
+  auquel il n'appartient pas.
+  ⚠️ **Depuis l'UC01 du domaine post-MVP 02, ses commandes d'action fonctionnent** : `transportRetenu()`
+  l'aiguille vers le LAN (aucun `auxhome_device_id`, donc `cloudDisponible()` faux). Il reste en revanche
+  hors du **cycle de lecture cloud** — c'est le **cycle LAN** de 15 min qui lui rend son état.
   ⚠️ **`appareilsDisparus()` ne teste plus que `auxhome_device_id`**, et **plus** la MAC : un équipement
   créé par le LAN en porte une sans avoir jamais existé sur le compte cloud — l'ancien critère l'aurait
   signalé « introuvable au dernier scan » à chaque cycle, indéfiniment.
@@ -508,10 +520,26 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ajouter de chaîne UI ni de surface web à un outil d'infrastructure.
   ⚠️ À lancer sous `www-data` (`sudo -u www-data php …`) : le pong est écrit par le processus Apache dans
   le cache, et la CLI le relit. Vaut aussi pour les trois CLI existantes.
-- **Classes annexes encore à créer** (chacune dans **son propre** fichier `<Classe>.class.php`, **et
-  chacune à ajouter aux `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera
-  introuvable au runtime, cf. Conventions → Autoload) : `smartclimTransport` (sélection du transport
-  actif) et `smartclimAuxCloudApi` (cloud legacy).
+- **`core/class/smartclimTransport.class.php`** — **existe** depuis l'UC01 du domaine post-MVP 02. Couche
+  de **décision de transport**, et rien d'autre : même statut que `smartclimCapabilities` et
+  `smartclimFrame` — aucune E/S, aucun socket, aucun cURL, aucune écriture de cache, aucun `config::save`,
+  aucun `save()`. Porte les trois modes (`MODE_AUTO`/`MODE_LOCAL`/`MODE_CLOUD`, clé d'équipement
+  `transport_mode`), leurs libellés, `normaliserMode()`, les prédicats `lanJoignable()` /
+  `cloudDisponible()`, l'arbitre `transportRetenu()` et les deux filtres `lectureCloudAutorisee()` /
+  `sondeLanAutorisee()`.
+  ⚠️ **`lanJoignable()` ne fait AUCUN appel réseau** : elle lit la mémoire de sonde
+  `smartclim::lan_appareil::<mac>` et exige `STATUT_ETAT_LU` — critère **plus strict** que
+  `statutEnEchec()`, qui compte `ETABLIE`/`REUTILISEE`/`ETAT_ILLISIBLE` comme des succès alors qu'aucun des
+  trois ne prouve que l'appareil parle le HVAC. Une sonde paresseuse au moment de la commande ajouterait un
+  timeout UDP à un chemin cloud qui n'aboutira jamais sur un parc sans Broadlink.
+  ⚠️ **`transportRetenu()` ne renvoie JAMAIS de vide** : en AUTO sans LAN joignable **et** sans cloud
+  disponible, elle replie sur le **LAN** — c'est ainsi, sans écrire un seul message, qu'un équipement sans
+  identifiant cloud « se comporte comme LOCAL » au lieu d'afficher une erreur de configuration cloud.
+  ⚠️ `cloudDisponible()` teste `compteConfigure()` (global au plugin) **ET** `auxhome_device_id` (par
+  équipement) : le second terme est ce qui rend le test réellement par appareil.
+- **Classe annexe encore à créer** (dans **son propre** fichier `<Classe>.class.php`, **et à ajouter aux
+  `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera introuvable au runtime, cf.
+  Conventions → Autoload) : `smartclimAuxCloudApi` (cloud legacy).
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
   `isConnect('admin')`, `ajax::init()`, puis aiguille sur `init('action')` en branches
   `if (init('action') == '...')`. Pour un endpoint **non-admin** (widget de dashboard, page-panneau), créer
@@ -546,10 +574,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `ordreDeCommandeAction()` que le chemin cloud — donc le même `power => 1`, la même quantification de
   consigne, la même liste blanche de `logicalId`. C'est **cela** qui garantit que la surface de commandes
   LAN est identique à celle du cloud ; réimplémenter la construction d'ordre ici la ferait diverger.
-  ⚠️ **Il existe parce que le choix du transport N'EST PAS de son ressort** : décider qu'un équipement est
-  « piloté en LAN » appartient au domaine post-MVP 02. `executerCommandeAction()` reste donc **cloud** —
-  y brancher le LAN serait coder en dur un mode AUTO. Le jour du domaine 02, l'aiguillage se réduit à un
-  appel à `smartclim::envoyerOrdreLan()`, qui est dimensionnée pour ça.
+  ⚠️ **Depuis l'UC01 du domaine post-MVP 02, il n'est plus le seul chemin LAN** :
+  `executerCommandeAction()` aiguille désormais selon `smartclimTransport::transportRetenu()`. Il subsiste
+  comme **forçage LAN explicite**, y compris sur un équipement en mode CLOUD — c'est un **trou assumé** de
+  l'AC5 de cette UC (« en CLOUD, aucun paquet LAN »), conservé parce qu'il est la seule façon de tester le
+  LAN sur un équipement réglé en CLOUD, et qu'un outil CLI admin/SSH nommé pour ce qu'il fait n'est pas
+  « une commande » au sens de l'AC.
 - **`core/php/sonde-intent-auxhome.php`** — **existe** depuis l'UC01 du domaine post-MVP 04. Troisième et
   dernière CLI du plugin, calquée sur les deux précédentes (garde `php_sapi_name() === 'cli'` **avant**
   tout `require_once`, aucun POST, aucune écriture en base ni sur disque, sorties FR **sans `__()`**).
@@ -734,7 +764,15 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   chiffrent via les méthodes d'instance `encrypt()`/`decrypt()`.
   **Clés posées depuis l'UC04** : `capacites` (profil **détecté**, réécrit par chaque scan) et
   `temp_min` / `temp_max` / `temp_pas` (bornes **personnalisées** par l'utilisateur, `''` = « non
-  personnalisé »). **Depuis l'UC01 du domaine post-MVP 01** : `lan_ip` et `lan_mac` — adresses locales
+  personnalisé »). **Depuis l'UC01 du domaine post-MVP 02** : `transport_mode` — mode de transport de
+  l'équipement (`auto` / `local` / `cloud`), lu **exclusivement** par `smartclimTransport::mode()` et
+  normalisé en **double barrière** (`preSave()` autoritaire et silencieux, plus `mode()` à la lecture).
+  ⚠️ **Le défaut AUTO tient à l'ABSENCE de clé**, pas à une valeur écrite : `normaliserMode()` renvoie
+  `MODE_AUTO` sur tout ce qui n'est pas l'un des trois codes — d'où **aucun script de migration** pour le
+  parc existant, et un équipement créé par le scan en AUTO sans que `creerEquipement()` soit touchée.
+  ⚠️ Elle n'a **aucun** défaut dans `smartclim.config.ini` : c'est une clé d'**équipement**, pas de config
+  plugin — le piège du `preConfig_` court-circuité ne s'applique donc pas.
+  **Depuis l'UC01 du domaine post-MVP 01** : `lan_ip` et `lan_mac` — adresses locales
   **saisies par l'utilisateur** (secours quand la diffusion n'atteint pas l'appareil : VLAN, réseau
   segmenté), `''` = « non personnalisé ». ⚠️ L'adresse **détectée** ne vit **jamais** là : elle est en
   **cache** (`smartclim::lan_appareil::<mac>`, 24 h) — même séparation détecté/personnalisé que

@@ -41,8 +41,7 @@ require_once __DIR__  . '/../../../../core/php/core.inc.php';
 * tete de core/class/smartclim.class.php — le seul fichier que l'autoloader charge. Les
 * classes annexes sont donc disponibles des que `smartclim` ou `smartclimCmd` est resolue,
 * c'est-a-dire depuis TOUS les points d'entree (AJAX, crons, pages desktop, install.php).
-* Les classes a venir (smartclimTransport, smartclimAuxCloudApi) viennent s'ajouter a
-* cette liste.
+* La classe a venir (smartclimAuxCloudApi) viendra s'ajouter a cette liste.
 *
 * ⚠️ Ni `php -l` ni la CI ne detectent l'oubli : la panne n'existe qu'au runtime, et
 * seulement sur le chemin de code qui touche la classe manquante.
@@ -54,5 +53,6 @@ require_once __DIR__ . '/../class/smartclimCapabilities.class.php';
 require_once __DIR__ . '/../class/smartclimFrame.class.php';
 require_once __DIR__ . '/../class/smartclimAuxHomeApi.class.php';
 require_once __DIR__ . '/../class/smartclimBroadlinkLan.class.php';
+require_once __DIR__ . '/../class/smartclimTransport.class.php';
 require_once __DIR__ . '/../class/smartclimDiagnostic.class.php';
 require_once __DIR__ . '/../class/smartclimDemon.class.php';

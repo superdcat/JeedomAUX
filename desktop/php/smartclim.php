@@ -296,6 +296,29 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="lan_mac" placeholder="{{Adresse détectée}}">
 								</div>
 							</div>
+							<legend><i class="fas fa-random"></i> {{Transport}}</legend>
+							<div class="form-group">
+								<label class="col-sm-4 control-label">{{Mode de transport}}
+									<sup><i class="fas fa-question-circle tooltips" title="{{AUTO privilégie le réseau local quand l'appareil y répond, sinon le cloud}}"></i></sup>
+								</label>
+								<div class="col-sm-6">
+									<select class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="transport_mode">
+										<?php
+										// UC01 du domaine post-mvp/02-strategies-de-transport (§ 1.1/3/4 de sa spec
+										// technique) : options GÉNÉRÉES CÔTÉ SERVEUR depuis smartclimTransport::modes()
+										// (jamais une liste en dur, qui divergerait de la table à la première
+										// évolution). ⚠️ La 1ʳᵉ <option> DOIT être AUTO (ordre figé de modes()) :
+										// .val(undefined) sur un <select> laisse la liste sur son premier item, un
+										// enregistrement suivant écrirait cette valeur (même piège que la liste Pays
+										// de plugin_info/configuration.php). htmlspecialchars() sur VALEUR et
+										// LIBELLÉ (XSS stocké déjà corrigé une fois sur cette page).
+										foreach (smartclimTransport::modes() as $code => $libelle) {
+											echo '<option value="' . htmlspecialchars($code, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($libelle, ENT_QUOTES, 'UTF-8') . '</option>';
+										}
+										?>
+									</select>
+								</div>
+							</div>
 						</div>
 
 						<!-- Partie droite de l'onglet "Équipement" -->
@@ -321,6 +344,10 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 								<div class="form-group">
 									<label class="col-sm-4 control-label">{{Transport actif}}</label>
 									<div class="col-sm-8"><span id="span_etatConnexionTransport"></span></div>
+								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Mode de transport}}</label>
+									<div class="col-sm-8"><span id="span_etatConnexionModeTransport"></span></div>
 								</div>
 								<div class="form-group">
 									<label class="col-sm-4 control-label">{{Dernière donnée reçue}}</label>

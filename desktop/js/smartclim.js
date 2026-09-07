@@ -112,6 +112,7 @@ function afficherEtatConnexion(_eqLogic) {
     $("#span_etatConnexionFraicheur").text("")
     $("#span_etatConnexionLan").text("")
     $("#span_etatConnexionLanAdresse").text("")
+    $("#span_etatConnexionModeTransport").text("")
     return
   }
   var classeNiveau = isset(smartclimClassesNiveau[etat.niveau]) ? smartclimClassesNiveau[etat.niveau] : "label-default"
@@ -128,6 +129,9 @@ function afficherEtatConnexion(_eqLogic) {
   // champ omis conserverait le texte de l'équipement précédemment consulté.
   $("#span_etatConnexionLan").text(etat.lan ? etat.lan : "")
   $("#span_etatConnexionLanAdresse").text(etat.lanAdresse ? etat.lanAdresse : "")
+  // UC01 du domaine post-mvp/02-strategies-de-transport (§ 5.4 de sa spec technique) :
+  // MÊME repli chaîne vide obligatoire que 'lan'/'lanAdresse' ci-dessus.
+  $("#span_etatConnexionModeTransport").text(etat.modeTransport ? etat.modeTransport : "")
 }
 
 /* Profil de capacités détecté (UC04). Tout le rendu de texte est SERVEUR
@@ -259,6 +263,15 @@ function saveEqLogic(_eqLogic) {
 
   if (corrigeLan) {
     $("#div_alert").showAlert({ message: "{{Adresses réseau local corrigées : vérifiez les valeurs saisies}}", level: "warning" })
+  }
+
+  // UC01 du domaine post-mvp/02-strategies-de-transport (§ 4 de sa spec technique) :
+  // aide à la saisie NON AUTORITAIRE (la barrière AUTORITAIRE reste preSave() côté PHP,
+  // via smartclimTransport::normaliserMode()) — ne bloque jamais l'enregistrement et
+  // n'affiche aucune alerte (le <select> rend le cas quasi impossible).
+  var transportMode = _eqLogic.configuration.transport_mode
+  if ($.inArray(String(transportMode), ["auto", "local", "cloud"]) === -1) {
+    _eqLogic.configuration.transport_mode = "auto"
   }
 
   return _eqLogic

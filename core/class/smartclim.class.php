@@ -1992,6 +1992,33 @@ class smartclim extends eqLogic {
   }
 
   /*
+   * Cycle de vie du démon (UC02 du domaine post-mvp/05-temps-reel-et-demon) — trois
+   * DÉLÉGATIONS statiques, rien d'autre : le core appelle deamon_info()/deamon_start()/
+   * deamon_stop() EN STATIQUE SUR LA CLASSE PRINCIPALE (plugin::deamon_*, cf. spec
+   * technique § 1.1) — ces trois méthodes n'ont pas le choix de leur domicile. Toute la
+   * mécanique (port, chemins, état, lancement/arrêt, unique point socket) vit dans
+   * smartclimDemon, seule classe autorisée à ouvrir un socket vers le démon — même règle
+   * que « tout le LAN par smartclimBroadlinkLan, jamais de socket épars ».
+   *
+   * ⚠️ deamon_start() est déclarée SANS PARAMÈTRE : le core résout sa signature par
+   * ReflectionMethod et ne transmet $_auto que si la méthode déclare au moins un
+   * paramètre obligatoire (spec technique § 1.1) — un paramètre ici romprait ce contrat.
+   * ⚠️ deamon_info() n'est PAS entourée d'un try/catch par le core (contrairement à
+   * deamon_start()/deamon_stop()) : smartclimDemon::etat() ne lève JAMAIS.
+   */
+  public static function deamon_info() {
+    return smartclimDemon::etat();
+  }
+
+  public static function deamon_start() {
+    return smartclimDemon::lancer();
+  }
+
+  public static function deamon_stop() {
+    return smartclimDemon::arreter();
+  }
+
+  /*
   * Fonction exécutée automatiquement toutes les 5 minutes par Jeedom
   public static function cron5() {}
   */

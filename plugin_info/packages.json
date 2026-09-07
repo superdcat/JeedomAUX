@@ -4,6 +4,9 @@
   "apt": {
   },
   "pip3": {
+    "requests": {
+      "version": "2.31.0"
+    }
   },
   "npm": {
   },

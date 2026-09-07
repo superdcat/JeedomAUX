@@ -1,2 +1,5 @@
 Order allow,deny
+<Files "jeeSmartclim.php">
+   allow from all
+</Files>
 Deny from all

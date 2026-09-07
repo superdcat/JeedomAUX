@@ -1,7 +1,7 @@
 {
 	"id": "smartclim",
 	"name": "SmartClim",
-	"pluginVersion": "0.22",
+	"pluginVersion": "0.23",
 	"description": {
 		"fr_FR": "Pilotez depuis Jeedom vos climatiseurs Wi-Fi de l'écosystème AUX, Broadlink et AC Freedom (AUX Home, Ballu, Centek, Tornado, Royal Clima…) : marche/arrêt, mode, température de consigne, ventilation et fonctions de confort, en réseau local ou via le cloud.",
 		"en_US": "Control your AUX, Broadlink and AC Freedom Wi-Fi air conditioners from Jeedom (AUX Home, Ballu, Centek, Tornado, Royal Clima and more): power, mode, target temperature, fan speed and comfort features, over the local network or through the cloud.",
@@ -16,8 +16,8 @@
 		"max" : 12.99
 	},
 	"category": "wellness",
-	"hasDependency": false,
-	"hasOwnDeamon": false,
+	"hasDependency": true,
+	"hasOwnDeamon": true,
 	"changelog_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/beta\/changelog",
 	"changelog": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/changelog",
 	"documentation_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/beta",

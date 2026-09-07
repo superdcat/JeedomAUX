@@ -695,16 +695,163 @@ l'application officielle. Conséquences pour SmartClim :
 - Ne **jamais** brancher une régulation fine (thermostat Jeedom) sur cette température sans avertissement
   dans la documentation utilisateur.
 
-## 7. Temps réel / push
+⚠️ **L'origine du retard reste inconnue — et le spike du 2026-09-07 (§ 7) a déplacé le curseur sans
+trancher.** Trois lectures restent ouvertes : péremption du **snapshot serveur**, mesure intermittente par
+le **module Wi-Fi** de l'appareil, ou les deux. Ce qui est nouveau : `ha-aux-a-plus/mqtt.py` porte une
+`query_temperatures()` qui obtient l'ambiante par une connexion MQTT **ponctuelle** dont la publication va
+sur `app2dev/<deviceId>/#` — donc une requête **adressée à l'appareil**, et non une lecture du cache
+serveur ; et cette requête d'état MQTT (`bb0006800000020021011b7e`) porte **le même magic** que le
+`getInfo` Broadlink (cf. `smartclim-ecosysteme-aux-broadlink.md` § 3). Si un appareil y répond, la valeur
+existe **à la demande** et la péremption est une propriété du serveur. ⚠️ **Mais l'argument inverse tient
+aussi** : l'auteur EU observe le retard **dans l'application officielle** — soit celle-ci n'emprunte pas ce
+canal, soit le canal ne rafraîchit pas ce champ.
+🚫 **Corollaire à ne pas oublier si un push est un jour introduit** : un canal de push ne promet **rien**
+sur ce champ tant que cette mesure n'est pas faite. Le gain certain porterait sur les changements d'état
+**commandés**, pas sur l'ambiante.
 
-- **Aucun WebSocket ni push n'est utilisé** par l'implémentation de référence EU : elle scrute
-  `/app/user_device` toutes les **60 s** (`device.ts::POLL_INTERVAL_MS`). ✅
+## 7. Temps réel / push — **canal MQTT européen CONFIRMÉ dans son existence** (spike du 2026-09-07)
+
+> **Statut** : l'ancienne mention « *[HYPOTHÈSE] un équivalent EU existe probablement — à confirmer par
+> capture réseau* » est **levée**, dans le sens **positif**, par l'UC01 du domaine post-mvp/05. Elle cachait
+> **deux** questions, qui n'ont pas la même réponse : l'**existence** de l'hôte (tranchée ✅) et
+> l'**acceptation de nos identifiants** par ce broker (toujours ❓).
+
+### 7.1 Ce qui est établi
+
+- **Aucun push n'est utilisé par l'implémentation de référence EU** : elle scrute `/app/user_device`
+  toutes les **60 s** (`device.ts::POLL_INTERVAL_MS`). ✅ Aucune dépendance `mqtt`/`ws`/`socket.io` dans son
+  `package.json`, aucune constante d'hôte autre que `AUX_HOST`, pas même en code mort ou commenté. ✅
 - Le backend **CN** possède un **broker MQTT TLS** (`smthomem2m.aux-home.com:8883`, souscription
   `dev2app/<uid>/#`, publication `app2dev/<deviceId>/#`) ✅ (`ha-aux-a-plus/mqtt.py`).
-- **[HYPOTHÈSE]** un équivalent EU existe probablement (même famille de backend). **À confirmer** par
-  capture réseau de l'application AUX Home. Tant que ce n'est pas confirmé : **pas de démon** pour ce
-  transport (cf. `smartclim-daemon-choix.md`).
+- **Un broker MQTT existe aussi côté EU** : **`eu-smthome-m2m.aux-global.com`**, ports **8883** et **443**
+  (TLS) et **1883** (clair). ✅ Établi par trois faisceaux indépendants :
+  1. **DNS** (vérifié deux fois, dont une hors agent, le 2026-09-07) — le nom résout par CNAME vers un
+     **NLB** Aliyun (`nlb-jh4x8hmt5iy0t7c7sh.eu-central-1.nlb.aliyuncsslbintl.com`, 8.211.19.52 /
+     8.211.26.90), là où `eu-smthome-api.aux-global.com` — notre API REST — pointe vers un **ALB** de la
+     **même région** `eu-central-1`. ⚠️ **C'est cette différence d'équilibreur qui fait la preuve, pas le
+     nom** : un **ALB** est de niveau 7 (HTTP), un **NLB** de niveau 4 (TCP brut) — soit exactement ce
+     qu'exige MQTT, qui n'est pas du HTTP. Le nommage `<région>-smthome-{api,m2m}` est systématique
+     (`us-smthome-m2m` existe aussi, sur un NLB AWS dont l'équilibreur porte littéralement `aplus`), et un
+     nom bidon de la même zone renvoie **NXDOMAIN** — donc pas d'attrape-tout DNS.
+  2. **Dialogue protocolaire** — un CONNECT MQTT 3.1.1 **anonyme** reçoit `20 02 00 04`
+     (CONNACK, *bad user name or password*) ; un CONNECT au niveau de protocole invalide (`0xFF`) reçoit
+     `20 02 00 01` (*unacceptable protocol version*) ; 32 octets non-MQTT font **fermer** la connexion sans
+     réponse. Le service décode donc le paquet, valide la version et applique la machine à états MQTT :
+     c'est un broker authentique, pas un port ouvert au hasard. Comportement **identique** sur le broker CN
+     de référence et sur l'hôte US.
+  3. **Identité TLS** — certificat au nom de `O = 奥克斯空调股份有限公司` (AUX Air Conditioning Co., Ltd.),
+     **le même** que celui du broker CN : c'est le même déploiement, il appartient bien à AUX.
+- **Recette d'authentification MQTT, côté CN** ✅ (`ha-aux-a-plus/mqtt.py`, corps CONNECT construit à la
+  main sur socket brut — **pas** de `paho`) :
 
+  | Élément | Forme | Origine |
+  |---|---|---|
+  | client-id | `usr<uid>` | `data.appUser.uid` du login REST |
+  | username | `2$<configId>$<uid>` | `configId` = UUID **côté client**, jamais envoyé au login |
+  | password | **le jeton du login REST lui-même** | `data.openApiToken.token` **ou** `data.token.token` |
+  | keep-alive | 120 s | |
+  | souscription / publication | `dev2app/<uid>/#` / `app2dev/<deviceId>/#` | |
+
+  ⚠️ **Ne jamais consigner ici de valeur** (jeton, `uid`, `configId` d'un compte réel) : seule la **forme**
+  est un fait de protocole — même règle que `ACCOUNT_AES_KEY` au § 2.2.
+  ⚠️ **Le résultat le plus utile pour nous** : `api.py` résout le jeton par
+  `token_info.get("token") or root.get("token") or data.get("token")` — et la **deuxième branche est
+  exactement la forme du backend EU**. Les deux ingrédients (`uid` et jeton) sont donc **déjà extraits et
+  déjà en cache de session** par `smartclimAuxHomeApi::login()` (cf. § 2.1) : côté REST, il n'y a **rien à
+  ajouter**.
+
+### 7.2 Ce qui reste ouvert — et pourquoi ce n'est plus la même question
+
+- ❓ **Nos identifiants EU sont-ils acceptés par ce broker ?** Un broker qui répond n'est pas un broker qui
+  sert : tout ce qui est prouvé, c'est qu'un processus MQTT écoute et refuse les anonymes. Que le compte EU
+  y soit connu, que l'appareil y publie, que les topics soient ceux du CN : **tout cela reste à établir.**
+- ❓ **Le `configId` EU est inconnu**, et il entre dans le nom d'utilisateur. C'est le paramètre le plus
+  susceptible de faire échouer un test d'accès pour une raison **étrangère** à l'existence du canal : ⚠️ ne
+  jamais conclure « le broker EU refuse nos comptes » sur la foi d'un seul `0x04`.
+- ❓ **Le backend annonce-t-il le broker ?** Non, dans l'implémentation de référence : l'hôte CN y est
+  **codé en dur** (`MQTT_HOST`/`MQTT_PORT`), et **aucun** champ de réponse REST lu par `api.py` ne porte
+  d'adresse de broker (ni `mqttUrl`, `m2mUrl`, `brokerHost`, `wsUrl`, `pushUrl`, `gateway`). ⚠️ Une
+  implémentation ne lit que ce dont elle a besoin : cela ne prouve pas l'absence du champ dans la réponse,
+  seulement que l'auteur a obtenu l'hôte autrement (l'APK, très probablement — son
+  `docs/RESEARCH_PLAYBOOK.md` ne documente pas cette découverte et classe MQTT en dette). Piste **non
+  testée**, sondable **sans écrire une ligne** par la CLI `core/php/diagnostic-auxhome.php` (chemins libres
+  en CLI) : `/app/getConfig?id=<X>` avec `X` ∈ {`mqtt`, `m2m`, `server`, `serverConfig`, `appConfig`,
+  `domain`, `host`, `push`, `all`} — la seule famille de catalogue connue de ce backend (`id=deviceMutex`
+  est vérifiée `HTTP 200`).
+- ❓ **Format des messages poussés** sur `dev2app/<uid>/#`, et surtout : un changement déclenché par la
+  **télécommande** y produit-il un évènement **non sollicité** ? C'est toute la différence entre « MQTT
+  comme transport de requêtes » (gain de fraîcheur) et « MQTT comme vrai push » (gain d'évènement). Les
+  clés observées côté **CN** suggèrent un état structuré (`temperature`, `half`, `up_down_swing`,
+  `wind_speed`, `on_off`…) ✅, mais côté CN **uniquement**.
+- ❓ **Durée de vie du jeton en usage MQTT** — déjà inconnue en REST (§ 2.3), et rien ne dit que le broker
+  applique la même politique.
+
+### 7.3 ⚠️⚠️ Blocage dur : le certificat du broker EU est invalide
+
+| Hôte | Sujet / SAN | Validité |
+|---|---|---|
+| `eu-smthome-m2m.aux-global.com:8883` | CN=`*.aux-home.com`, SAN `*.aux-home.com, aux-home.com` | 2024-10-08 → **2025-11-06 (EXPIRÉ)** |
+| `us-smthome-m2m.aux-global.com:8883` | **identique** | **identique (expiré)** |
+| `smthomem2m.aux-home.com:8883` (CN) | même identité, autre émetteur | 2025-10-30 → 2026-11-30 (**valide**) |
+
+**Double échec de validation** : le certificat est expiré depuis ~10 mois, **et** son SAN
+`*.aux-home.com` ne couvre pas un hôte en **`aux-global.com`** — l'échec de vérification du nom d'hôte
+tient donc **indépendamment** de l'expiration. Or `CLAUDE.md` pose : « **TLS toujours vérifié** — si un
+certificat pose problème, l'anomalie est remontée, jamais contournée ». **Conséquence directe : un client
+conforme à nos propres règles ne peut pas se connecter à ce broker en l'état.**
+
+- ⚠️ « Épingler le certificat ou la CA AUX » **n'est pas une demi-mesure acceptable** ici : épingler un
+  certificat **expiré** reste accepter un certificat invalide.
+- 🚫 **Le port 1883 en clair est ouvert — à exclure absolument** : il remplacerait le problème par un pire,
+  en faisant transiter **le jeton de session en clair** (c'est lui qui sert de mot de passe MQTT).
+- ⚠️ **Indice à ne pas négliger** : un certificat non renouvelé depuis dix mois sur **EU et US**, alors que
+  le **CN** est valide et correspond à son nom d'hôte, suggère des endpoints **clonés et peu ou pas
+  exploités en production**. La lecture inverse reste ouverte — que le client officiel ne vérifie tout
+  simplement pas le certificat, ce que fait précisément l'implémentation CN (`verify_mode = CERT_NONE`) et
+  ce que font **toutes** les références du cloud legacy (cf. `smartclim-transport-aux-cloud-legacy.md` § 1).
+  Les deux lectures impliquent la même prudence : **ne pas dépendre de cet endpoint**, dégrader vers la
+  scrutation.
+
+### 7.4 ⚠️ Ce que ce spike corrige dans notre propre raisonnement
+
+L'argument « *aucune implémentation de référence ne fait de push, donc il n'y en a pas* » — qui sous-tendait
+l'hypothèse de scrutation — **ne tient pas**, et il faut cesser de s'en servir :
+
+1. Il n'existe **qu'une seule** implémentation du backend EU (`com.zwegersit.auxairco`) : il n'y a aucune
+   « convergence de plusieurs implémentations indépendantes vers la scrutation » à invoquer.
+2. Son auteur a bel et bien fait une **capture réseau réelle** de l'application EU — c'est ainsi qu'il a
+   trouvé l'API. Mais une capture par **proxy HTTPS ne voit que du HTTP(S)** : du **MQTT brut sur
+   8883/1883 lui est structurellement invisible**. Le playbook du dépôt CN le dit explicitement
+   (« *stream-style proxy tools are insufficient for understanding raw MQTT, custom TCP, UDP discovery…* »).
+3. Aucun commentaire de `device.ts` n'explique le choix de la scrutation : l'auteur n'a pas **écarté** un
+   push, il ne semble pas en avoir **cherché**.
+
+**Leçon transverse** : le silence d'une source ne vaut preuve d'absence que si son **instrument** pouvait
+voir la chose. Ici, l'absence de mention publique s'explique intégralement par un angle mort d'outillage.
+
+### 7.5 Recherches restées négatives (traçabilité du spike)
+
+À conserver pour ne pas les refaire : `smthomem2m.aux-home.com` sur le web ouvert (**0 résultat
+pertinent** — le broker CN n'est mentionné nulle part hors du dépôt qui l'implémente) ; aucune analyse
+d'APK publiée de l'application (paquet Android `com.broadlink.auxac`) ; aucun autre projet ciblant
+`eu-smthome-api.aux-global.com` ; la transparence de certificats (crt.sh) ne rend que des **wildcards**
+`*.aux-global.com`, donc aucun inventaire d'hôtes ; le DNS passif (hackertarget) rend des listes
+**partielles** — ni `eu-smthome-api` ni `smthomem2m` n'y figurent alors qu'ils existent, **à ne pas
+considérer comme exhaustif** ; recherche de code (grep.app, searchcode) **non concluante** pour cause
+d'indisponibilité des services, donc ni positive ni négative. Ne résolvent **pas** :
+`eu-smthomem2m.aux-global.com`, `smthomem2m.aux-global.com`, `eu-smthome-mqtt.aux-global.com`,
+`m2m.aux-global.com`, `eu-m2m.aux-global.com`, `smthome-m2m.aux-global.com`,
+`eu-smthome-{app,ota,file,h5,web,oss}.aux-global.com`, `aplus.aux-global.com`.
+
+### 7.6 Décision retenue (2026-09-07)
+
+**Le transport `AUX_HOME` RESTE EN SCRUTATION**, et une **UC de validation d'accès MQTT** est ouverte comme
+**préalable** à toute décision d'introduire un push (→ `05-validation-acces-mqtt-aux-home.md`, domaine
+post-mvp/05). Ce n'est pas un renoncement : il manque **un** fait — l'acceptation de nos identifiants — et
+il coûte une seule connexion. Le test n'a **volontairement pas** été mené dans ce spike : il enverrait un
+jeton de session réel vers un serveur au certificat invalide, ce qui mérite son propre cadre.
+⚠️ **Conséquence pour l'arbitrage du démon** : « MQTT ⇒ démon » est une prémisse **fausse** — voir
+`smartclim-daemon-choix.md` § 6, amendé en trois marches.
 ## 8. Robustesse & sécurité — règles retenues
 
 1. **Ne jamais journaliser** mot de passe, `account` chiffré, ou jeton complet. Journaliser au plus
@@ -738,6 +885,11 @@ l'application officielle. Conséquences pour SmartClim :
 ## 9. À confirmer (recette)
 
 - [ ] `temperature` : entier °C ou ×10 sur le backend EU ?
+- [~] **Existe-t-il un canal de push sur le backend EU ?** → **l'hôte existe et parle MQTT**
+      (`eu-smthome-m2m.aux-global.com`, spike du 2026-09-07, § 7). ⚠️ **Reste ouvert, et c'est désormais
+      une question plus petite** : nos identifiants y sont-ils acceptés (`configId` inconnu), et son
+      certificat **expiré et non couvrant** interdit toute connexion conforme à nos règles TLS. Décision :
+      **scrutation maintenue**, UC de validation ouverte (§ 7.6).
 - [x] ~~Table `wind_speed` réelle (8 valeurs ?)~~ → **confirmée par `deviceMutex`** le 2026-08-26,
       identique à la table EU (§ 4.3). Reste à valider l'ADÉQUATION vitesse ↔ ressenti sur l'appareil.
 - [x] ~~Noms et valeurs exacts des intentions de confort~~ → **déclarés par le backend** le 2026-09-04

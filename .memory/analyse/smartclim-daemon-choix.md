@@ -110,7 +110,7 @@ Format `packages.json` (rappel : version dans la valeur, exacte, sans opérateur
 | `requests` | HTTP synchrone côté démon |
 | `pycryptodome` | AES-128-CBC zero padding (LAN, legacy) |
 | `websocket-client` | WebSocket relay du cloud legacy |
-| `paho-mqtt` | push MQTT ❓ (si confirmé) |
+| `paho-mqtt` | push MQTT ❓ (si confirmé) — ⚠️ **nécessaire seulement pour la marche 3** (souscription permanente), cf. § 6 |
 
 ⚠️ **Les numéros de version exacts doivent être relevés sur PyPI au moment d'écrire l'UC** (une version
 figée ici serait périmée et le format n'admet pas d'opérateur de comparaison). Vérifier également la
@@ -118,8 +118,33 @@ compatibilité `paho-mqtt` 1.x vs 2.x (API cliente incompatible entre les deux m
 
 ## 6. Ce qui déclencherait une révision de ce verdict
 
-- [ ] Découverte d'un **push confirmé** sur `eu-smthome-api.aux-global.com` (MQTT ou WebSocket) → le démon
-      remonterait au MVP+1, car il changerait radicalement la fraîcheur perçue.
+- [~] ~~Découverte d'un **push confirmé** sur `eu-smthome-api.aux-global.com` (MQTT ou WebSocket) → le
+      démon remonterait au MVP+1, car il changerait radicalement la fraîcheur perçue.~~
+      → **Déclencheur PARTIELLEMENT ARMÉ** le 2026-09-07 (spike UC01 du domaine post-mvp/05) : un broker
+      MQTT **existe** côté EU (`eu-smthome-m2m.aux-global.com`), mais l'acceptation de nos identifiants
+      n'est pas établie et son certificat TLS est invalide. Voir
+      `smartclim-transport-aux-home.md` § 7.
+      ⚠️⚠️ **Et la CONSÉQUENCE écrite ici était fondée sur une prémisse FAUSSE** : « MQTT ⇒ démon » ne
+      tient pas. `ha-aux-a-plus/mqtt.py` n'utilise **pas** `paho` — il construit ses paquets à la main sur
+      un socket brut (`_mqtt_packet()`, `_mqtt_utf8()`) — et il s'en sert de **deux** façons qui n'ont pas
+      le même coût pour nous :
+
+      | Usage du canal | Nature | Faisable en **PHP pur** ? | Démon ? |
+      |---|---|---|---|
+      | `query_temperatures()` / `control_device()` — connexion **ponctuelle** | requête/réponse, tient dans un cycle de cron | **Oui** — CONNECT/PUBLISH/SUBSCRIBE et lecture du CONNACK tiennent en quelques dizaines de lignes ; `openssl_*` et les sockets sont **déjà** utilisés par le plugin | **Non** |
+      | souscription **permanente** `dev2app/<uid>/#` — vrai push | processus long | Non (ni PHP-FPM ni le cron n'ont de processus long) | **Oui** |
+
+      D'où **trois marches**, et non une seule :
+      1. **Validation d'accès** — un CONNECT authentifié, lecture du code retour. Zéro dépendance, zéro
+         démon. C'est le seul geste manquant.
+      2. **MQTT ponctuel en PHP** dans le cycle de cron existant : si `query_temperatures()` se transpose,
+         on gagne potentiellement la **fraîcheur d'ambiante** — le vrai point faible du transport
+         (`smartclim-transport-aux-home.md` § 6.4) — **sans démon, sans `packages.json`, sans indicateur
+         de dépendances**. ⚠️ Cette marche **n'existait pas** dans l'arbitrage d'origine.
+      3. **Démon Python + souscription permanente** : justifié seulement si la marche 2 réussit **et** que
+         l'évènement non sollicité (changement depuis la télécommande) est retenu comme besoin. Le démon
+         reste de toute façon justifié **indépendamment** par le WebSocket du cloud legacy (UC03 de ce
+         domaine) — ce spike ne conditionne donc pas son existence.
 - [ ] Confirmation que l'appareil de validation parle **AUXLink TCP 12416** → session persistante +
       heartbeat 4 s ⇒ démon nécessaire pour le pilotage local de CET appareil (fort intérêt utilisateur).
 - [ ] Constat de quotas/limitation de débit sur `/app/user_device` imposant un canal évènementiel.

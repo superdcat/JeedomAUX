@@ -85,6 +85,12 @@ Couvre les comptes et générations absents d'AUX Home (régions USA / Chine / R
 ### `05-temps-reel-et-demon/` — Temps réel : démon Python et canaux persistants
 ⚠️ **Domaine conditionnel** : il n'existe que si un canal réellement persistant est confirmé. C'est le seul
 endroit où un démon devient justifié — et il sera **Python**, jamais Node.
+⚠️ **Mise à jour du 2026-09-07 (UC01 livrée)** : un broker MQTT **existe** côté AUX Home européen, mais son
+certificat TLS est **expiré et ne couvre pas son nom d'hôte**, et l'acceptation de nos identifiants n'est
+pas établie → **AUX Home reste en scrutation**, l'UC05 tranche l'accès. ⚠️ Et « MQTT ⇒ démon » s'est
+révélé **faux** : un MQTT **ponctuel** tient en PHP pur dans le cron, seule une **souscription permanente**
+exige un démon (cf. `.memory/analyse/smartclim-daemon-choix.md` § 6). Le démon reste justifié
+indépendamment par le WebSocket du cloud historique (UC03).
 
 | # | Titre | Dépend de |
 |---|---|---|
@@ -92,6 +98,7 @@ endroit où un démon devient justifié — et il sera **Python**, jamais Node.
 | 02 | Socle de démon Python et pont avec Jeedom | 01 de ce domaine |
 | 03 | Temps réel du cloud historique (relais WebSocket) | 02 de ce domaine + UC03 du domaine 03 |
 | 04 | Spike puis transport local alternatif (AUXLink) pour les modules récents | 02 de ce domaine |
+| 05 | Validation de l'accès au broker MQTT AUX Home européen | 01 de ce domaine |
 
 ### `06-ergonomie-jeedom/` — Widget, scan unifié, page-panneau
 Rend le plugin agréable au quotidien.

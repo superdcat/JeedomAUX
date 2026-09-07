@@ -124,8 +124,21 @@ Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.m
 ## 7. À confirmer
 
 - [ ] Le module de l'appareil de validation répond-il au LAN **AUXLink** (UDP 12414 / TCP 12416) ?
-- [ ] Le backend EU `eu-smthome-api.aux-global.com` a-t-il un pendant MQTT du type
-      `smthomem2m.aux-home.com` (le backend CN en a un) ? **[HYPOTHÈSE forte, non vérifiée]**
+- [x] ~~Le backend EU `eu-smthome-api.aux-global.com` a-t-il un pendant MQTT du type
+      `smthomem2m.aux-home.com` (le backend CN en a un) ?~~ → **OUI**, tranché par le spike du 2026-09-07
+      (UC01 du domaine post-mvp/05) : **`eu-smthome-m2m.aux-global.com`**, ports 8883/443 (TLS) et 1883
+      (clair). Le nommage `<région>-smthome-{api,m2m}` est **systématique** (`us-smthome-m2m` existe
+      aussi) et le `m2m` est derrière un équilibreur **TCP de niveau 4**, l'`api` derrière un **HTTP de
+      niveau 7** — c'est cette différence, pas le nom, qui fait la preuve. Un CONNECT anonyme y reçoit un
+      CONNACK *bad user name or password*, une version de protocole invalide un CONNACK *unacceptable
+      protocol version* : c'est un broker MQTT authentique.
+      ⚠️ **Deux réserves qui changent tout** : nos identifiants EU n'y ont **pas** été testés, et son
+      certificat est **expiré (2025-11-06) et ne couvre pas son propre nom d'hôte** — donc inaccessible à
+      un client respectant la règle « TLS toujours vérifié » du projet. Détail complet, recette
+      d'authentification et décision : `smartclim-transport-aux-home.md` § 7.
+      ⚠️ **Leçon de méthode à retenir** : l'absence de mention publique de ce canal ne valait **pas**
+      preuve d'absence — la seule capture réseau publique de l'application EU a été faite au **proxy
+      HTTPS**, structurellement aveugle au MQTT brut. Cf. § 7.4 de la note AUX Home.
 - [ ] Les comptes AC Freedom (G2) et AUX Home (G3) sont-ils distincts ou unifiés ? Les implémentations de
       référence supposent **distincts** et essaient G3 puis G1/G2 en repli
       (`com.zwegersit.auxairco/drivers/airco/driver.ts::onPair`).

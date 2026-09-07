@@ -749,6 +749,17 @@ arrivera — WebSocket relay du cloud legacy, MQTT, ou session TCP locale à hea
 (`resources/demond/` + pont `jeedom_socket`/`jeedom_com`) est en Python, `packages.json` ne gère
 officiellement que `pip3`, et tout le code public réutilisable (WebSocket/MQTT/TCP) est en Python.
 
+⚠️ **« MQTT » dans la phrase ci-dessus ne vaut que pour une SOUSCRIPTION PERMANENTE** — précision acquise
+au spike du domaine post-MVP 05 (UC01, 2026-09-07), qui a **confirmé l'existence** d'un broker MQTT côté
+AUX Home européen (`eu-smthome-m2m.aux-global.com`) tout en établissant que « MQTT ⇒ démon » est **faux** :
+une connexion **ponctuelle** (CONNECT/PUBLISH/lecture/fermeture dans un cycle de cron) tient en **PHP
+pur** — l'implémentation de référence n'utilise elle-même aucune bibliothèque MQTT, elle construit ses
+paquets à la main sur un socket brut. Seul un **processus long** exige un démon. ⚠️ Et le transport
+AUX Home **reste en scrutation** : le certificat TLS de ce broker est **expiré et ne couvre pas son propre
+nom d'hôte**, donc inaccessible sous la règle « TLS toujours vérifié » ci-dessous, et l'acceptation de nos
+identifiants n'est pas établie. Détail, preuves et décision : `.memory/analyse/smartclim-transport-aux-home.md`
+§ 7 et `smartclim-daemon-choix.md` § 6 (trois marches).
+
 Les dépendances (Python/pip) se déclarent dans **`plugin_info/packages.json`** (uniquement `pip3`).
 ⚠️⚠️ **Pièges connus du format `packages.json`** (règles génériques Jeedom, coûteuses à redécouvrir) :
 - La **version se met dans la VALEUR, pas dans la clé** : `"paho-mqtt": {"version": "1.6.1"}`, **jamais**

@@ -39,6 +39,14 @@ try {
         ajax::success(array('message' => smartclim::testerConnexionAuxHome()));
     }
 
+    // UC01 du domaine post-mvp/03-cloud-aux-legacy : test de connexion du compte cloud
+    // historique, indépendant du compte AUX Home (AC1/AC8). Aucun paramètre reçu du
+    // client — protocole, crypto et table des régions vivent entièrement côté serveur
+    // (§ 5 de la spec technique).
+    if (init('action') == 'testerConnexionAuxCloud') {
+        ajax::success(array('message' => smartclim::testerConnexionAuxCloud()));
+    }
+
     if (init('action') == 'effacerIdentifiants') {
         ajax::success(array('message' => smartclim::effacerIdentifiantsAuxHome()));
     }

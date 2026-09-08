@@ -20,7 +20,7 @@ Trois **transports** interchangeables sont visés, derrière une abstraction com
 |---|---|---|
 | **AUX Home** (`eu-smthome-api.aux-global.com`) | **socle MVP** | cloud récent, REST, 100 % PHP |
 | **Broadlink LAN** (UDP port 80) | post-MVP domaine 01, **UC01 livrée** (découverte + session) | pilotage local, sans Internet |
-| **AUX Cloud legacy / AC Freedom** | post-MVP (domaine 03) | cloud historique, multi-régions |
+| **AUX Cloud legacy / AC Freedom** | post-MVP domaine 03, **UC01 livrée** (authentification multi-régions) | cloud historique, multi-régions |
 
 Le principe directeur (brief utilisateur, `.memory/brief.md`) :
 
@@ -223,7 +223,14 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   la clé vaut `false`, ce qui laisse **intactes** toutes les définitions antérieures (dont les boucles
   dynamiques `mode_*` / `fan_*`) — ne pas « compléter » celles-ci par un `'confirmation' => false`.
 - **`core/class/smartclimAuxHomeApi.class.php`** — brique du transport **AUX Home**, seul point cURL du
-  plugin. Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
+  transport **AUX Home**.
+  ⚠️ **Ce n'est plus « le seul point cURL du plugin » depuis l'UC01 du domaine post-MVP 03** :
+  `smartclimAuxCloudApi` porte le sien. La **règle** n'a pas changé — « tous les appels HTTP passent par la
+  brique du transport concerné » —, c'est le **constat d'unicité** qui est devenu faux. Les deux clouds ne
+  partagent presque rien au niveau HTTP (enveloppe JSON + `Authorization: bearer` d'un côté ; corps binaire
+  chiffré + 9 en-têtes d'usurpation + sentinelle `status` de l'autre) : un helper commun serait un sac de
+  paramètres. Ne pas « factoriser » les deux.
+  Porte la liste des pays proposables `paysDisponibles()` (UC01, amendée en recette : plus
   aucune déduction depuis le fuseau horaire, cf. § Configuration & secrets), puis l'authentification
   complète (UC02) : `login()` (toujours frais — `getPubkey` + `login/pwd` — **et écrit** la session en
   cache), `session()` (**lit** le cache, sinon `login()`), `purgerSession()`, la crypto RSA/AES et les
@@ -574,9 +581,34 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   identifiant cloud « se comporte comme LOCAL » au lieu d'afficher une erreur de configuration cloud.
   ⚠️ `cloudDisponible()` teste `compteConfigure()` (global au plugin) **ET** `auxhome_device_id` (par
   équipement) : le second terme est ce qui rend le test réellement par appareil.
-- **Classe annexe encore à créer** (dans **son propre** fichier `<Classe>.class.php`, **et à ajouter aux
-  `require_once` de `core/php/smartclim.inc.php`** — sans quoi elle sera introuvable au runtime, cf.
-  Conventions → Autoload) : `smartclimAuxCloudApi` (cloud legacy).
+- **`core/class/smartclimAuxCloudApi.class.php`** — **existe** depuis l'UC01 du domaine post-MVP 03. Brique
+  du transport **AUX Cloud legacy / AC Freedom**, second point cURL du plugin (cf. `smartclimAuxHomeApi`
+  ci-dessus). Cette UC n'en livre que l'**authentification** : table des 4 régions (`regions()`,
+  `regionsDisponibles()`, `regionConnue()`, `hoteRegion()`), `login()`, `session()`, `purgerSession()`, la
+  crypto (SHA1/MD5/AES-128-CBC), le classement d'erreurs et `journaliserErreurLegacy()`. Aucune découverte
+  d'appareil (UC02), aucune lecture/écriture d'état (UC03), aucun `eqLogic`, aucune commande.
+  ⚠️⚠️ **La sentinelle de succès de ce backend est `status == 0`, PAS `code == 200`** comme AUX Home. Un
+  `!== 200` recopié depuis le transport jumeau ferait échouer **tous** les logins **et** classerait l'échec
+  en `TYPE_AUTH` — donc afficherait « vérifiez vos identifiants » sur des identifiants parfaitement valides.
+  ⚠️ **L'invariant central du protocole n'est pas un format, c'est une identité** : la chaîne d'horodatage
+  doit être **identique octet à octet** entre l'en-tête `timestamp` et la graine du MD5 de la clé AES — les
+  deux implémentations de référence produisent des formats **incompatibles** et s'authentifient toutes les
+  deux, ce qui prouve que le backend ne reparse jamais cette chaîne en nombre. D'où `horodatageGraine()`,
+  appelée **une seule fois** par login, et construite **sans aucune arithmétique flottante**
+  (`explode(' ', microtime())`) : `(string) microtime(true)` dépend de `precision` et de `LC_NUMERIC`,
+  `sprintf('%.3f')` est *locale aware*, et `microtime(true) * 1000` dépasse un entier 32 bits sur armhf.
+  ⚠️ **`OPENSSL_ZERO_PADDING` signifie « ne pas remplir », pas « remplir de zéros »** : le zero padding du
+  corps se fait **à la main avant** `openssl_encrypt()`, par `(16 - (len % 16)) % 16` — qui n'ajoute rien si
+  la longueur est déjà alignée.
+  ⚠️ **Le profil TLS est en dur et sans échappatoire** (`VERIFYPEER`/`VERIFYHOST`), et les erreurs cURL sont
+  classées en **4 causes**, pas 3 : `{51,58,60,83,90,91}` → certificat (libellé « serveur **ou** magasin
+  local »), `77` → **magasin de certificats local** (message propre : il ne dit rien du serveur distant),
+  `35`/`59` → **injoignable** (ce sont des échecs de *négociation*, pas de validation). Le critère de
+  regroupement « n'est pas un problème de DNS/route » a été **explicitement rejeté** en revue : un message
+  affirmatif et faux est pire qu'un message générique honnête.
+  ⚠️ Livrée **non recettée** (aucun compte legacy disponible), comme le transport Broadlink LAN : vérifiée
+  contre deux références MIT recoupées, jamais contre le backend réel. Détail, preuves et dette :
+  `.memory/specs/post-mvp/03-cloud-aux-legacy/01-client-legacy-authentification-tech.md`.
 - **`core/ajax/smartclim.ajax.php`** — endpoint AJAX **admin** de la page de configuration : inclut le core,
   `isConnect('admin')`, `ajax::init()`, puis aiguille sur `init('action')` en branches
   `if (init('action') == '...')`. Pour un endpoint **non-admin** (widget de dashboard, page-panneau), créer
@@ -788,8 +820,18 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   **Clés figées pour tout le MVP** (UC01), en `snake_case` anglais, **sans tiret** (`preConfig_<clé>`
   dérive son nom de méthode de la clé) : `auxhome_email`, `auxhome_password` (**chiffrée**),
   `auxhome_country` (ISO-3 majuscules, **défaut constant `smartclim::PAYS_DEFAUT` = `FRA`**),
-  `refresh_interval` (1..1440 min, défaut 5 via l'INI). Plus tard s'y ajouteront le compte AUX Cloud
-  legacy + sa région.
+  `refresh_interval` (1..1440 min, défaut 5 via l'INI).
+  **Depuis l'UC01 du domaine post-MVP 03** s'y ajoute le compte du **cloud legacy**, strictement disjoint :
+  `auxcloud_email`, `auxcloud_password` (**chiffrée**, 2ᵉ entrée de `$_encryptConfigKey`) et
+  `auxcloud_region` (`EU`/`USA`/`CHN`/`RUS`, **défaut constant `smartclim::REGION_DEFAUT` = `EU`**,
+  **dupliqué en littéral** dans l'INI comme `auxhome_country`). Accesseurs normalisés
+  `emailAuxCloud()` / `regionAuxCloud()`, garde-fou **distinct** `compteAuxCloudConfigure()`.
+  ⚠️ **`compteConfigure()` reste le garde-fou d'AUX Home et n'a PAS été touchée** : les deux comptes sont
+  indépendants (on peut renseigner l'un, l'autre, les deux, ou aucun).
+  ⚠️⚠️ **Les `postConfig_auxcloud_*` purgent la session legacy et RIEN D'AUTRE** — ne jamais y recopier le
+  `self::oublierIncident()` des `postConfig_auxhome_*` : `smartclim::dernier_incident` décrit le **cycle
+  automatique AUX Home**, et un changement de mot de passe *legacy* effacerait donc la mémoire d'incident
+  d'un *autre* transport. Régression invisible à `php -l`, à la CI et à une relecture rapide.
   **Depuis l'UC02 du domaine post-MVP 05** s'y ajoute `demon_port` (défaut `smartclimDemon::PORT_DEMON`
   = 55112, **dupliqué en littéral** dans l'INI comme `auxhome_country`). ⚠️ C'est la **seule** clé de
   config sans **aucun champ de formulaire** : elle n'existe que comme échappatoire en cas de collision de
@@ -875,7 +917,19 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `smartclim::session_lan::<mac>`, **30 min**, chiffrée elle aussi (elle contient une clé de session),
   une entrée **par appareil** — cf. `smartclimBroadlinkLan` ci-dessus pour le `flock` qui la sérialise
   et le stockage hexadécimal de la clé. À ne pas confondre avec `smartclim::lan_appareil::<mac>`
-  (mémoire de sonde, **non** chiffrée, aucun secret dedans). ⚠️ Le cloud AUX Home n'expose **aucun refresh token** : la stratégie est
+  (mémoire de sonde, **non** chiffrée, aucun secret dedans).
+  **Depuis l'UC01 du domaine post-MVP 03**, une **troisième** famille existe :
+  `smartclim::session_auxcloud`, **30 min**, chiffrée (elle porte un `loginsession`), **globale au compte**
+  comme sa jumelle AUX Home et non par appareil. Contenu `{loginsession, userid, empreinte, cree_le}`,
+  empreinte `sha1(email|région)` — ⚠️ **la région en fait partie** : les mêmes identifiants sur une autre
+  région désignent un autre hôte, donc une autre session. 🚫 **Jamais le mot de passe dans l'empreinte**,
+  même règle qu'AUX Home. ⚠️ `cree_le` est de la **télémétrie livrée d'avance** : la durée de vie réelle du
+  `loginsession` n'est documentée par aucune source, et la TTL de 30 min est un **alignement**, pas une
+  mesure — elle sera à calibrer à l'UC02, factuellement.
+  ⚠️ **Aucune boucle de rejeu réactif n'est écrite pour ce transport**, et c'est délibéré : aucun appelant
+  authentifié n'existe avant l'UC02, une boucle serait du code mort **non exerçable**. Ce qui est livré pour
+  la rendre triviale alors : le classement `TYPE_AUTH`, `purgerSession()` **publique**, et `cree_le`.
+  ⚠️ Le cloud AUX Home n'expose **aucun refresh token** : la stratégie est
   re-login réactif, avec anti-boucle (une seule tentative par cycle).
   Depuis l'UC08, ce rejeu couvre les **deux** chemins authentifiés, avec un seuil de budget **dédié** à
   chacun : la **lecture** (`listerAppareils()`, garde `BUDGET_LOGIN + 3`) et l'**écriture**

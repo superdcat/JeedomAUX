@@ -54,6 +54,19 @@ try {
 // enregistrement du formulaire — y compris un enregistrement visant un tout autre champ.
 $sc_saisieLibre = (count($sc_paysDisponibles) == 0
   || ($sc_paysActuel != '' && !isset($sc_paysDisponibles[$sc_paysActuel])));
+
+// UC01 du domaine post-mvp/03-cloud-aux-legacy (§ 6.4 de la spec technique) : données de
+// rendu du champ Région (liste FERMÉE, contrairement au champ Pays ci-dessus — pas de
+// saisie libre, pas d'option vide). Même try/catch(Throwable) que ci-dessus, pour la
+// même raison : un panneau de configuration en erreur ne doit jamais rendre un HTTP 500.
+$sc_regions = array();
+$sc_regionActuelle = '';
+try {
+  $sc_regions = smartclim::regionsDisponiblesAuxCloud();
+  $sc_regionActuelle = smartclim::regionAuxCloud();
+} catch (Throwable $t) {
+  log::add('smartclim', 'error', 'Préparation de la liste des régions (cloud historique) impossible : ' . get_class($t) . ' : ' . smartclim::neutraliserPourLog($t->getMessage()) . ' (' . basename($t->getFile()) . ':' . $t->getLine() . ')');
+}
 ?>
 <form class="form-horizontal">
   <fieldset>
@@ -108,6 +121,51 @@ $sc_saisieLibre = (count($sc_paysDisponibles) == 0
         <button type="button" class="btn btn-default" id="sc_btnTesterConnexion">{{Tester la connexion}}</button>
         <button type="button" class="btn btn-danger" id="sc_btnEffacerIdentifiants">{{Effacer les identifiants}}</button>
         <span id="sc_resultatConnexion"></span>
+        <br/>
+        <span class="help-block">{{Le test utilise les identifiants enregistrés : enregistrez vos modifications avant de tester.}}</span>
+      </div>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>{{Compte cloud historique (AC Freedom / AUX Cloud)}}</legend>
+    <div class="form-group">
+      <label class="col-md-4 control-label">{{Adresse e-mail}}
+        <sup><i class="fas fa-question-circle tooltips" title="{{Adresse e-mail du compte cloud historique AC Freedom / AUX Cloud. Indépendant du compte AUX Home ci-dessus.}}"></i></sup>
+      </label>
+      <div class="col-md-4">
+        <input type="email" class="configKey form-control" data-l1key="auxcloud_email"/>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-md-4 control-label">{{Mot de passe}}
+        <sup><i class="fas fa-question-circle tooltips" title="{{Mot de passe du compte cloud historique. Il est stocké chiffré et n'est jamais journalisé.}}"></i></sup>
+      </label>
+      <div class="col-md-4">
+        <input type="password" class="configKey form-control" data-l1key="auxcloud_password" autocomplete="new-password"/>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-md-4 control-label">{{Région}}
+        <sup><i class="fas fa-question-circle tooltips" title="{{Région du compte cloud historique, telle que choisie à la création du compte : une région erronée fait échouer la connexion.}}"></i></sup>
+      </label>
+      <div class="col-md-4">
+        <!-- ⚠️ Liste FERMÉE (contrairement au champ Pays ci-dessus) : 4 régions connues
+             côté backend, aucune saisie libre — c'est la LISTE qui porte configKey. -->
+        <select class="configKey form-control" data-l1key="auxcloud_region" id="sc_selectRegion"<?php echo (count($sc_regions) == 0) ? ' disabled="disabled"' : ''; ?>>
+        <?php if (count($sc_regions) == 0) { ?>
+          <option value="">{{Liste des régions indisponible — consultez les logs du plugin}}</option>
+        <?php } ?>
+        <?php foreach ($sc_regions as $sc_codeRegion => $sc_libelleRegion) { ?>
+          <option value="<?php echo htmlspecialchars($sc_codeRegion, ENT_QUOTES, 'UTF-8'); ?>"<?php echo ($sc_codeRegion == $sc_regionActuelle) ? ' selected="selected"' : ''; ?>><?php echo htmlspecialchars($sc_libelleRegion, ENT_NOQUOTES, 'UTF-8'); ?></option>
+        <?php } ?>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-md-4 control-label"></label>
+      <div class="col-md-6">
+        <button type="button" class="btn btn-default" id="sc_btnTesterConnexionLegacy">{{Tester la connexion}}</button>
+        <span id="sc_resultatConnexionLegacy"></span>
         <br/>
         <span class="help-block">{{Le test utilise les identifiants enregistrés : enregistrez vos modifications avant de tester.}}</span>
       </div>
@@ -288,4 +346,44 @@ $sc_saisieLibre = (count($sc_paysDisponibles) == 0
       $('#bt_savePluginConfig').removeClass('disabled').css('pointer-events', '');
     }, delai + 5000);
   }
+
+  // --- Compte cloud historique (UC01 du domaine post-mvp/03-cloud-aux-legacy) --------
+  // Toute la logique (protocole, crypto, table des régions, classement des erreurs) vit
+  // côté serveur (core/ajax/smartclim.ajax.php -> smartclim::testerConnexionAuxCloud()) :
+  // ce JS ne fait qu'appeler l'action et afficher un message déjà traduit. Il ne touche
+  // AUCUN élément .configKey — donc il ne vide jamais les champs e-mail/mot de passe de
+  // ce compte (même carve-out configKey que la section AUX Home ci-dessus).
+  // ⚠️ IDs tous NOUVEAUX (#sc_btnTesterConnexionLegacy, #sc_resultatConnexionLegacy) :
+  // réutiliser les IDs de la section AUX Home ferait diaphoner les deux sections.
+  $('#sc_btnTesterConnexionLegacy').off('click').on('click', function () {
+    var $bouton = $(this);
+    var libelleInitial = $bouton.text();
+    var $resultat = $('#sc_resultatConnexionLegacy');
+    $bouton.prop('disabled', true).text("{{Test de connexion en cours…}}");
+    $resultat.removeClass('label label-success label-danger').text('');
+    $.ajax({
+      type: 'POST',
+      url: 'plugins/smartclim/core/ajax/smartclim.ajax.php',
+      data: {action: 'testerConnexionAuxCloud'},
+      dataType: 'json',
+      timeout: 15000,
+      global: false,
+      error: function (jqXHR, textStatus) {
+        if (textStatus === 'timeout') {
+          $resultat.addClass('label label-danger').text("{{Le test n'a pas répondu à temps}}");
+        } else {
+          $resultat.addClass('label label-danger').text("{{Erreur de communication avec le serveur Jeedom}}");
+        }
+      },
+      success: function (data) {
+        if (data.state != 'ok') {
+          $resultat.addClass('label label-danger').text(data.result);
+          return;
+        }
+        $resultat.addClass('label label-success').text(data.result.message);
+      }
+    }).always(function () {
+      $bouton.prop('disabled', false).text(libelleInitial);
+    });
+  });
 </script>

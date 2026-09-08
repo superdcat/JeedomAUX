@@ -35,6 +35,20 @@
 > (`ssl=False` chez `maeek`, `rejectUnauthorized` implicite chez `fparrav`). Le `.memory/brief.md` § 16 l'interdit
 > explicitement. **Décision SmartClim : TLS vérifié.** Si un certificat de ces hôtes s'avérait invalide, la
 > question remonte en `openQuestions` — on ne désactive pas la validation en silence.
+>
+> ✅ **MESURÉ le 2026-09-08 (UC01 du domaine post-mvp/03) : cette décision ne coûte RIEN.** Sondés avec
+> vérification **activée** (`curl` sans `-k`), les 4 hôtes répondent `ssl_verify_result=0` — chaîne **et**
+> nom d'hôte vérifiés (un HTTP 404 est attendu, `/account/login` étant en POST seul). Certificats :
+> `*.smarthomecs.de` par *Amazon RSA 2048 M04* (expire 2026-11-10), `*.smarthomecs.com` par *RapidSSL TLS
+> RSA CA G1* / DigiCert (expire 2026-11-14) — deux AC présentes dans tout paquet `ca-certificates` Debian.
+> **Les trois références désactivent donc la vérification sans aucune nécessité.**
+> ⚠️ Le risque résiduel est **local, pas distant** : un Jeedom dont le magasin d'AC est périmé ou illisible
+> échouera. D'où le classement d'erreurs de l'UC01, qui **discrimine les deux** — `curl_errno 77`
+> (`SSL_CACERT_BADFILE`) a son **message propre** (« magasin de certificats de ce Jeedom illisible »), et le
+> libellé du bucket certificat dit « serveur **ou** magasin local ». ⚠️ `35` (`SSL_CONNECT_ERROR`) et `59`
+> (`SSL_CIPHER`) sont des échecs de **négociation**, pas de validation : ils vont au bucket « injoignable ».
+> Le critère « ce n'est pas un problème de DNS/route, donc c'est le certificat » a été **explicitement
+> rejeté** en revue — cf. `feedback-regrouper-par-negation-produit-un-message-faux`.
 
 **Routes** ✅ (toutes en `POST`) :
 
@@ -70,9 +84,24 @@ corps        = AES-128-CBC(zero padding, IV fixe, aes_key, payload_json)   # bin
   références MIT → à reprendre de `com.zwegersit.auxairco/lib/auxcloud/legacyConstants.ts` (le fichier le
   mieux commenté). **Non recopiées ici** : ce sont des constantes d'identité applicative, pas des secrets
   de l'utilisateur, mais elles n'ont rien à faire dans une note d'analyse.
-- ⚠️ Piège : l'horodatage envoyé est le **flottant Python** (`time.time()`, ex. `1712345678.123456`) et il
-  sert **tel quel** de graine au MD5. Une implémentation PHP doit reproduire exactement le même format de
-  chaîne (`microtime(true)` formaté à l'identique) sinon la clé AES diffère ❓ **à valider**.
+- ✅ **TRANCHÉ le 2026-09-08 (UC01 du domaine post-mvp/03) — le format de l'horodatage est LIBRE, et la
+  formulation précédente de cette note était trompeuse.** Elle disait qu'une implémentation PHP devait
+  « reproduire exactement le même format de chaîne » que le flottant Python. C'est faux, et la preuve est une
+  **divergence entre deux références qui s'authentifient toutes les deux** : `maeek` envoie
+  `str(time.time())` (jusqu'à 7 décimales, nombre variable), `GijsZwegers/legacyClient.ts` envoie
+  `(Date.now()/1000).toString()` (au plus 3 décimales, et **aucun point** quand `ms % 1000 == 0`). Les deux
+  formats sont mutuellement incompatibles → **le backend réutilise la chaîne de l'en-tête `timestamp` telle
+  quelle comme graine MD5 et ne la reparse jamais en nombre.**
+  ⚠️ **L'invariant n'est donc pas un format, c'est une identité** : la chaîne doit être **identique octet à
+  octet** entre l'en-tête `timestamp` et la graine du MD5. La calculer **une seule fois**, la mettre en
+  variable, l'utiliser aux deux endroits.
+  ⚠️ **Trois façons de la produire en PHP sont fautives, et chacune échoue en SILENCE** (clé AES différente
+  → corps indéchiffrable → `status != 0`, indistinguable d'un mauvais mot de passe) : `(string)
+  microtime(true)` dépend de `precision` du `php.ini` et, avant PHP 8.0, de `LC_NUMERIC` (virgule décimale) ;
+  `sprintf('%.3f', …)` est documenté **locale aware** en PHP (`%F` ne l'est pas) ; `(int) (microtime(true) *
+  1000)` **dépasse un entier 32 bits** sur armhf. La forme retenue est `explode(' ', microtime())`, qui rend
+  les secondes en **chaîne** — zéro cast, zéro flottant. Implémentation :
+  `smartclimAuxCloudApi::horodatageGraine()`.
 
 **Session** : la réponse fournit `loginsession` + `userid`, envoyés ensuite en **en-têtes** de chaque
 requête ✅. Pas de refresh token ; sur échec → re-login + rejeu unique
@@ -219,8 +248,23 @@ wss://app-relay-<region>/appsync/apprelay/relayconnect
 ## 8. À confirmer
 
 - [ ] Sens exact de `ac_vdir`/`ac_hdir` (0 vs 1 vs 7).
-- [ ] Format de l'horodatage servant de graine MD5 (flottant Python) reproductible en PHP.
+- [x] ~~Format de l'horodatage servant de graine MD5 (flottant Python) reproductible en PHP.~~
+      **FERMÉ le 2026-09-08** : le format est **libre**, l'invariant est l'identité octet à octet entre
+      l'en-tête et la graine — cf. § 2.
 - [ ] Schéma des messages poussés par le WebSocket relay.
-- [ ] Validité des certificats TLS des hôtes `smarthomecs.*` (les références désactivent la vérification).
+- [x] ~~Validité des certificats TLS des hôtes `smarthomecs.*` (les références désactivent la
+      vérification).~~ **FERMÉ le 2026-09-08, favorablement** : les 4 hôtes présentent des certificats
+      valides (`ssl_verify_result=0`), la vérification ne coûte rien — cf. § 1.
 - [ ] Durée de vie de `loginsession` et de `devSession`.
+      ⚠️ **Toujours ouvert après l'UC01**, et délibérément : la TTL de cache de 30 min est un **alignement**
+      sur AUX Home, pas une mesure. `cree_le` est stocké dans `smartclim::session_auxcloud` **exprès** pour
+      la calibrer factuellement à l'UC02, plutôt que de la deviner.
+- [ ] Format réel de `loginsession` et de `userid` — **aucune référence ne le documente, aucun échantillon**.
+      `smartclimAuxCloudApi::valeurEnteteConforme()` accepte donc **tout l'ASCII imprimable hors espace**,
+      classe volontairement large : une classe base64url rejetterait un jeton contenant `:` ou `|`, et une
+      authentification **réussie** serait refusée — la panne la plus trompeuse possible. **Premier point à
+      confirmer en recette.**
 - [ ] Comportement d'un `productId` inconnu sur un `get` à `params: []`.
+- [ ] **Disponibilité fonctionnelle de la région RUS** : l'hôte est à **source unique** (`maeek` seul ;
+      absent de `legacyConstants.ts`). Il répond en TLS, mais son acceptation d'un login n'est établie par
+      aucune source.

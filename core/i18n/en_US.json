@@ -22,7 +22,13 @@
         "Pays du compte AUX Home, tel que choisi à la création du compte dans l'application mobile : vérifiez-le, un pays erroné fait échouer la connexion au cloud AUX Home.": "Country of the AUX Home account, as chosen when the account was created in the mobile app: check it, an incorrect country makes the connection to the AUX Home cloud fail.",
         "Sélectionnez un pays": "Select a country",
         "Autre pays (code ISO à 3 lettres)": "Other country (3-letter ISO code)",
-        "Le pays attendu est celui du compte AUX Home — pas nécessairement celui de l'installation Jeedom.": "The expected country is the one of the AUX Home account — not necessarily that of the Jeedom installation."
+        "Le pays attendu est celui du compte AUX Home — pas nécessairement celui de l'installation Jeedom.": "The expected country is the one of the AUX Home account — not necessarily that of the Jeedom installation.",
+        "Compte cloud historique (AC Freedom / AUX Cloud)": "Legacy cloud account (AC Freedom / AUX Cloud)",
+        "Adresse e-mail du compte cloud historique AC Freedom / AUX Cloud. Indépendant du compte AUX Home ci-dessus.": "E-mail address of the legacy AC Freedom / AUX Cloud account. Independent from the AUX Home account above.",
+        "Mot de passe du compte cloud historique. Il est stocké chiffré et n'est jamais journalisé.": "Password of the legacy cloud account. It is stored encrypted and never logged.",
+        "Région": "Region",
+        "Région du compte cloud historique, telle que choisie à la création du compte : une région erronée fait échouer la connexion.": "Region of the legacy cloud account, as chosen when the account was created: a wrong region makes the connection fail.",
+        "Liste des régions indisponible — consultez les logs du plugin": "Region list unavailable — check the plugin logs"
     },
     "plugins/smartclim/core/ajax/smartclim.ajax.php": {
         "Erreur interne du plugin — consultez les logs": "Internal plugin error — check the logs",
@@ -120,7 +126,15 @@
         "%s - Désactiver": "%s - Disable",
         "Le service AUX Home a refusé la commande — cette fonction est peut-être indisponible dans l'état actuel de l'appareil": "The AUX Home service refused the command — this function may be unavailable in the device's current state",
         "Instrument de mesure réservé à la ligne de commande": "Diagnostic instrument reserved for the command line",
-        "Appareil absent de la réponse AUX Home — relancez un scan": "Device missing from the AUX Home response — run a scan again"
+        "Appareil absent de la réponse AUX Home — relancez un scan": "Device missing from the AUX Home response — run a scan again",
+        "Compte cloud historique non configuré : renseignez l'e-mail et le mot de passe": "Legacy cloud account not configured: enter the e-mail and password",
+        "Région du compte cloud historique introuvable : sélectionnez-la dans la liste du champ Région": "Legacy cloud account region not found: select it from the Region field list",
+        "Connexion réussie au compte cloud historique": "Connection to the legacy cloud account succeeded",
+        "Certificat de sécurité invalide (serveur ou magasin de certificats local)": "Invalid security certificate (server or local certificate store)",
+        "Magasin de certificats local de ce Jeedom illisible": "This Jeedom's local certificate store is unreadable",
+        "Serveur du cloud historique injoignable, réessayez plus tard": "Legacy cloud server unreachable, please try again later",
+        "Réponse inattendue du cloud historique — consultez les logs du plugin": "Unexpected response from the legacy cloud — check the plugin logs",
+        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Invalid credentials — check the e-mail, password and region"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -320,5 +334,11 @@
     "plugins/smartclim/core/class/smartclimDemon.class.php": {
         "Fichier du démon introuvable — réinstallez le plugin": "Daemon file not found — reinstall the plugin",
         "Dépendances non installées ou interpréteur Python introuvable": "Dependencies not installed or Python interpreter not found"
+    },
+    "plugins/smartclim/core/class/smartclimAuxCloudApi.class.php": {
+        "Europe": "Europe",
+        "États-Unis": "United States",
+        "Chine": "China",
+        "Russie": "Russia"
     }
 }

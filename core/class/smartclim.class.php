@@ -55,8 +55,18 @@ class smartclim extends eqLogic {
   // vu par config::byKeys() — donc par le chargement AJAX du formulaire.
   const PAYS_DEFAUT = 'FRA';
 
-  // Le mot de passe du compte AUX Home est chiffré au repos par le core Jeedom.
-  public static $_encryptConfigKey = array('auxhome_password');
+  // Région du compte AUX Cloud legacy (UC01 du domaine post-mvp/03-cloud-aux-legacy)
+  // retenue tant que l'utilisateur n'en a pas choisi une autre dans la liste déroulante
+  // dédiée. Contrairement à PAYS_DEFAUT, ce défaut n'a jamais besoin d'un repli — la
+  // liste est FERMÉE (4 régions connues côté backend, § 6.4 de la spec technique).
+  // ⚠️ Doit rester identique à une clé de smartclimAuxCloudApi::regions() et à la valeur
+  // de core/config/smartclim.config.ini, seul défaut vu par config::byKeys() — donc par
+  // le chargement AJAX du formulaire.
+  const REGION_DEFAUT = 'EU';
+
+  // Les mots de passe des comptes AUX Home et AUX Cloud legacy sont chiffrés au repos
+  // par le core Jeedom.
+  public static $_encryptConfigKey = array('auxhome_password', 'auxcloud_password');
 
   // Verrou anti double-scan (UC03, § 6.3 de la spec technique) : cache::byKey() puis
   // cache::set() ne sont PAS atomiques — une atténuation (double-clic, deux onglets),
@@ -412,6 +422,89 @@ class smartclim extends eqLogic {
     // spec technique).
     self::oublierIncident();
     return __('Connexion réussie au compte AUX Home', __FILE__);
+  }
+
+  /**
+   * E-mail du compte AUX Cloud legacy (UC01 du domaine post-mvp/03-cloud-aux-legacy).
+   * Repasse par normaliserEmail() — RÉUTILISÉE, mêmes pièges déjà traités (caractères de
+   * contrôle, U+00A0, traitement en octets) que pour le compte AUX Home.
+   *
+   * @return string
+   */
+  public static function emailAuxCloud() {
+    return self::normaliserEmail(config::byKey('auxcloud_email', 'smartclim'));
+  }
+
+  /**
+   * Code de région du compte AUX Cloud legacy. Repasse par la même normalisation qu'à
+   * l'écriture (normaliserRegion()) : une valeur non conforme en base n'est jamais
+   * renvoyée telle quelle — elle sélectionne l'hôte cURL. JAMAIS vide (repli sur
+   * REGION_DEFAUT).
+   *
+   * @return string
+   */
+  public static function regionAuxCloud() {
+    $region = self::normaliserRegion(config::byKey('auxcloud_region', 'smartclim'));
+    if ($region != '') {
+      return $region;
+    }
+    return self::REGION_DEFAUT;
+  }
+
+  /**
+   * Régions proposables pour le compte AUX Cloud legacy : code => libellé traduit. Sert
+   * à peupler la liste déroulante (fermée) de la page de configuration. Simple
+   * délégation : ni la page de configuration ni le reste du plugin ne parlent
+   * directement à une brique de transport (CLAUDE.md § Conventions).
+   *
+   * @return array<string,string>
+   */
+  public static function regionsDisponiblesAuxCloud() {
+    return smartclimAuxCloudApi::regionsDisponibles();
+  }
+
+  /**
+   * Indique si le compte AUX Cloud legacy est entièrement configuré (e-mail, mot de
+   * passe et région non vides). Garde-fou à appeler avant tout appel réseau vers ce
+   * cloud (UC02/UC03). ⚠️ Méthode NOUVELLE, INDÉPENDANTE de compteConfigure() (compte
+   * AUX Home) : les deux comptes sont configurables l'un sans l'autre (AC1/AC8).
+   *
+   * @return bool
+   */
+  public static function compteAuxCloudConfigure() {
+    return (self::emailAuxCloud() != ''
+      && config::byKey('auxcloud_password', 'smartclim') != ''
+      && self::regionAuxCloud() != '');
+  }
+
+  /**
+   * Teste une connexion complète au cloud AUX Cloud legacy avec les identifiants
+   * actuellement enregistrés. Appelle TOUJOURS smartclimAuxCloudApi::login() (jamais
+   * ::session()) : aucune session mise en cache d'une tentative précédente n'est
+   * réutilisée (AC3/AC6 — un test doit prouver les identifiants, pas relire un cache).
+   * Deux gardes séparées (identifiants / région) pour deux messages distincts, même
+   * doctrine que testerConnexionAuxHome().
+   *
+   * @return string Message de succès en français, déjà traduit.
+   * @throws smartclimException Message d'échec curaté en français.
+   */
+  public static function testerConnexionAuxCloud() {
+    if (self::emailAuxCloud() == '' || config::byKey('auxcloud_password', 'smartclim') == '') {
+      throw new smartclimException(__('Compte cloud historique non configuré : renseignez l\'e-mail et le mot de passe', __FILE__), smartclimException::TYPE_AUTH);
+    }
+    if (self::regionAuxCloud() == '') {
+      throw new smartclimException(__('Région du compte cloud historique introuvable : sélectionnez-la dans la liste du champ Région', __FILE__), smartclimException::TYPE_AUTH);
+    }
+    try {
+      smartclimAuxCloudApi::login();
+    } catch (smartclimException $e) {
+      log::add('smartclim', 'error', 'Test de connexion AUX Cloud legacy échoué (type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+      throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+    }
+    // ⚠️ Volontairement PAS d'appel à self::oublierIncident() ici : cette mémoire décrit
+    // le cycle automatique AUX HOME, pas ce compte (§ 6.2 de la spec technique — piège
+    // le plus coûteux de cette UC, un jet dessus régresserait silencieusement AC8).
+    return __('Connexion réussie au compte cloud historique', __FILE__);
   }
 
   /**
@@ -2399,6 +2492,40 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Traduit le (type, contexte) d'une smartclimException levée par le transport AUX
+   * Cloud legacy (UC01 du domaine post-mvp/03-cloud-aux-legacy, § 6.2/7 de sa spec
+   * technique) en un message français curaté — SEUL endroit du plugin où vivent ces
+   * __(), fonction SÉPARÉE de messageErreurAuxHome()/messageErreurLan() (jamais
+   * fusionnées : deux transports, deux vocabulaires d'erreur distincts). Discrimine
+   * 4 causes (AC4) : identifiants invalides, service/région injoignable, magasin de
+   * certificats local illisible, certificat serveur (ou magasin local) invalide.
+   *
+   * @param int $_type Une des constantes smartclimException::TYPE_*.
+   * @param string $_contexte '' ou smartclimAuxCloudApi::CONTEXTE_CERTIFICAT /
+   *   CONTEXTE_MAGASIN_LOCAL.
+   * @return string
+   */
+  private static function messageErreurAuxCloud($_type, $_contexte) {
+    if ($_type == smartclimException::TYPE_RESEAU) {
+      if ($_contexte === smartclimAuxCloudApi::CONTEXTE_CERTIFICAT) {
+        return __('Certificat de sécurité invalide (serveur ou magasin de certificats local)', __FILE__);
+      }
+      if ($_contexte === smartclimAuxCloudApi::CONTEXTE_MAGASIN_LOCAL) {
+        return __('Magasin de certificats local de ce Jeedom illisible', __FILE__);
+      }
+      return __('Serveur du cloud historique injoignable, réessayez plus tard', __FILE__);
+    }
+    if ($_type == smartclimException::TYPE_PROTOCOLE) {
+      return __('Réponse inattendue du cloud historique — consultez les logs du plugin', __FILE__);
+    }
+    if ($_type == smartclimException::TYPE_INTERNE) {
+      return __('Erreur interne lors de la préparation de la connexion — consultez les logs du plugin', __FILE__);
+    }
+    // smartclimException::TYPE_AUTH, et repli par défaut pour tout type inattendu.
+    return __('Identifiants invalides — vérifiez l\'e-mail, le mot de passe et la région', __FILE__);
+  }
+
+  /**
    * Traduit le (type, contexte) d'une smartclimException levée par le pilotage LOCAL
    * (UC03 du domaine post-mvp/01-transport-broadlink-lan, § 4.3 de sa spec technique)
    * en un message français curaté — SEUL endroit du plugin où vivent ces __() (même
@@ -3085,6 +3212,37 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Normalise la région du compte AUX Cloud legacy avant enregistrement — délègue à
+   * normaliserRegion() (même règle qu'à la lecture, cf. regionAuxCloud()). Repli sur
+   * REGION_DEFAUT si le résultat n'est pas conforme (même doctrine que
+   * preConfig_auxhome_country() : le formulaire n'enregistre jamais une région vide).
+   * ⚠️ Aucun throw ici (même motif que preConfig_auxhome_country()) : config.ajax.php
+   * boucle sans transaction sur les clés de configuration.
+   * ⚠️ Enregistrer une valeur ÉGALE au défaut de l'INI supprime la ligne en base et
+   * court-circuite ce hook (piège documenté dans CLAUDE.md) : sans conséquence ici, la
+   * lecture appliquant la même normalisation et le même défaut (§ 7.7 de la spec
+   * technique).
+   */
+  public static function preConfig_auxcloud_region($value) {
+    $region = self::normaliserRegion($value);
+    if ($region != '') {
+      return $region;
+    }
+    return self::REGION_DEFAUT;
+  }
+
+  /**
+   * Normalise l'e-mail du compte AUX Cloud legacy avant enregistrement — délègue à
+   * normaliserEmail(), par symétrie avec le compte AUX Home : la valeur en base doit
+   * être propre, car l'empreinte de session est calculée sur l'e-mail normalisé des deux
+   * côtés (§ 6.2 de la spec technique). ⚠️ Jamais de throw ici (même motif que
+   * preConfig_auxhome_email()).
+   */
+  public static function preConfig_auxcloud_email($value) {
+    return self::normaliserEmail($value);
+  }
+
+  /**
    * Purge la session AUX Home en cache dès que le mot de passe change. Ce hook ne
    * reçoit que le CHIFFRÉ ($value inutilisé, cf. spec technique § 0.4 : postConfig_*
    * d'une clé chiffrée ne voit jamais le clair) — mais la seule NOTIFICATION du
@@ -3119,6 +3277,38 @@ class smartclim extends eqLogic {
     smartclimAuxHomeApi::purgerSession();
     // UC08, AC9 : même motif que postConfig_auxhome_password() ci-dessus.
     self::oublierIncident();
+  }
+
+  /**
+   * Purge la session AUX Cloud legacy en cache dès que le mot de passe de ce compte
+   * change (même motif que postConfig_auxhome_password() ci-dessus).
+   * ⚠️⚠️ NE PAS appeler self::oublierIncident() ici, contrairement aux 3 hooks
+   * postConfig_auxhome_* ci-dessus : smartclim::dernier_incident décrit le CYCLE
+   * AUTOMATIQUE AUX HOME, pas ce compte legacy — l'effacer ici rendrait faussement
+   * "résolu" un incident AUX Home réel, jusqu'au cycle suivant (§ 6.2 de la spec
+   * technique, piège le plus coûteux de cette UC, invisible à php -l/CI/relecture
+   * rapide).
+   */
+  public static function postConfig_auxcloud_password($value) {
+    smartclimAuxCloudApi::purgerSession();
+  }
+
+  /**
+   * Purge la session AUX Cloud legacy en cache dès que l'e-mail de ce compte change
+   * (même motif que postConfig_auxcloud_password() ci-dessus, y compris le
+   * ⚠️ sur oublierIncident()).
+   */
+  public static function postConfig_auxcloud_email($value) {
+    smartclimAuxCloudApi::purgerSession();
+  }
+
+  /**
+   * Purge la session AUX Cloud legacy en cache dès que la région de ce compte change :
+   * une autre région signifie un autre hôte, donc une autre session (même motif que
+   * postConfig_auxcloud_password() ci-dessus, y compris le ⚠️ sur oublierIncident()).
+   */
+  public static function postConfig_auxcloud_region($value) {
+    smartclimAuxCloudApi::purgerSession();
   }
 
   /**
@@ -3163,6 +3353,35 @@ class smartclim extends eqLogic {
       return $pays;
     }
     return '';
+  }
+
+  /**
+   * Règle de normalisation UNIQUE de la région du compte AUX Cloud legacy, appliquée à
+   * l'identique à l'écriture (preConfig_auxcloud_region()) et à la lecture
+   * (regionAuxCloud()) : double barrière, une seule implémentation (§ 6.2 de la spec
+   * technique). Tolère toute entrée, y compris non scalaire : trim, majuscules, retrait
+   * de tout caractère hors [A-Z], puis exige l'appartenance à la table FERMÉE des
+   * régions connues (smartclimAuxCloudApi::regionConnue() — c'est elle, et elle seule,
+   * qui fait foi ; aucune regex de forme de région ici).
+   * ⚠️ Enveloppée d'un try/catch(Throwable) : elle traverse une AUTRE classe, et une
+   * classe absente après une mise à jour partielle est un incident déjà observé sur ce
+   * plugin (cf. CLAUDE.md) — un jet dans preConfig_auxcloud_region ferait perdre les
+   * clés de configuration suivantes de la même sauvegarde.
+   *
+   * @return string Code de région connu (ex. "EU"), ou '' si non conforme.
+   */
+  private static function normaliserRegion($valeur) {
+    try {
+      $valeur = is_scalar($valeur) ? (string) $valeur : '';
+      $code = preg_replace('/[^A-Z]/', '', strtoupper(trim($valeur)));
+      if (smartclimAuxCloudApi::regionConnue($code)) {
+        return $code;
+      }
+      return '';
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Normalisation de la région AUX Cloud legacy impossible : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return '';
+    }
   }
 
   /**

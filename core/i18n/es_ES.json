@@ -22,7 +22,13 @@
         "Pays du compte AUX Home, tel que choisi à la création du compte dans l'application mobile : vérifiez-le, un pays erroné fait échouer la connexion au cloud AUX Home.": "País de la cuenta AUX Home, tal como se eligió al crear la cuenta en la aplicación móvil: verifíquelo, un país incorrecto hace que falle la conexión con la nube AUX Home.",
         "Sélectionnez un pays": "Seleccione un país",
         "Autre pays (code ISO à 3 lettres)": "Otro país (código ISO de 3 letras)",
-        "Le pays attendu est celui du compte AUX Home — pas nécessairement celui de l'installation Jeedom.": "El país esperado es el de la cuenta AUX Home, no necesariamente el de la instalación de Jeedom."
+        "Le pays attendu est celui du compte AUX Home — pas nécessairement celui de l'installation Jeedom.": "El país esperado es el de la cuenta AUX Home, no necesariamente el de la instalación de Jeedom.",
+        "Compte cloud historique (AC Freedom / AUX Cloud)": "Cuenta de la nube histórica (AC Freedom / AUX Cloud)",
+        "Adresse e-mail du compte cloud historique AC Freedom / AUX Cloud. Indépendant du compte AUX Home ci-dessus.": "Dirección de correo electrónico de la cuenta de la nube histórica AC Freedom / AUX Cloud. Independiente de la cuenta AUX Home anterior.",
+        "Mot de passe du compte cloud historique. Il est stocké chiffré et n'est jamais journalisé.": "Contraseña de la cuenta de la nube histórica. Se almacena cifrada y nunca se registra.",
+        "Région": "Región",
+        "Région du compte cloud historique, telle que choisie à la création du compte : une région erronée fait échouer la connexion.": "Región de la cuenta de la nube histórica, tal como se eligió al crear la cuenta: una región incorrecta hace que falle la conexión.",
+        "Liste des régions indisponible — consultez les logs du plugin": "Lista de regiones no disponible — consulte los registros del plugin"
     },
     "plugins/smartclim/core/ajax/smartclim.ajax.php": {
         "Erreur interne du plugin — consultez les logs": "Error interno del plugin — consulte los registros",
@@ -120,7 +126,15 @@
         "%s - Désactiver": "%s - Desactivar",
         "Le service AUX Home a refusé la commande — cette fonction est peut-être indisponible dans l'état actuel de l'appareil": "El servicio AUX Home rechazó el comando — esta función puede no estar disponible en el estado actual del aparato",
         "Instrument de mesure réservé à la ligne de commande": "Instrumento de diagnóstico reservado a la línea de comandos",
-        "Appareil absent de la réponse AUX Home — relancez un scan": "Aparato ausente de la respuesta de AUX Home — vuelva a ejecutar un escaneo"
+        "Appareil absent de la réponse AUX Home — relancez un scan": "Aparato ausente de la respuesta de AUX Home — vuelva a ejecutar un escaneo",
+        "Compte cloud historique non configuré : renseignez l'e-mail et le mot de passe": "Cuenta de la nube histórica no configurada: introduzca el correo electrónico y la contraseña",
+        "Région du compte cloud historique introuvable : sélectionnez-la dans la liste du champ Région": "No se encuentra la región de la cuenta de la nube histórica: selecciónela en la lista del campo Región",
+        "Connexion réussie au compte cloud historique": "Conexión correcta con la cuenta de la nube histórica",
+        "Certificat de sécurité invalide (serveur ou magasin de certificats local)": "Certificado de seguridad no válido (servidor o almacén de certificados local)",
+        "Magasin de certificats local de ce Jeedom illisible": "Almacén de certificados local de este Jeedom ilegible",
+        "Serveur du cloud historique injoignable, réessayez plus tard": "Servidor de la nube histórica no disponible, inténtelo de nuevo más tarde",
+        "Réponse inattendue du cloud historique — consultez les logs du plugin": "Respuesta inesperada de la nube histórica — consulte los registros del plugin",
+        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Credenciales no válidas — compruebe el correo electrónico, la contraseña y la región"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -320,5 +334,11 @@
     "plugins/smartclim/core/class/smartclimDemon.class.php": {
         "Fichier du démon introuvable — réinstallez le plugin": "Archivo del demonio no encontrado; reinstale el plugin",
         "Dépendances non installées ou interpréteur Python introuvable": "Dependencias no instaladas o intérprete de Python no encontrado"
+    },
+    "plugins/smartclim/core/class/smartclimAuxCloudApi.class.php": {
+        "Europe": "Europa",
+        "États-Unis": "Estados Unidos",
+        "Chine": "China",
+        "Russie": "Rusia"
     }
 }

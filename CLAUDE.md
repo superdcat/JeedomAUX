@@ -115,9 +115,10 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   supportée » **hors** de l'interface, pas seulement dans l'UI.
   ⚠️ **Tout ordre de mode ou de consigne porte TOUJOURS `power => 1`** : changer le mode d'un appareil
   éteint l'allume, en **une** requête. Ne pas « optimiser » en retirant cette clé.
-  ⚠️ **Cinq mémoires de cache, cinq rôles distincts, à ne pas confondre** — aucune ne vit en
+  ⚠️ **Six mémoires de cache, six rôles distincts, à ne pas confondre** — aucune ne vit en
   configuration d'équipement (la cinquième, `smartclim::dernier_cycle_lan`, est arrivée avec l'UC01 du
-  domaine post-MVP 02 : cf. sa ligne après `dernier_incident`) :
+  domaine post-MVP 02 : cf. sa ligne après `dernier_incident` ; la sixième,
+  `smartclim::echecs_transport::<id>`, avec l'UC02 du même domaine) :
   - `smartclim::ordre_recent::<id>` (`CLE_CACHE_DEDUP`, **10 s**) — empreinte du **contenu** de l'ordre,
     posée **avant** l'appel réseau et supprimée en cas d'échec : anti-double-bip. La clé est le contenu,
     **pas** l'équipement — deux ordres *différents* rapprochés passent donc bien tous les deux.
@@ -146,6 +147,20 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
     cadencé à `INTERVALLE_CYCLE_LAN` = **900 s FIXES**, délibérément **découplées de `refresh_interval`** —
     un utilisateur réglé à 1 min transformerait sinon `plugin::cron` (partagé par tous les plugins) en
     générateur de trafic UDP. Mutualiser les deux clés lierait deux cadences volontairement distinctes.
+  - `smartclim::echecs_transport::<id>` (`CLE_CACHE_ECHECS_TRANSPORT`,
+    `DUREE_MEMOIRE_ECHECS_TRANSPORT` = 24 h) — **compteurs de repli** de l'UC02 du domaine post-MVP 02 :
+    `{preuve, lan, cloud, cloud_le}`, **par équipement** comme les deux premières (et non globale comme
+    les trois suivantes), **non chiffrée** (4 entiers, aucune donnée d'origine backend). Écrite par la
+    seule `smartclim`, aux 16 points listés au § 5.3 de sa spec technique ; lue par
+    `smartclimTransport::lanJoignable()`/`repliCloudActif()` via `echecsLanConsecutifs()`.
+    ⚠️ **Clé par `getId()`, JAMAIS par MAC** : les 5 écrivains de `lan_appareil::<mac>` ne s'accordent pas
+    sur la MAC utilisée (attendue, trouvée, ou **inversée**) — un compteur y serait incrémenté sous une
+    clé et remis à zéro sous une autre.
+    ⚠️ **Elle est délibérément DISJOINTE de `lan_appareil::<mac>`** : aucun code ne lit l'une pour écrire
+    l'autre, et il n'existe **aucun point de co-écriture**. Une co-écriture n'aurait couvert que les
+    désynchronisations inoffensives, jamais la seule dangereuse (une `preuve` posée sans
+    `STATUT_ETAT_LU`) — celle-là est rendue **inatteignable** par l'aiguillage `noterOperationLan()`, seul
+    chemin des sites de lecture vers `memoriserSuccesLan()`.
   ⚠️ L'**état optimiste** poussé après succès est celui **réellement envoyé** (après quantification), pas
   celui demandé par l'utilisateur.
 
@@ -527,11 +542,33 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `transport_mode`), leurs libellés, `normaliserMode()`, les prédicats `lanJoignable()` /
   `cloudDisponible()`, l'arbitre `transportRetenu()` et les deux filtres `lectureCloudAutorisee()` /
   `sondeLanAutorisee()`.
+  Depuis l'UC02 du même domaine, elle porte aussi la **politique de repli** — et rien que la politique,
+  le stockage restant dans `smartclim` : `SEUIL_ECHECS_LAN` (**3**), `DELAI_BASE_CLOUD` (30 s),
+  `DELAI_MAX_CLOUD` (300 s), le prédicat `repliCloudActif()` et la fonction pure
+  `delaiTemporisationCloud()`.
+  ⚠️ **`DELAI_MAX_CLOUD` plafonne une FRÉQUENCE, jamais un nombre d'essais** : la temporisation est un
+  **disjoncteur à demi-ouverture** (passé le délai, une tentative passe), pas un verrou — un abandon
+  définitif rendrait l'équipement impilotable. Et c'est un **refus instantané et daté**, jamais un
+  `usleep()` : le chemin `core/ajax/cmd.ajax.php` est interactif et `plugin::cron` est partagé.
+  ⚠️ **`repliCloudActif()` exige `cloudDisponible()`** : un équipement sans identifiant cloud n'est jamais
+  « en repli », il est **bloqué en LAN** — l'IHM ne doit pas appeler cela un repli.
   ⚠️ **`lanJoignable()` ne fait AUCUN appel réseau** : elle lit la mémoire de sonde
   `smartclim::lan_appareil::<mac>` et exige `STATUT_ETAT_LU` — critère **plus strict** que
   `statutEnEchec()`, qui compte `ETABLIE`/`REUTILISEE`/`ETAT_ILLISIBLE` comme des succès alors qu'aucun des
   trois ne prouve que l'appareil parle le HVAC. Une sonde paresseuse au moment de la commande ajouterait un
   timeout UDP à un chemin cloud qui n'aboutira jamais sur un parc sans Broadlink.
+  ⚠️⚠️ **Depuis l'UC02 elle a une 4ᵉ étape qui INVERSE l'intuition** — `return $echecs > 0`, donc **vrai
+  quand il y a des échecs** : c'est la série en cours (< seuil) qui maintient l'équipement en LAN, pour ne
+  pas basculer au premier accroc. Elle n'est sûre **que** parce que `memoriserEchecLan()` refuse
+  d'incrémenter tant qu'aucune preuve n'existe. **Invariant à ne jamais casser** :
+  `0 < lan < SEUIL_ECHECS_LAN` **implique** qu'un `STATUT_ETAT_LU` a été constaté dans les 24 h — sans
+  quoi un appareil qui n'a **jamais** parlé Broadlink (cas réel : une `lan_ip` saisie à la main sur un
+  climatiseur non Broadlink) serait déclaré joignable.
+  ⚠️ **`echecOperationLan()` (dans `smartclim`) n'est PAS `statutEnEchec()`** : la première répond « le LAN
+  est-il utilisable pour piloter cet appareil ? » et compte `ETAT_ILLISIBLE` comme un **échec** ; la
+  seconde répond « la communication a-t-elle abouti ? » et le compte comme un **succès**. Les substituer
+  l'une à l'autre remet un compteur à zéro sur une lecture illisible — piège présent sur **deux** sites
+  (`rafraichirLanEquipement()` et `rafraichirLan()`).
   ⚠️ **`transportRetenu()` ne renvoie JAMAIS de vide** : en AUTO sans LAN joignable **et** sans cloud
   disponible, elle replie sur le **LAN** — c'est ainsi, sans écrire un seul message, qu'un équipement sans
   identifiant cloud « se comporte comme LOCAL » au lieu d'afficher une erreur de configuration cloud.
@@ -569,6 +606,15 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `php_sapi_name() === 'cli'` **avant** tout `require_once`, aucun POST, aucune écriture en base ni sur
   disque). Deux usages : `--lister` (affiche les `logicalId` des commandes d'action, sans rien émettre sur
   le réseau) et `--commande=<logicalId> [--valeur=<consigne>]`.
+  Depuis l'UC02 du domaine post-MVP 02 s'y ajoute un **3ᵉ usage en lecture seule**, `--transport` : par
+  équipement, mode configuré, transport retenu, LAN joignable, échecs LAN consécutifs, âge de la preuve,
+  repli actif, temporisation restante. Il n'émet **aucun paquet réseau** — c'est un rapport d'état interne,
+  pas une sonde — et passe par `smartclim::diagnosticTransport()` (patron des autres CLI :
+  `lireTrameAuxHome()`, `sonderIntentAuxHome()`), qui garde privés les accesseurs de la 6ᵉ mémoire.
+  ⚠️ **Il existe parce que tout le repli est du CODE MORT sur le matériel de recette** : le climatiseur de
+  validation ignorant Broadlink, `repliCloudActif()` y est toujours faux. Sans cet instrument, la recette
+  se limite à « rien n'a changé », et la dette D-2 d'UC02 (désynchronisation `preuve`/sonde) n'est
+  détectable par aucun autre moyen.
   ⚠️ **C'est un AIGUILLAGE, sans aucune logique métier** : il ne construit **jamais** de map de concepts à
   la main. Il appelle `smartclim::envoyerCommandeActionLan()`, qui passe par la **même**
   `ordreDeCommandeAction()` que le chemin cloud — donc le même `power => 1`, la même quantification de
@@ -778,6 +824,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   **cache** (`smartclim::lan_appareil::<mac>`, 24 h) — même séparation détecté/personnalisé que
   `capacites` contre `temp_*`. Lecture unique par `smartclim::adresseLan()` (personnalisé → détecté →
   aucun), qui **revalide l'IP à la lecture**.
+  ⚠️ **Depuis l'UC02 du domaine post-MVP 02, une sonde `STATUT_INJOIGNABLE` CONSERVE l'IP** au lieu de
+  l'effacer (seuls `statut` et `echec_le` sont réécrits) — correctif d'un défaut d'UC01 sans lequel le
+  cycle LAN **s'auto-désarmait** : IP effacée → `adresseLan()` renvoie « aucun » → `rafraichirLan()` fait
+  `continue` → l'équipement sortait **définitivement** du cycle dès son premier échec, et seul un scan
+  manuel le réarmait. C'est ce qui rend possible le retour automatique au LAN. ⚠️ Ne concernait que la
+  source **détectée** : une `lan_ip` personnalisée est renvoyée inconditionnellement par `adresseLan()`,
+  avant toute consultation de la sonde. ⚠️ `STATUT_MAC_DIVERGENTE` continue d'**effacer** l'IP — là,
+  l'adresse héberge démontrablement un autre appareil, insister serait marteler la machine d'un tiers.
+  Contrepartie assumée (R8 d'UC02) : une IP périmée reçoit désormais un hello UDP toutes les 15 min
+  indéfiniment — c'est une contrainte transmise à l'UC03, qui possède le changement d'IP DHCP.
   ⚠️ **Valider une IP sans `ip2long()`** : cet appel renvoie un entier **signé** et PHP est **32 bits**
   sur Raspberry Pi OS armhf — un seuil comme `224.0.0.0` y devient négatif et fait rejeter tout le
   `10.0.0.0/8`. Comparer des **octets**. Détail :

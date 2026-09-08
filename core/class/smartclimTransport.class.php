@@ -22,7 +22,8 @@
  * cURL, aucune écriture de cache, aucun config::save, aucun eqLogic->save(). Toutes les
  * entrées transitent par des accesseurs publics DÉJÀ existants
  * (smartclim::compteConfigure(), $eqLogic->adresseLan(), $eqLogic->sondeLanEquipement(),
- * $eqLogic->getConfiguration()) — cette classe ne fait QUE les combiner.
+ * $eqLogic->getConfiguration(), et depuis l'UC02 de ce domaine $eqLogic->echecsLanConsecutifs())
+ * — cette classe ne fait QUE les combiner.
  *
  * ⚠️ Aucune méthode ne lève : une décision de transport ne doit jamais faire échouer une
  * commande ou un cycle — normaliserMode() en particulier accepte toute entrée, y compris
@@ -34,6 +35,15 @@ class smartclimTransport {
   const MODE_AUTO = 'auto';
   const MODE_LOCAL = 'local';
   const MODE_CLOUD = 'cloud';
+
+  // UC02 du domaine post-mvp/02-strategies-de-transport (§ 4.1 de sa spec technique) :
+  // constantes de POLITIQUE de repli — SEUIL_ECHECS_LAN aligné sur LAN_FAILURE_THRESHOLD
+  // (.memory/analyse/smartclim-transport-broadlink-lan.md § 7). DELAI_MAX_CLOUD est un
+  // plafond de FRÉQUENCE des tentatives cloud, JAMAIS un nombre maximal d'essais — un
+  // abandon définitif rendrait l'équipement impilotable.
+  const SEUIL_ECHECS_LAN = 3;
+  const DELAI_BASE_CLOUD = 30;  // secondes
+  const DELAI_MAX_CLOUD = 300;  // secondes
 
   /*     * ***********************Methode static*************************** */
 
@@ -100,13 +110,23 @@ class smartclimTransport {
 
   /**
    * Joignabilité LAN de cet équipement — ZÉRO réseau, ZÉRO timeout : lecture PURE de la
-   * mémoire de sonde déjà en cache (§ 6 de la spec technique). Volontairement PLUS
-   * STRICT que smartclim::statutEnEchec() : ce dernier compte STATUT_ETABLIE /
+   * mémoire de sonde déjà en cache (§ 6 de la spec technique UC01) et, depuis l'UC02 de
+   * ce domaine (§ 4.2 de sa spec technique), du compteur d'échecs consécutifs. Toujours
+   * PLUS STRICTE que smartclim::statutEnEchec() : ce dernier compte STATUT_ETABLIE /
    * STATUT_REUTILISEE / STATUT_ETAT_ILLISIBLE comme des succès, or aucun des trois ne
    * prouve que l'appareil parle le HVAC — router un ordre vers un appareil
    * ETAT_ILLISIBLE ferait échouer smartclimFrame::encoderOrdre() au lieu de partir au
    * cloud. STATUT_ETAT_LU est la MÊME preuve que celle qui autorise la création d'un
    * équipement depuis le LAN (UC04 post-mvp/01, § 5.5 de sa spec technique).
+   *
+   * ⚠️⚠️ Étape 4 ci-dessous, INVERSÉE (renvoie VRAI quand une série d'échecs est EN
+   * COURS, 0 < echecs < SEUIL) — invariant CENTRAL de l'UC02 de ce domaine (§ 4.2 de sa
+   * spec technique) : elle n'est sûre QUE parce que smartclim::memoriserEchecLan()
+   * refuse d'incrémenter tant qu'aucune preuve STATUT_ETAT_LU n'a jamais été constatée
+   * (`preuve === 0`, no-op). Sans ce garde-fou, un appareil qui n'a JAMAIS parlé
+   * Broadlink (ex. une lan_ip saisie sur un appareil qui ignore le protocole) verrait son
+   * compteur passer à 1 au 1er échec de sonde, et cette étape le déclarerait joignable —
+   * routant un ordre réel vers un appareil qui n'a jamais répondu.
    *
    * @param smartclim $_eqLogic
    * @return bool
@@ -116,8 +136,52 @@ class smartclimTransport {
     if (!isset($adresse['ip']) || $adresse['ip'] === '') {
       return false;
     }
+    $echecs = $_eqLogic->echecsLanConsecutifs();
+    if ($echecs >= self::SEUIL_ECHECS_LAN) {
+      return false;
+    }
     $sonde = $_eqLogic->sondeLanEquipement();
-    return is_array($sonde) && isset($sonde['statut']) && $sonde['statut'] === smartclimBroadlinkLan::STATUT_ETAT_LU;
+    if (is_array($sonde) && isset($sonde['statut']) && $sonde['statut'] === smartclimBroadlinkLan::STATUT_ETAT_LU) {
+      return true;
+    }
+    // Étape 4 — cf. avertissement ci-dessus : VRAI si une série d'échecs (< SEUIL) est
+    // en cours, car garantie par memoriserEchecLan() de reposer sur une preuve déjà
+    // constatée.
+    return $echecs > 0;
+  }
+
+  /**
+   * Repli CLOUD actif pour cet équipement (UC02 de ce domaine, § 4.3 de sa spec
+   * technique) : AUTO + seuil d'échecs LAN atteint + cloud disponible pour CET appareil.
+   * Le terme cloudDisponible() est ce qui rend AC4 visible : un équipement sans
+   * identifiant cloud n'est jamais « en repli », il est BLOQUÉ en LAN.
+   *
+   * @param smartclim $_eqLogic
+   * @return bool
+   */
+  public static function repliCloudActif(smartclim $_eqLogic) {
+    return self::mode($_eqLogic) === self::MODE_AUTO
+      && $_eqLogic->echecsLanConsecutifs() >= self::SEUIL_ECHECS_LAN
+      && self::cloudDisponible($_eqLogic);
+  }
+
+  /**
+   * Temporisation cloud (secondes) pour un nombre d'échecs cloud consécutifs donné
+   * (UC02 de ce domaine, § 4.4 de sa spec technique — disjoncteur à demi-ouverture) :
+   * 30 · 60 · 120 · 240 · 300 · 300 … Fonction PURE, ne lève jamais.
+   *
+   * ⚠️ Le plafond DELAI_MAX_CLOUD porte sur la FRÉQUENCE des tentatives, jamais sur un
+   * nombre total d'essais : un abandon définitif rendrait l'équipement impilotable.
+   *
+   * @param int $_echecs
+   * @return int
+   */
+  public static function delaiTemporisationCloud($_echecs) {
+    $echecs = (int) $_echecs;
+    if ($echecs <= 0) {
+      return 0;
+    }
+    return (int) min(self::DELAI_MAX_CLOUD, self::DELAI_BASE_CLOUD * pow(2, $echecs - 1));
   }
 
   /**

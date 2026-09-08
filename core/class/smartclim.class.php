@@ -176,6 +176,16 @@ class smartclim extends eqLogic {
   const CLE_CACHE_DERNIER_CYCLE_LAN = 'smartclim::dernier_cycle_lan';
   const INTERVALLE_CYCLE_LAN = 900;
 
+  // UC02 du domaine post-mvp/02-strategies-de-transport (§ 2.2/5.1 de sa spec
+  // technique) : 6ᵉ mémoire de cache — compteurs d'échecs LAN/cloud PAR ÉQUIPEMENT (clé
+  // par getId(), JAMAIS par MAC — cf. § 2.1 de la spec technique, branche (c2) écartée :
+  // les 5 écrivains de la mémoire de sonde LAN ne s'accordent pas sur la MAC utilisée).
+  // Non chiffrée : aucun secret (3 entiers, 2 horodatages). TTL alignée sur
+  // DUREE_MEMOIRE_LAN (24 h) : les deux décrivent ce qu'on sait du lien LAN de cet
+  // appareil.
+  const CLE_CACHE_ECHECS_TRANSPORT = 'smartclim::echecs_transport::';
+  const DUREE_MEMOIRE_ECHECS_TRANSPORT = 86400;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -278,6 +288,10 @@ class smartclim extends eqLogic {
           // technique : MÊME piège .text(undefined), 8ᵉ point d'écriture (les 7 branches
           // de etatConnexionAffichable() + ce repli).
           'modeTransport' => '',
+          // UC02 du domaine post-mvp/02-strategies-de-transport, § 8 de sa spec
+          // technique : MÊME piège .text(undefined) — 8ᵉ point d'écriture de CETTE clé
+          // (les 7 branches de etatConnexionAffichable() + ce repli).
+          'repli' => '',
         );
       }
     }
@@ -813,6 +827,9 @@ class smartclim extends eqLogic {
             if (self::memoriserMacEquipement($eqLogicRapproche, $mac)) {
               $eqLogicRapproche->save();
             }
+            // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3/5.4 de sa
+            // spec technique) : compteur de repli, JUSTE AVANT appliquerLectureLan().
+            $eqLogicRapproche->noterOperationLan($lecture['statut']);
             self::appliquerLectureLan($eqLogicRapproche, $lecture);
             $eqLogicsTouches[] = $eqLogicRapproche;
           }
@@ -889,6 +906,9 @@ class smartclim extends eqLogic {
         if (self::memoriserMacEquipement($eqLogic, $macTrouvee)) {
           $eqLogic->save();
         }
+        // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3/5.4 de sa spec
+        // technique) : compteur de repli, JUSTE AVANT appliquerLectureLan().
+        $eqLogic->noterOperationLan($lecture['statut']);
         self::appliquerLectureLan($eqLogic, $lecture);
         $eqLogicsTouches[] = $eqLogic;
         // UC04 (§ 5.5) : ligne de scan poussée pour cette phase — SANS elle, un
@@ -968,9 +988,25 @@ class smartclim extends eqLogic {
     $trouve = smartclimBroadlinkLan::interroger($adresse['ip'], max(1, min(smartclimBroadlinkLan::TIMEOUT_ECHANGE, $_budget)));
 
     if ($trouve === null) {
+      // UC02 du domaine post-mvp/02-strategies-de-transport (§ 7 de sa spec technique) :
+      // CORRECTIF du défaut d'UC01 — sans lui, 'ip' => '' fait retomber adresseLan() sur
+      // 'aucun' au prochain appel, ce qui désarme DÉFINITIVEMENT le cycle de 15 min (un
+      // seul scan manuel le réarmait). On reporte l'entrée PRÉCÉDENTE (via
+      // sondeLanEquipement(), qui connaît la règle « essayer aussi lan_mac et les MAC
+      // inversées » — pas sondeLanMemorisee($macAttendue)) : SEULS 'statut' et
+      // 'echec_le' sont neufs. ⚠️ Portée à source === 'detecte' uniquement : pour une
+      // lan_ip PERSONNALISÉE (source === 'manuel'), adresseLan() l'utilise déjà de façon
+      // inconditionnelle, ce correctif y est un no-op bénin.
+      $precedente = $_eqLogic->sondeLanEquipement();
       self::memoriserSondeLan($macAttendue !== '' ? $macAttendue : $_eqLogic->macEquipement(), array(
-        'ip' => '', 'port' => 0, 'type_appareil' => '', 'nom' => '', 'verrouille' => false,
-        'statut' => smartclimBroadlinkLan::STATUT_INJOIGNABLE, 'vu_le' => 0, 'echec_le' => time(),
+        'ip' => is_array($precedente) && isset($precedente['ip']) && is_string($precedente['ip']) ? $precedente['ip'] : '',
+        'port' => is_array($precedente) && isset($precedente['port']) ? (int) $precedente['port'] : 0,
+        'type_appareil' => is_array($precedente) && isset($precedente['type_appareil']) && is_string($precedente['type_appareil']) ? $precedente['type_appareil'] : '',
+        'nom' => is_array($precedente) && isset($precedente['nom']) && is_string($precedente['nom']) ? $precedente['nom'] : '',
+        'verrouille' => is_array($precedente) && !empty($precedente['verrouille']),
+        'statut' => smartclimBroadlinkLan::STATUT_INJOIGNABLE,
+        'vu_le' => is_array($precedente) && isset($precedente['vu_le']) ? (int) $precedente['vu_le'] : 0,
+        'echec_le' => time(),
       ));
       return array('appareil' => null, 'statut' => smartclimBroadlinkLan::STATUT_INJOIGNABLE, 'mac' => $macAttendue);
     }
@@ -1058,6 +1094,13 @@ class smartclim extends eqLogic {
           $resultat['sondes']++;
           if ($resultatSonde['appareil'] === null) {
             $resultat['injoignables']++;
+            // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3 de sa spec
+            // technique) : SEUL STATUT_INJOIGNABLE compte comme un échec de repli ici —
+            // STATUT_MAC_DIVERGENTE reste HORS périmètre (§ 12.1, M2 : frontière
+            // identité/joignabilité, renvoyée à l'UC03).
+            if ($resultatSonde['statut'] === smartclimBroadlinkLan::STATUT_INJOIGNABLE) {
+              $eqLogic->memoriserEchecLan(smartclimBroadlinkLan::STATUT_INJOIGNABLE);
+            }
             continue;
           }
 
@@ -1076,6 +1119,13 @@ class smartclim extends eqLogic {
           if ($lecture['statut'] === smartclimBroadlinkLan::STATUT_ETAT_LU) {
             $resultat['lus']++;
           }
+          // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3/12.1 M2 de sa
+          // spec technique) : couvre la branche qui N'EXISTAIT PAS avant cette UC (le
+          // `if` ci-dessus n'a aucun `else`) — tout statut AUTRE que STATUT_ETAT_LU
+          // compte désormais comme un échec de repli, y compris STATUT_ETAT_ILLISIBLE
+          // (pas un échec de COMMUNICATION pour statutEnEchec(), mais bien un échec
+          // d'UTILISABILITÉ ici).
+          $eqLogic->noterOperationLan($lecture['statut']);
           // Lecture d'état SEULE (rafraîchissement, pas scan) : appliquerLectureLan()
           // n'est PAS appelée ici, cf. son docblock. SANS second argument : $_optimiste
           // reste false, donc filtrerEtatSelonOrdres() s'applique — la période de grâce
@@ -1303,6 +1353,188 @@ class smartclim extends eqLogic {
     }
     $donnees = json_decode($brut, true);
     return is_array($donnees) ? $donnees : null;
+  }
+
+  /**
+   * true si un statut d'opération LAN doit compter comme un ÉCHEC du compteur de repli
+   * (UC02 du domaine post-mvp/02-strategies-de-transport, § 5.1 de sa spec technique).
+   *
+   * ⚠️⚠️ À NE JAMAIS CONFONDRE avec statutEnEchec() ci-dessus, qui répond à une
+   * question DIFFÉRENTE : « la communication a-t-elle abouti ? » (sert à dater
+   * 'echec_le' de la mémoire de sonde), et qui WHITELISTE STATUT_ETAT_ILLISIBLE comme un
+   * succès. Ici la question est « le LAN est-il UTILISABLE pour piloter cet appareil ? » —
+   * une trame indécodable rend le LAN inutilisable tout autant qu'un timeout, et DOIT
+   * donc compter comme un échec de repli. Substituer l'une à l'autre remettrait le
+   * compteur à zéro sur une lecture illisible (piège identifié à DEUX sites :
+   * rafraichirLanEquipement() et rafraichirLan()).
+   *
+   * @param string $_statut
+   * @return bool
+   */
+  private static function echecOperationLan($_statut) {
+    return $_statut !== smartclimBroadlinkLan::STATUT_ETAT_LU;
+  }
+
+  /**
+   * Compteur d'échecs LAN CONSÉCUTIFS de cet équipement (UC02 de ce domaine, § 4.2/5.1
+   * de sa spec technique — AC1/AC2). SEULE méthode PUBLIQUE de ce groupe : consommée par
+   * smartclimTransport::lanJoignable()/repliCloudActif().
+   *
+   * @return int
+   */
+  public function echecsLanConsecutifs() {
+    $memoire = $this->memoireEchecsTransport();
+    return $memoire['lan'];
+  }
+
+  /**
+   * 6ᵉ mémoire de cache, LUE et VALIDÉE champ par champ (UC02 de ce domaine, § 2.2/5.2
+   * de sa spec technique) — MÊME discipline qu'incidentMemorise() : jamais d'état
+   * forgé, JAMAIS null (les appelants n'ont donc aucune branche à écrire). Toute
+   * anomalie (absente, corrompue, forme non conforme) renvoie une structure À ZÉRO,
+   * strictement équivalente à « appareil jamais prouvé, aucun échec connu ».
+   *
+   * @return array{preuve:int, lan:int, cloud:int, cloud_le:int}
+   */
+  private function memoireEchecsTransport() {
+    $vide = array('preuve' => 0, 'lan' => 0, 'cloud' => 0, 'cloud_le' => 0);
+    $brut = cache::byKey(self::CLE_CACHE_ECHECS_TRANSPORT . $this->getId())->getValue(null);
+    if (!is_string($brut) || $brut === '') {
+      return $vide;
+    }
+    $memoire = json_decode($brut, true);
+    if (
+      !is_array($memoire)
+      || !isset($memoire['preuve'], $memoire['lan'], $memoire['cloud'], $memoire['cloud_le'])
+      || !is_numeric($memoire['preuve'])
+      || !is_numeric($memoire['lan'])
+      || !is_numeric($memoire['cloud'])
+      || !is_numeric($memoire['cloud_le'])
+    ) {
+      return $vide;
+    }
+    return array(
+      'preuve' => (int) $memoire['preuve'],
+      'lan' => (int) $memoire['lan'],
+      'cloud' => (int) $memoire['cloud'],
+      'cloud_le' => (int) $memoire['cloud_le'],
+    );
+  }
+
+  /**
+   * Écrit la 6ᵉ mémoire de cache — remplacement INTÉGRAL, jamais un merge partiel
+   * (UC02 de ce domaine, § 5.1 de sa spec technique).
+   *
+   * @param array $_memoire
+   */
+  private function ecrireMemoireEchecsTransport(array $_memoire) {
+    cache::set(self::CLE_CACHE_ECHECS_TRANSPORT . $this->getId(), json_encode($_memoire), self::DUREE_MEMOIRE_ECHECS_TRANSPORT);
+  }
+
+  /**
+   * AIGUILLAGE UNIQUE d'une opération LAN terminée (UC02 de ce domaine, § 5.2 de sa
+   * spec technique) — c'est la pièce qui rend le scénario dangereux de la revue croisée
+   * (§ 12.1, M4) INATTEIGNABLE : aucun site de LECTURE n'appelle memoriserSuccesLan()
+   * directement, tous passent par ici (seul appel DIRECT restant : le succès
+   * d'envoyerOrdreLan(), où une écriture appliquée EST la preuve, par construction).
+   *
+   * @param string $_statut Un des statuts smartclimBroadlinkLan::STATUT_*.
+   */
+  private function noterOperationLan($_statut) {
+    if (self::echecOperationLan($_statut)) {
+      $this->memoriserEchecLan($_statut);
+    } else {
+      $this->memoriserSuccesLan();
+    }
+  }
+
+  /**
+   * Succès LAN (UC02 de ce domaine, § 5.2 de sa spec technique — AC2/AC6) : pose la
+   * PREUVE et remet le compteur d'échecs à zéro. Log 'info' SEULEMENT à la TRANSITION
+   * (retour au pilotage local depuis un repli), jamais à chaque opération réussie.
+   */
+  private function memoriserSuccesLan() {
+    $memoire = $this->memoireEchecsTransport();
+    $transition = $memoire['lan'] >= smartclimTransport::SEUIL_ECHECS_LAN;
+    $memoire['preuve'] = time();
+    $memoire['lan'] = 0;
+    $this->ecrireMemoireEchecsTransport($memoire);
+    if ($transition) {
+      log::add('smartclim', 'info', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : retour au pilotage local (réseau local de nouveau joignable)');
+    }
+  }
+
+  /**
+   * Échec LAN (UC02 de ce domaine, § 5.2 de sa spec technique — AC1) : DEUX no-op,
+   * tous deux essentiels.
+   * 1. Si $_motif désigne une MAC divergente (STATUT_MAC_DIVERGENTE ou
+   *    CONTEXTE_LAN_MAC_DIVERGENTE) : frontière identité/joignabilité (§ 12.1, M2 de la
+   *    spec technique) — le lien a répondu, c'est l'IDENTITÉ qui diverge, hors périmètre
+   *    de cette UC (renvoyé à l'UC03).
+   * 2. Si aucune preuve STATUT_ETAT_LU n'a JAMAIS été constatée (preuve === 0) :
+   *    garde-fou de l'étape 4 de smartclimTransport::lanJoignable() (§ 4.2 de sa spec
+   *    technique) — SANS lui, un appareil qui n'a jamais parlé Broadlink serait déclaré
+   *    joignable après son 1er échec.
+   * Log 'info' SEULEMENT au FRANCHISSEMENT du seuil, jamais à chaque échec.
+   *
+   * @param string $_motif '' ou un statut/contexte technique (jamais affiché tel quel).
+   */
+  private function memoriserEchecLan($_motif = '') {
+    if ($_motif === smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE || $_motif === self::CONTEXTE_LAN_MAC_DIVERGENTE) {
+      return;
+    }
+    $memoire = $this->memoireEchecsTransport();
+    if ($memoire['preuve'] === 0) {
+      return;
+    }
+    $transition = $memoire['lan'] === (smartclimTransport::SEUIL_ECHECS_LAN - 1);
+    $memoire['lan'] = min($memoire['lan'] + 1, 999);
+    $this->ecrireMemoireEchecsTransport($memoire);
+    if ($transition) {
+      log::add('smartclim', 'info', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : bascule en repli cloud (' . $memoire['lan'] . ' échec(s) LAN consécutif(s))');
+    }
+  }
+
+  /**
+   * Échec CLOUD, EN repli uniquement (UC02 de ce domaine, § 5.2/6.2 de sa spec
+   * technique — AC5, disjoncteur à demi-ouverture).
+   */
+  private function memoriserEchecCloud() {
+    $memoire = $this->memoireEchecsTransport();
+    $memoire['cloud'] = min($memoire['cloud'] + 1, 999);
+    $memoire['cloud_le'] = time();
+    $this->ecrireMemoireEchecsTransport($memoire);
+  }
+
+  /**
+   * Désarme la temporisation cloud (UC02 de ce domaine, § 5.2/6.3 de sa spec technique) :
+   * NO-OP si cloud === 0 — évite une écriture par commande réussie et par équipement à
+   * chaque cycle cloud (§ 0.1, seule inflexion à l'inertie hors repli).
+   */
+  private function oublierEchecsCloud() {
+    $memoire = $this->memoireEchecsTransport();
+    if ($memoire['cloud'] <= 0) {
+      return;
+    }
+    $memoire['cloud'] = 0;
+    $memoire['cloud_le'] = 0;
+    $this->ecrireMemoireEchecsTransport($memoire);
+  }
+
+  /**
+   * Secondes restantes avant qu'une nouvelle tentative cloud soit autorisée (UC02 de ce
+   * domaine, § 5.2/6.2 de sa spec technique — disjoncteur à demi-ouverture). ⚠️ SANS
+   * AUCUNE consultation de incidentMemorise() (§ 12.1, M1 : un fait non borné en
+   * fraîcheur ne peut ni armer ni désarmer une temporisation).
+   *
+   * @return int
+   */
+  private function attenteCloudRestante() {
+    $memoire = $this->memoireEchecsTransport();
+    if ($memoire['cloud'] <= 0) {
+      return 0;
+    }
+    return max(0, smartclimTransport::delaiTemporisationCloud($memoire['cloud']) - (time() - $memoire['cloud_le']));
   }
 
   /**
@@ -2542,6 +2774,11 @@ class smartclim extends eqLogic {
         foreach ($cibles[$identifiant] as $eqLogic) {
           try {
             $eqLogic->appliquerEtat(smartclimAuxHomeApi::etatAppareil($appareil));
+            // UC02 du domaine post-mvp/02-strategies-de-transport (§ 0.1/5.3 de sa
+            // spec technique) : SEULE inflexion à l'inertie hors repli — une lecture de
+            // cache PAR équipement et par cycle cloud, no-op si cloud === 0. Un
+            // appliquerEtat() réussi prouve que le cloud répond POUR CET appareil.
+            $eqLogic->oublierEchecsCloud();
             $resultat['rafraichis']++;
           } catch (Throwable $t) {
             // Une Error PHP 8 ne doit pas traverser : la boucle continue (AC4).
@@ -3118,7 +3355,7 @@ class smartclim extends eqLogic {
    *
    * @return array{niveau:string, etat:string, detail:string, transport:string,
    *               fraicheur:string, derniereDonnee:string, incidentLe:string,
-   *               lan:string, lanAdresse:string, modeTransport:string}
+   *               lan:string, lanAdresse:string, modeTransport:string, repli:string}
    */
   public function etatConnexionAffichable() {
     $commandesInfo = array();
@@ -3136,6 +3373,14 @@ class smartclim extends eqLogic {
     // clé ADDITIVE, calculée UNE fois et reportée dans les 7 branches de retour
     // ci-dessous (⚠️ même piège jQuery .text(undefined) que 'lan'/'lanAdresse').
     $modeTransport = smartclimTransport::libelleMode($this);
+
+    // UC02 du domaine post-mvp/02-strategies-de-transport (§ 8 de sa spec technique,
+    // AC7) : clé ADDITIVE 'repli', calculée UNE fois et reportée dans les 7 branches de
+    // retour ci-dessous (MÊME piège jQuery .text(undefined)) — chaîne VIDE hors repli,
+    // JAMAIS null.
+    $repli = smartclimTransport::repliCloudActif($this)
+      ? sprintf(__('repli cloud actif — %d échec(s) LAN consécutif(s)', __FILE__), $this->echecsLanConsecutifs())
+      : '';
 
     // 'derniereDonnee' = la valeur DÉJÀ FORMATÉE de la commande last_update (aucune
     // migration, § 4.2 de la spec technique) ; 'fraicheur' = l'âge calculé sur SA DATE
@@ -3187,6 +3432,7 @@ class smartclim extends eqLogic {
         'lan' => $lan,
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
+        'repli' => $repli,
       );
     }
 
@@ -3207,6 +3453,7 @@ class smartclim extends eqLogic {
         'lan' => $lan,
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
+        'repli' => $repli,
       );
     }
 
@@ -3224,6 +3471,7 @@ class smartclim extends eqLogic {
         'lan' => $lan,
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
+        'repli' => $repli,
       );
     }
 
@@ -3245,6 +3493,7 @@ class smartclim extends eqLogic {
           'lan' => $lan,
           'lanAdresse' => $lanAdresse,
           'modeTransport' => $modeTransport,
+          'repli' => $repli,
         );
       }
       return array(
@@ -3258,6 +3507,7 @@ class smartclim extends eqLogic {
         'lan' => $lan,
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
+        'repli' => $repli,
       );
     }
 
@@ -3273,6 +3523,7 @@ class smartclim extends eqLogic {
         'lan' => $lan,
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
+        'repli' => $repli,
       );
     }
 
@@ -3289,6 +3540,7 @@ class smartclim extends eqLogic {
       'lan' => $lan,
       'lanAdresse' => $lanAdresse,
       'modeTransport' => $modeTransport,
+      'repli' => $repli,
     );
   }
 
@@ -4022,6 +4274,23 @@ class smartclim extends eqLogic {
 
     $transport = smartclimTransport::transportRetenu($this);
 
+    // UC02 du domaine post-mvp/02-strategies-de-transport (§ 6.2 de sa spec technique) :
+    // garde de TEMPORISATION cloud — disjoncteur à DEMI-OUVERTURE, refus immédiat DATÉ,
+    // AUCUN usleep(), AUCUN rejeu HTTP. Placée AVANT ordreDeCommandeAction() et donc
+    // AVANT le marqueur de déduplication (rien à nettoyer), et APRÈS CMD_RAFRAICHIR
+    // ci-dessus (§ 6.1 : « Rafraîchir » n'est JAMAIS temporisé, c'est l'échappatoire
+    // manuelle de l'utilisateur).
+    if ($transport === smartclimCapabilities::TRANSPORT_AUX_HOME && smartclimTransport::repliCloudActif($this)) {
+      $attente = $this->attenteCloudRestante();
+      if ($attente > 0) {
+        // ⚠️ TYPE_RESEAU est un choix PAR DÉFAUT (§ 6.2 de la spec technique) : aucun
+        // type « refus local » n'existe parmi les 4 constantes de smartclimException,
+        // et AUCUN paquet n'a été émis ici — ne pas en déduire qu'un appel réseau a eu
+        // lieu à la lecture d'un futur getType() === TYPE_RESEAU.
+        throw new smartclimException(sprintf(__('Cloud indisponible, nouvelle tentative possible dans %d s', __FILE__), $attente), smartclimException::TYPE_RESEAU);
+      }
+    }
+
     // UC03 du domaine post-mvp/01-transport-broadlink-lan (§ 5.3 de sa spec technique) :
     // construction de l'ordre EXTRAITE dans ordreDeCommandeAction(), réutilisée à
     // l'identique par le pilotage local (envoyerCommandeActionLan()) — c'est ce qui
@@ -4080,6 +4349,13 @@ class smartclim extends eqLogic {
       // Un ordre échoué doit rester rejouable immédiatement (§ 7).
       cache::delete($cleDedup);
       log::add('smartclim', 'error', 'Commande action "' . $_logicalId . '" échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+      // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3/6.3 de sa spec
+      // technique) : les 3 écritures cloud sont CONDITIONNÉES à repliCloudActif($this)
+      // — ce compteur n'existe QUE pour armer/désarmer la temporisation EN repli, pas
+      // pour un équipement en mode CLOUD choisi à la main (D-MVP08-05, dette inchangée).
+      if (smartclimTransport::repliCloudActif($this)) {
+        $this->memoriserEchecCloud();
+      }
       if ($e->getType() == smartclimException::TYPE_INTERNE) {
         // Littéral DÉDIÉ (§ 10 de la spec technique) : le message existant de
         // messageErreurAuxHome() pour TYPE_INTERNE parle de "préparation de la
@@ -4093,9 +4369,15 @@ class smartclim extends eqLogic {
       // renvoyer du JSON.
       cache::delete($cleDedup);
       log::add('smartclim', 'error', 'Commande action "' . $_logicalId . '" échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      if (smartclimTransport::repliCloudActif($this)) {
+        $this->memoriserEchecCloud();
+      }
       throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
     }
 
+    if (smartclimTransport::repliCloudActif($this)) {
+      $this->oublierEchecsCloud();
+    }
     $this->enregistrerOrdre($ordreApplique);
     // État OPTIMISTE (AC3) : la valeur poussée est celle RÉELLEMENT envoyée (après
     // quantification par appliquerOrdre()), jamais celle demandée.
@@ -4143,6 +4425,7 @@ class smartclim extends eqLogic {
    */
   public function rafraichirLanEquipement() {
     $debut = microtime(true);
+    $lecture = null;
     try {
       $appareil = $this->sonderAppareilLan(self::BUDGET_ORDRE_LAN);
       $budgetRestant = max(1, self::BUDGET_ORDRE_LAN - (microtime(true) - $debut));
@@ -4152,11 +4435,23 @@ class smartclim extends eqLogic {
       }
     } catch (smartclimException $e) {
       log::add('smartclim', 'error', 'Rafraîchissement LAN échoué (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+      // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3 de sa spec
+      // technique) : compteur de repli, AVANT le throw.
+      $this->memoriserEchecLan();
       throw new smartclimException(self::messageErreurLan($e->getType(), $e->getContexte()), $e->getType());
     } catch (Throwable $t) {
       log::add('smartclim', 'error', 'Rafraîchissement LAN échoué (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      $this->memoriserEchecLan();
       throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
     }
+    // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3/5.1 de sa spec
+    // technique) : couvre les DEUX issues (succès ET STATUT_ETAT_ILLISIBLE, qui ne
+    // lève PAS ci-dessus mais compte comme un échec de repli via echecOperationLan()) —
+    // ⚠️ ne JAMAIS substituer un simple !statutEnEchec() : rafraichirLanEquipement()
+    // teste statutEnEchec(), qui WHITELISTE STATUT_ETAT_ILLISIBLE comme un succès —
+    // un memoriserSuccesLan() posé ici sur cette base remettrait le compteur à zéro sur
+    // une lecture pourtant inutilisable pour le pilotage.
+    $this->noterOperationLan($lecture['statut']);
     // Lecture d'état SEULE (rafraîchissement, pas scan) : appliquerLectureLan() n'est
     // PAS appelée ici, cf. son docblock — un appel ici ferait diverger 'source' du
     // profil stocké sur un équipement AUTO découvert par le cloud. Appel
@@ -4221,13 +4516,24 @@ class smartclim extends eqLogic {
       $applique = smartclimBroadlinkLan::appliquerOrdre($appareil, $ordre, $budgetRestant);
     } catch (smartclimException $e) {
       log::add('smartclim', 'error', 'Commande LAN échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+      // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3/5.5 de sa spec
+      // technique) : une écriture ratée est aussi une PREUVE d'échec LAN pour cet
+      // appareil — memoriserEchecLan() est déjà no-op si $e->getContexte() vaut
+      // CONTEXTE_LAN_MAC_DIVERGENTE (frontière identité/joignabilité, § 12.1 M2).
+      $this->memoriserEchecLan($e->getContexte());
       throw new smartclimException(self::messageErreurLan($e->getType(), $e->getContexte()), $e->getType());
     } catch (Throwable $t) {
       // catch(Throwable) EN DERNIER bloc (même motif qu'executerCommandeAction()) :
       // une Error PHP 8 traverserait sinon catch(smartclimException).
       log::add('smartclim', 'error', 'Commande LAN échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      $this->memoriserEchecLan('');
       throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
     }
+
+    // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3/12.1 M4 de sa spec
+    // technique) : SEUL appel DIRECT à memoriserSuccesLan() en dehors de
+    // noterOperationLan() — une écriture APPLIQUÉE EST la preuve, par construction.
+    $this->memoriserSuccesLan();
 
     $this->enregistrerOrdre($applique);
     // Pose au passage la commande info "transport" (mécanisme d'UC02 de ce domaine, §
@@ -4236,6 +4542,34 @@ class smartclim extends eqLogic {
     $this->appliquerEtat($applique + array('source' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN), true);
 
     return $applique;
+  }
+
+  /**
+   * Diagnostic LECTURE SEULE du mécanisme de repli (UC02 du domaine
+   * post-mvp/02-strategies-de-transport, § 9 de sa spec technique) — instrument de
+   * CONSTAT de core/php/commande-lan.php --transport, AUCUN paquet réseau émis : c'est
+   * un rapport de lecture d'état INTERNE (cache), pas une sonde. Valeurs BRUTES/déjà
+   * traduites, aucun secret, prêtes à l'affichage (convention FR sans __() des CLI de ce
+   * plugin, sauf pour les libellés déjà traduits par ailleurs).
+   *
+   * @return array{nom:string, modeConfigure:string, transportRetenu:string,
+   *   lanJoignable:bool, echecsLan:int, ageDernierePreuve:int|null, repliActif:bool,
+   *   attenteCloud:int}
+   */
+  public function diagnosticTransport() {
+    $memoire = $this->memoireEchecsTransport();
+    return array(
+      // Défense en profondeur (sortie terminal, CLI --transport) : cohérent avec le reste
+      // du fichier, un nom d'équipement peut provenir d'une découverte LAN non authentifiée.
+      'nom' => self::neutraliserPourLog($this->getHumanName()),
+      'modeConfigure' => smartclimTransport::libelleMode($this),
+      'transportRetenu' => smartclimCapabilities::libelleTransport(smartclimTransport::transportRetenu($this)),
+      'lanJoignable' => smartclimTransport::lanJoignable($this),
+      'echecsLan' => $this->echecsLanConsecutifs(),
+      'ageDernierePreuve' => ($memoire['preuve'] > 0) ? max(0, time() - $memoire['preuve']) : null,
+      'repliActif' => smartclimTransport::repliCloudActif($this),
+      'attenteCloud' => $this->attenteCloudRestante(),
+    );
   }
 
   /**

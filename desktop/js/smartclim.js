@@ -113,6 +113,7 @@ function afficherEtatConnexion(_eqLogic) {
     $("#span_etatConnexionLan").text("")
     $("#span_etatConnexionLanAdresse").text("")
     $("#span_etatConnexionModeTransport").text("")
+    $("#span_etatConnexionRepli").text("")
     return
   }
   var classeNiveau = isset(smartclimClassesNiveau[etat.niveau]) ? smartclimClassesNiveau[etat.niveau] : "label-default"
@@ -132,6 +133,11 @@ function afficherEtatConnexion(_eqLogic) {
   // UC01 du domaine post-mvp/02-strategies-de-transport (§ 5.4 de sa spec technique) :
   // MÊME repli chaîne vide obligatoire que 'lan'/'lanAdresse' ci-dessus.
   $("#span_etatConnexionModeTransport").text(etat.modeTransport ? etat.modeTransport : "")
+  // UC02 du domaine post-mvp/02-strategies-de-transport (§ 8 de sa spec technique) :
+  // MÊME repli chaîne vide obligatoire — etat.repli est déjà une phrase FR traduite
+  // côté serveur (smartclim::etatConnexionAffichable()), affichée entre parenthèses
+  // comme etat.fraicheur.
+  $("#span_etatConnexionRepli").text(etat.repli ? "(" + etat.repli + ")" : "")
 }
 
 /* Profil de capacités détecté (UC04). Tout le rendu de texte est SERVEUR

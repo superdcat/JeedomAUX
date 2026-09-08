@@ -30,6 +30,8 @@
         "Aucune méthode correspondante à": "No matching method for"
     },
     "plugins/smartclim/core/class/smartclim.class.php": {
+        "repli cloud actif — %d échec(s) LAN consécutif(s)": "cloud fallback active — %d consecutive LAN failure(s)",
+        "Cloud indisponible, nouvelle tentative possible dans %d s": "Cloud unavailable, next attempt possible in %d s",
         "Rafraîchir": "Refresh",
         "Connexion réussie au compte AUX Home": "Successfully connected to the AUX Home account",
         "Échec de la connexion — vérifiez vos identifiants et le pays sélectionné": "Connection failed — check your credentials and the selected country",

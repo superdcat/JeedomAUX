@@ -26,11 +26,18 @@
 *   cd /var/www/html/plugins/smartclim
 *   php core/php/commande-lan.php --equipement=<id> --lister
 *   php core/php/commande-lan.php --equipement=<id> --commande=<logicalId> [--valeur=<consigne>]
+*   php core/php/commande-lan.php --transport
 *
 * Aiguillage SANS logique metier : toute la validation de fond (existence du
 * logicalId, bornes/quantification de la consigne, correspondance d'ecriture pour ce
 * transport) vit dans smartclim/smartclimFrame, aux memes endroits que pour le cloud.
 * Aucun rapport ecrit sur disque, aucune donnee d'equipement persistee.
+*
+* --transport (UC02 du domaine post-mvp/02-strategies-de-transport, § 9 de sa spec
+* technique) : 3e usage de ce fichier, LECTURE SEULE - instrument de constat du
+* mecanisme de repli, seul moyen de le verifier sur une installation sans materiel
+* Broadlink (le materiel de validation de l'utilisateur ignore ce protocole). Aucun
+* paquet reseau emis : rapport de lecture d'etat interne (cache), pas une sonde.
 */
 
 if (php_sapi_name() !== 'cli') {
@@ -44,6 +51,7 @@ $idEquipement = null;
 $lister = false;
 $commande = null;
 $valeur = null;
+$transport = false;
 
 foreach (array_slice($argv, 1) as $argument) {
   if (strpos($argument, '--equipement=') === 0) {
@@ -54,13 +62,36 @@ foreach (array_slice($argv, 1) as $argument) {
     $commande = substr($argument, strlen('--commande='));
   } elseif (strpos($argument, '--valeur=') === 0) {
     $valeur = substr($argument, strlen('--valeur='));
+  } elseif ($argument === '--transport') {
+    $transport = true;
   } else {
     die('Option inconnue : ' . $argument . "\n");
   }
 }
 
+if ($transport) {
+  // UC02 du domaine post-mvp/02-strategies-de-transport (§ 9 de sa spec technique) :
+  // LECTURE SEULE, tous les equipements smartclim, aucun --equipement requis.
+  foreach (eqLogic::byType('smartclim', true) as $eqLogic) {
+    if (!($eqLogic instanceof smartclim)) {
+      continue;
+    }
+    $diagnostic = $eqLogic->diagnosticTransport();
+    echo $diagnostic['nom'] . "\n";
+    echo '  Mode configure          : ' . $diagnostic['modeConfigure'] . "\n";
+    echo '  Transport retenu        : ' . $diagnostic['transportRetenu'] . "\n";
+    echo '  LAN joignable           : ' . ($diagnostic['lanJoignable'] ? 'oui' : 'non') . "\n";
+    echo '  Echecs LAN consecutifs  : ' . $diagnostic['echecsLan'] . "\n";
+    echo '  Derniere preuve LAN     : ' . ($diagnostic['ageDernierePreuve'] === null ? 'jamais' : ('il y a ' . $diagnostic['ageDernierePreuve'] . ' s')) . "\n";
+    echo '  Repli cloud actif       : ' . ($diagnostic['repliActif'] ? 'oui' : 'non') . "\n";
+    echo '  Temporisation restante  : ' . $diagnostic['attenteCloud'] . " s\n";
+    echo "\n";
+  }
+  exit(0);
+}
+
 if ($idEquipement === null || !ctype_digit((string) $idEquipement)) {
-  die("Usage :\n  php core/php/commande-lan.php --equipement=<id> --lister\n  php core/php/commande-lan.php --equipement=<id> --commande=<logicalId> [--valeur=<consigne>]\n");
+  die("Usage :\n  php core/php/commande-lan.php --equipement=<id> --lister\n  php core/php/commande-lan.php --equipement=<id> --commande=<logicalId> [--valeur=<consigne>]\n  php core/php/commande-lan.php --transport\n");
 }
 
 $eqLogic = eqLogic::byId((int) $idEquipement);

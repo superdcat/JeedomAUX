@@ -30,6 +30,8 @@
         "Aucune méthode correspondante à": "Keine passende Methode für"
     },
     "plugins/smartclim/core/class/smartclim.class.php": {
+        "repli cloud actif — %d échec(s) LAN consécutif(s)": "Cloud-Rückfall aktiv — %d aufeinanderfolgende(r) LAN-Fehler",
+        "Cloud indisponible, nouvelle tentative possible dans %d s": "Cloud nicht verfügbar, nächster Versuch in %d s möglich",
         "Rafraîchir": "Aktualisieren",
         "Connexion réussie au compte AUX Home": "Erfolgreiche Verbindung mit dem AUX Home-Konto",
         "Échec de la connexion — vérifiez vos identifiants et le pays sélectionné": "Verbindung fehlgeschlagen — überprüfen Sie Ihre Zugangsdaten und das ausgewählte Land",

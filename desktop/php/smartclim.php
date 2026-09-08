@@ -347,7 +347,7 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 								</div>
 								<div class="form-group">
 									<label class="col-sm-4 control-label">{{Mode de transport}}</label>
-									<div class="col-sm-8"><span id="span_etatConnexionModeTransport"></span></div>
+									<div class="col-sm-8"><span id="span_etatConnexionModeTransport"></span> <small class="text-muted" id="span_etatConnexionRepli"></small></div>
 								</div>
 								<div class="form-group">
 									<label class="col-sm-4 control-label">{{Dernière donnée reçue}}</label>

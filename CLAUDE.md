@@ -611,6 +611,14 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   repli actif, temporisation restante. Il n'émet **aucun paquet réseau** — c'est un rapport d'état interne,
   pas une sonde — et passe par `smartclim::diagnosticTransport()` (patron des autres CLI :
   `lireTrameAuxHome()`, `sonderIntentAuxHome()`), qui garde privés les accesseurs de la 6ᵉ mémoire.
+  Depuis l'UC03 du même domaine s'y ajoute un **4ᵉ usage**, `--redecouvrir` (via
+  `smartclim::diagnosticRedecouverteLan()`) : par équipement de mode ≠ CLOUD, MAC candidates, adresse connue
+  et sa source, MAC/IP retrouvées, et un verdict parmi `aucune_correspondance` / `identique` / `changement` /
+  `ambigu` / `deja_adopte`. ⚠️ **Il n'écrit rien (base, cache, disque) mais il ÉMET UNE DIFFUSION** — c'est
+  la seule différence de nature avec `--transport`, qui n'émet aucun paquet ; ne pas les décrire comme
+  équivalents. Il existe parce que le `brief.md` § 19 établit que **deux RM4 Pro répondent à la diffusion**
+  chez l'utilisateur : c'est le premier instrument du domaine qui exerce réellement du code LAN sur du
+  matériel, au lieu de le vérifier par lecture.
   ⚠️ **Il existe parce que tout le repli est du CODE MORT sur le matériel de recette** : le climatiseur de
   validation ignorant Broadlink, `repliCloudActif()` y est toujours faux. Sans cet instrument, la recette
   se limite à « rien n'a changé », et la dette D-2 d'UC02 (désynchronisation `preuve`/sonde) n'est
@@ -832,8 +840,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   source **détectée** : une `lan_ip` personnalisée est renvoyée inconditionnellement par `adresseLan()`,
   avant toute consultation de la sonde. ⚠️ `STATUT_MAC_DIVERGENTE` continue d'**effacer** l'IP — là,
   l'adresse héberge démontrablement un autre appareil, insister serait marteler la machine d'un tiers.
-  Contrepartie assumée (R8 d'UC02) : une IP périmée reçoit désormais un hello UDP toutes les 15 min
-  indéfiniment — c'est une contrainte transmise à l'UC03, qui possède le changement d'IP DHCP.
+  ⚠️ **La R8 d'UC02 (« une IP périmée est martelée indéfiniment ») est TRAITÉE depuis l'UC03 du même
+  domaine** — pas supprimée : le hello unicast de 2 s / 15 min **est le détecteur** du changement d'IP,
+  l'enlever enlèverait le déclencheur. Ce qui change, c'est qu'une **redécouverte par diffusion** tranche
+  dès le **premier** cycle en échec, donc le martèlement n'est plus indéfini *sur une adresse fausse* : il ne
+  subsiste que pour un appareil réellement disparu, à un coût **O(1) par cycle** (la diffusion est
+  mutualisée pour tout le parc, elle ne monte pas avec N). ⚠️ **Aucune règle d'abandon n'a été ajoutée**, et
+  c'est délibéré : abandonner rendrait impossible le retour automatique au LAN (AC6 d'UC02). L'UC03 referme
+  au passage la **dette D-1 d'UC02** — une divergence de MAC **est** la signature d'un bail DHCP réattribué,
+  donc un équipement éjecté par `STATUT_MAC_DIVERGENTE` reste éligible à la redécouverte au lieu d'attendre
+  un scan manuel.
   ⚠️ **Valider une IP sans `ip2long()`** : cet appel renvoie un entier **signé** et PHP est **32 bits**
   sur Raspberry Pi OS armhf — un seuil comme `224.0.0.0` y devient négatif et fait rejeter tout le
   `10.0.0.0/8`. Comparer des **octets**. Détail :

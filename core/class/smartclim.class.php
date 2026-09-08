@@ -158,6 +158,24 @@ class smartclim extends eqLogic {
   const BUDGET_ORDRE_LAN = 12;
   const RESERVE_ECRITURE_LAN = 3;
 
+  // UC03 du domaine post-mvp/02-strategies-de-transport (§ 2.3 de sa spec technique) :
+  // budget d'une redécouverte par diffusion insérée derrière un échec de sonde
+  // unicast. BUDGET_REDECOUVERTE_LAN = 3 s EXACTEMENT (vérifié dans
+  // smartclimBroadlinkLan::diffuserParExtensionSockets()/diffuserParFluxNatif()) : la
+  // retransmission du hello exige un écoulement >= INTERVALLE_RENVOI (2 s), donc un
+  // budget de 2 s ne la laisserait JAMAIS partir — 3 s délivrent les deux émissions
+  // (t=0, t≈2 s) et ~1 s d'écoute après la seconde.
+  //
+  // ⚠️ M2 (revue de plan) — TROIS constantes de « réserve » coexistent désormais, deux
+  // seulement sont arithmétiques : smartclimBroadlinkLan::RESERVE_ECRITURE (3 s, refus
+  // d'émettre un ordre sous ce reliquat) et RESERVE_ECRITURE_LAN ci-dessus (3 s,
+  // PUREMENT DOCUMENTAIRE, jamais lue) sont deux constantes DISTINCTES ; celle-ci,
+  // RESERVE_APRES_REDECOUVERTE_LAN (6 s), est la troisième et est ARITHMÉTIQUE : elle
+  // borne la fenêtre de diffusion contre le budget restant d'un ordre interactif, pour
+  // qu'il reste de quoi rejouer l'échange après une redécouverte réussie.
+  const BUDGET_REDECOUVERTE_LAN = 3;
+  const RESERVE_APRES_REDECOUVERTE_LAN = 6;
+
   // Contextes techniques de smartclimException RÉSERVÉS à la sonde LAN interactive
   // (UC03 de ce domaine, § 4.2/4.3 de sa spec technique) : distinguent, au sein d'un
   // même TYPE_RESEAU, deux messages curatés différents (adresse jamais connue vs MAC
@@ -963,6 +981,98 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Redécouverte par diffusion (UC03 du domaine post-mvp/02-strategies-de-transport,
+   * § 4.1 de sa spec technique) : diffuse pendant $_budget secondes et indexe le
+   * résultat par MAC (déjà dédoublonné par decouvrir()). NE LÈVE JAMAIS — deux
+   * rattrapages, JOURNALISANT TOUS LES DEUX (M1 de la revue de plan) : un bug interne
+   * muet se répéterait sinon toutes les 15 minutes sans laisser de trace.
+   *
+   * N'écrit RIEN : ni cache, ni base, ni disque — c'est une simple diffusion, la
+   * mémorisation reste à la charge de l'appelant.
+   *
+   * @param int $_budget
+   * @return array<string,array> MAC imprimable => ligne normalisée (decouvrir()).
+   */
+  private static function decouverteParMac($_budget) {
+    try {
+      $decouverts = smartclimBroadlinkLan::decouvrir($_budget);
+    } catch (smartclimException $e) {
+      // TYPE_INTERNE = aucun chemin de diffusion disponible sur cet hôte
+      // (D-POSTMVP0101-03) : dégradation documentée, jamais 'error' (AC5).
+      log::add('smartclim', 'warning', 'Redécouverte LAN : diffusion impossible sur cet hôte : ' . self::neutraliserPourLog($e->getMessage()));
+      return array();
+    } catch (Throwable $t) {
+      log::add('smartclim', 'warning', 'Redécouverte LAN : erreur interne pendant la diffusion : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return array();
+    }
+    $parMac = array();
+    foreach ($decouverts as $appareil) {
+      $parMac[$appareil['mac']] = $appareil;
+    }
+    return $parMac;
+  }
+
+  /**
+   * Rapproche un équipement AVEC un appareil fraîchement redécouvert par diffusion
+   * (UC03 de ce domaine, § 4.2 de sa spec technique) — fonction de rapprochement PURE :
+   * aucune E/S, aucun cache écrit, NE TOUCHE JAMAIS la 6ᵉ mémoire (§ 6.1). Sens
+   * équipement -> appareil : NE PAS réutiliser chercherEquipementExistant(), qui va
+   * dans l'autre sens (appareil -> équipement, avec création possible).
+   *
+   * @param smartclim $_eqLogic
+   * @param array<string,array> $_parMac Résultat de decouverteParMac().
+   * @param array<string,bool> $_adoptes MAC déjà adoptées DANS CETTE PASSE, par
+   *   référence — l'appelant interactif passe un tableau local vide (no-op assumé).
+   * @return array|null Ligne normalisée adoptée, ou null si aucune correspondance ou
+   *   refus (ambiguïté, doublon).
+   */
+  private static function appareilRedecouvert(smartclim $_eqLogic, array $_parMac, array &$_adoptes) {
+    $candidats = $_eqLogic->macsCandidatesLan();
+    $macTrouvee = '';
+    foreach ($candidats as $mac) {
+      if (isset($_parMac[$mac])) {
+        $macTrouvee = $mac;
+        break;
+      }
+    }
+    if ($macTrouvee === '') {
+      return null;
+    }
+
+    // Garde d'ambiguïté (A3) : la MAC retrouvée ET sa MAC inversée, portées par DEUX
+    // appareils DISTINCTS de $_parMac -> refus explicite, jamais d'adoption « au
+    // mieux ». Envoyer un ordre HVAC à la machine d'un tiers est physiquement
+    // observable et irréversible (bip + changement d'état) — même doctrine que
+    // STATUT_MAC_DIVERGENTE.
+    $macTrouveeInversee = self::macInversee($macTrouvee);
+    if ($macTrouveeInversee !== '' && $macTrouveeInversee !== $macTrouvee && isset($_parMac[$macTrouveeInversee])) {
+      log::add('smartclim', 'warning', 'Redécouverte LAN : ambiguïté pour l\'équipement "' . self::neutraliserPourLog($_eqLogic->getHumanName()) . '" — deux appareils distincts répondent, un pour la MAC ' . $macTrouvee . ' (' . $_parMac[$macTrouvee]['ip'] . '), un pour son inverse ' . $macTrouveeInversee . ' (' . $_parMac[$macTrouveeInversee]['ip'] . ') — aucune adoption');
+      return null;
+    }
+
+    if (isset($_adoptes[$macTrouvee])) {
+      log::add('smartclim', 'warning', 'Redécouverte LAN : appareil de MAC ' . $macTrouvee . ' déjà adopté par un autre équipement dans ce cycle — ignoré pour "' . self::neutraliserPourLog($_eqLogic->getHumanName()) . '"');
+      return null;
+    }
+
+    // Adoption via une MAC INVERSÉE (comme chercherEquipementExistant()) : $macTrouvee
+    // est le membre "inverse" de sa paire si le membre "direct" apparaît AVANT lui dans
+    // macsCandidatesLan() — dont l'ordre est INTERFOLÉ (direct, inverse, direct,
+    // inverse…), jamais groupé (cf. son docblock) : c'est précisément pour cela que la
+    // détection se fait par POSITION RELATIVE des deux membres dans la liste, seul
+    // critère robuste quel que soit l'ordre effectif et quels que soient les doublons
+    // sautés par macsCandidatesLan().
+    $indexTrouve = array_search($macTrouvee, $candidats, true);
+    $indexDirect = ($macTrouveeInversee !== '') ? array_search($macTrouveeInversee, $candidats, true) : false;
+    if ($indexDirect !== false && $indexDirect < $indexTrouve) {
+      log::add('smartclim', 'warning', 'Redécouverte LAN : appareil rapproché via la MAC inversée (' . $macTrouveeInversee . ' / ' . $macTrouvee . ') pour l\'équipement "' . self::neutraliserPourLog($_eqLogic->getHumanName()) . '"');
+    }
+
+    $_adoptes[$macTrouvee] = true;
+    return $_parMac[$macTrouvee];
+  }
+
+  /**
    * Sonde d'une adresse LAN connue (UC01 du domaine post-mvp/02-strategies-de-transport,
    * § 5.5 de sa spec technique) — extraction de la phase 2 de scannerReseauLocal() :
    * adresseLan() → interroger() → contrôle MAC (directe ET inversée). Ne lève JAMAIS.
@@ -1054,7 +1164,13 @@ class smartclim extends eqLogic {
    * osciller 'source' en base à chaque passage. appliquerEtat() est donc appelé ICI en
    * DIRECT, sur l'état seul (correctif blocker, ne pas "factoriser" avec le scan).
    *
-   * @return array{lance:bool, sondes:int, lus:int, injoignables:int, erreurs:int}
+   * MODIFIÉE par l'UC03 du domaine post-mvp/02-strategies-de-transport (§ 4.4 de sa
+   * spec technique) : une redécouverte par diffusion, AU PLUS UNE FOIS PAR CYCLE
+   * (mutualisée pour tout le parc), est tentée avant de conclure à l'indisponibilité
+   * d'un équipement — tout le code nouveau reste DANS le try/catch(Throwable) PAR
+   * équipement existant, cette méthode continue de NE JAMAIS lever.
+   *
+   * @return array{lance:bool, sondes:int, lus:int, injoignables:int, erreurs:int, redecouverts:int}
    */
   private static function rafraichirLan() {
     $resultat = array(
@@ -1063,6 +1179,9 @@ class smartclim extends eqLogic {
       'lus' => 0,
       'injoignables' => 0,
       'erreurs' => 0,
+      // UC03 de ce domaine (§ 4.4 de sa spec technique) : compteur additif pur, ignoré
+      // par l'unique appelant cron() — seul le log::add('debug') interne le consomme.
+      'redecouverts' => 0,
     );
     try {
       // Marqueur posé AVANT tout paquet (même règle que marquerCycle()) : un réseau
@@ -1071,6 +1190,11 @@ class smartclim extends eqLogic {
       $resultat['lance'] = true;
 
       $debut = microtime(true);
+      // UC03 (§ 4.4) : $decouverts === null est le SEUL mécanisme qui garantit « au
+      // plus une diffusion PAR CYCLE » — un tableau VIDE signifie « diffusion
+      // tentée, rien trouvé » et ne doit JAMAIS relancer une diffusion.
+      $decouverts = null;
+      $adoptes = array();
       $equipements = eqLogic::byType('smartclim', true);
       foreach ($equipements as $eqLogic) {
         if (!($eqLogic instanceof smartclim)) {
@@ -1082,31 +1206,77 @@ class smartclim extends eqLogic {
           }
           $adresse = $eqLogic->adresseLan();
           if ($adresse['ip'] === '') {
-            continue;
-          }
-          // Arrêt DUR évalué AVANT chaque appareil (même règle que scannerReseauLocal()).
-          $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
-          if ($budgetRestant <= 0) {
-            break;
+            // UC03 (§ 5.2, règle (b)) : EXCEPTION UNIQUE — un équipement éjecté par
+            // une divergence de MAC (mémoire de sonde STATUT_MAC_DIVERGENTE, adresse
+            // effacée) ne sort PAS : il va directement à la redécouverte, ce qui
+            // referme la dette D-1 de l'UC02 (§ 6.5). Aucune autre situation ne lève
+            // ce `continue`.
+            $sondePrecedente = $eqLogic->sondeLanEquipement();
+            $statutPrecedent = is_array($sondePrecedente) && isset($sondePrecedente['statut']) && is_string($sondePrecedente['statut']) ? $sondePrecedente['statut'] : '';
+            if ($statutPrecedent !== smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE) {
+              continue;
+            }
+            $resultatSonde = array('appareil' => null, 'statut' => smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE, 'mac' => '');
+          } else {
+            // Arrêt DUR évalué AVANT chaque appareil (même règle que scannerReseauLocal()).
+            $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
+            if ($budgetRestant <= 0) {
+              break;
+            }
+            $resultatSonde = self::sonderAdresseLan($eqLogic, min(smartclimBroadlinkLan::TIMEOUT_ECHANGE, $budgetRestant));
+            $resultat['sondes']++;
           }
 
-          $resultatSonde = self::sonderAdresseLan($eqLogic, min(smartclimBroadlinkLan::TIMEOUT_ECHANGE, $budgetRestant));
-          $resultat['sondes']++;
           if ($resultatSonde['appareil'] === null) {
-            $resultat['injoignables']++;
-            // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3 de sa spec
-            // technique) : SEUL STATUT_INJOIGNABLE compte comme un échec de repli ici —
-            // STATUT_MAC_DIVERGENTE reste HORS périmètre (§ 12.1, M2 : frontière
-            // identité/joignabilité, renvoyée à l'UC03).
-            if ($resultatSonde['statut'] === smartclimBroadlinkLan::STATUT_INJOIGNABLE) {
-              $eqLogic->memoriserEchecLan(smartclimBroadlinkLan::STATUT_INJOIGNABLE);
+            // UC03 (§ 4.4) : AVANT toute conclusion, une tentative de redécouverte.
+            if ($decouverts === null) {
+              $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
+              $fenetre = min(self::BUDGET_REDECOUVERTE_LAN, $budgetRestant);
+              $decouverts = ($fenetre >= 1) ? self::decouverteParMac((int) $fenetre) : array();
             }
-            continue;
+            $trouve = self::appareilRedecouvert($eqLogic, $decouverts, $adoptes);
+            if ($trouve !== null) {
+              $resultat['redecouverts']++;
+              self::memoriserAdresseLan($eqLogic, $trouve);
+              if ($trouve['ip'] !== $adresse['ip']) {
+                // Journalisation § 7 : condition UNIQUE, adresse RETROUVÉE différente
+                // de l'adresse enregistrée dans la mémoire de sonde.
+                if ($adresse['source'] === 'manuel') {
+                  log::add('smartclim', 'warning', 'Équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" : l\'adresse IP locale SAISIE (' . $adresse['ip'] . ') ne répond plus, appareil retrouvé en ' . $trouve['ip'] . ' — mettez à jour la configuration de l\'équipement (l\'adresse saisie reste prioritaire)');
+                } elseif ($adresse['ip'] === '') {
+                  // Message DÉDIÉ à la règle (b) (§ 5.2) : ici $adresse['ip'] vaut
+                  // TOUJOURS '' (équipement éjecté pour STATUT_MAC_DIVERGENTE, adresse
+                  // effacée) — le message générique ci-dessous produirait une adresse
+                  // d'origine vide, déroutant précisément sur le cas le plus délicat à
+                  // diagnostiquer.
+                  log::add('smartclim', 'info', 'Équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" : appareil retrouvé après une divergence de MAC, adresse IP locale enregistrée (' . $trouve['ip'] . ')');
+                } else {
+                  log::add('smartclim', 'info', 'Équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" : adresse IP locale mise à jour automatiquement (' . $adresse['ip'] . ' -> ' . $trouve['ip'] . ')');
+                }
+              }
+              // On RECONSTRUIT $resultatSonde et on POURSUIT le corps existant
+              // (lireEtat(), memoriserSondeLanEquipement(), noterOperationLan()) — la
+              // 6ᵉ mémoire est donc atteinte par le chemin NORMAL (§ 6.1).
+              $resultatSonde = array('appareil' => $trouve, 'statut' => '', 'mac' => $trouve['mac']);
+            } else {
+              $resultat['injoignables']++;
+              log::add('smartclim', 'debug', 'Redécouverte LAN : aucune correspondance pour l\'équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '"');
+              // UC02 du domaine post-mvp/02-strategies-de-transport (§ 5.3 de sa spec
+              // technique) : SEUL STATUT_INJOIGNABLE compte comme un échec de repli ici —
+              // STATUT_MAC_DIVERGENTE reste HORS périmètre (§ 12.1, M2 : frontière
+              // identité/joignabilité).
+              if ($resultatSonde['statut'] === smartclimBroadlinkLan::STATUT_INJOIGNABLE) {
+                $eqLogic->memoriserEchecLan(smartclimBroadlinkLan::STATUT_INJOIGNABLE);
+              }
+              continue;
+            }
           }
 
           $budgetRestant = self::BUDGET_LAN - (microtime(true) - $debut);
           $lecture = smartclimBroadlinkLan::lireEtat($resultatSonde['appareil'], max(1, min(self::BUDGET_LECTURE_LAN, $budgetRestant)));
-          self::memoriserSondeLan($resultatSonde['mac'], array(
+          // UC03 (§ 4.4/4.6) : memoriserSondeLan() devient memoriserSondeLanEquipement()
+          // — contenu du tableau INCHANGÉ, seule la résolution de la clé d'écriture change.
+          self::memoriserSondeLanEquipement($eqLogic, $resultatSonde['mac'], array(
             'ip' => $resultatSonde['appareil']['ip'],
             'port' => $resultatSonde['appareil']['port'],
             'type_appareil' => $resultatSonde['appareil']['type_appareil'],
@@ -1137,7 +1307,7 @@ class smartclim extends eqLogic {
         }
       }
 
-      log::add('smartclim', 'debug', 'Cycle de sonde LAN : ' . $resultat['sondes'] . ' sonde(s), ' . $resultat['lus'] . ' état(s) lu(s), ' . $resultat['injoignables'] . ' injoignable(s), ' . $resultat['erreurs'] . ' erreur(s)');
+      log::add('smartclim', 'debug', 'Cycle de sonde LAN : ' . $resultat['sondes'] . ' sonde(s), ' . $resultat['lus'] . ' état(s) lu(s), ' . $resultat['injoignables'] . ' injoignable(s), ' . $resultat['redecouverts'] . ' redécouverte(s), ' . $resultat['erreurs'] . ' erreur(s)');
       return $resultat;
     } catch (Throwable $t) {
       log::add('smartclim', 'error', 'Cycle de sonde LAN : erreur interne inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
@@ -1353,6 +1523,75 @@ class smartclim extends eqLogic {
     }
     $donnees = json_decode($brut, true);
     return is_array($donnees) ? $donnees : null;
+  }
+
+  /**
+   * Résout la clé d'ÉCRITURE de la mémoire de sonde LAN pour CET équipement (UC03 du
+   * domaine post-mvp/02-strategies-de-transport, § 4.6 de sa spec technique) : première
+   * MAC de macsCandidatesLan() possédant DÉJÀ une entrée de cache, à défaut
+   * $_macTrouvee (comportement actuel). Puis délègue à memoriserSondeLan().
+   *
+   * ⚠️ Pas cosmétique — corrige un défaut PRÉ-EXISTANT (R2) : les écritures d'ÉCHECS
+   * (sonderAdresseLan()) utilisent TOUJOURS la MAC candidate DIRECTE, celles de SUCCÈS
+   * la MAC RÉELLEMENT rapportée (potentiellement l'INVERSÉE). sondeLanEquipement()
+   * essayant les directs AVANT les inversés et retournant à la PREMIÈRE entrée
+   * trouvée, un appareil inversé voyait toujours son entrée d'ÉCHEC relue, et sa
+   * nouvelle adresse écrite là où PERSONNE ne la lit. La résolution converge les DEUX
+   * entrées vers une SEULE et ne peut JAMAIS en créer une nouvelle quand une existe.
+   *
+   * ⚠️ Portée VOLONTAIREMENT limitée à rafraichirLan() et au chemin interactif — les
+   * écritures de scannerReseauLocal() ne sont PAS touchées (§ 12.1 M4 de l'UC02, D-2).
+   *
+   * @param smartclim $_eqLogic
+   * @param string $_macTrouvee
+   * @param array $_resultat
+   */
+  private static function memoriserSondeLanEquipement(smartclim $_eqLogic, $_macTrouvee, array $_resultat) {
+    $cle = $_macTrouvee;
+    foreach ($_eqLogic->macsCandidatesLan() as $candidat) {
+      if (self::sondeLanMemorisee($candidat) !== null) {
+        $cle = $candidat;
+        break;
+      }
+    }
+    self::memoriserSondeLan($cle, $_resultat);
+  }
+
+  /**
+   * Mémorise une adresse LAN REDÉCOUVERTE, pas encore lue (UC03 de ce domaine, § 4.7 de
+   * sa spec technique) — chemin INTERACTIF, où aucun lireEtat() ne suivra. Écrit via
+   * memoriserSondeLanEquipement() (résolution de clé, § 4.6).
+   *
+   * ⚠️ Règle en une phrase, SYMÉTRIQUE EXACTE du correctif d'UC02 sur sonderAdresseLan()
+   * (« seuls statut et echec_le sont NEUFS ») : ICI, TOUT est NEUF SAUF statut et
+   * echec_le, REPORTÉS de l'entrée PRÉCÉDENTE. Une redécouverte prouve une ADRESSE,
+   * jamais une CAPACITÉ — écrire un statut inventé casserait lanJoignable() (qui exige
+   * STATUT_ETAT_LU) : un statut de complaisance ferait router des ordres vers un
+   * appareil NON VÉRIFIÉ, un statut d'échec dégraderait un équipement joignable.
+   *
+   * ⚠️ UNIQUE EXCEPTION : si le statut précédent est STATUT_MAC_DIVERGENTE, écrire ''.
+   * Un verdict de divergence porte sur l'ANCIENNE adresse ; le reporter sur une adresse
+   * dont on vient de vérifier la MAC serait factuellement faux.
+   *
+   * @param smartclim $_eqLogic
+   * @param array $_appareil Ligne normalisée (decouvrir()/interroger()).
+   */
+  private static function memoriserAdresseLan(smartclim $_eqLogic, array $_appareil) {
+    $precedente = $_eqLogic->sondeLanEquipement();
+    $statutPrecedent = is_array($precedente) && isset($precedente['statut']) && is_string($precedente['statut']) ? $precedente['statut'] : '';
+    $echecLePrecedent = is_array($precedente) && isset($precedente['echec_le']) ? (int) $precedente['echec_le'] : 0;
+    $statutReporte = ($statutPrecedent === smartclimBroadlinkLan::STATUT_MAC_DIVERGENTE) ? '' : $statutPrecedent;
+
+    self::memoriserSondeLanEquipement($_eqLogic, $_appareil['mac'], array(
+      'ip' => $_appareil['ip'],
+      'port' => $_appareil['port'],
+      'type_appareil' => $_appareil['type_appareil'],
+      'nom' => $_appareil['nom'],
+      'verrouille' => $_appareil['verrouille'],
+      'statut' => $statutReporte,
+      'vu_le' => $_appareil['vu_le'],
+      'echec_le' => $echecLePrecedent,
+    ));
   }
 
   /**
@@ -3156,6 +3395,29 @@ class smartclim extends eqLogic {
    * @return array|null
    */
   public function sondeLanEquipement() {
+    foreach ($this->macsCandidatesLan() as $mac) {
+      $sonde = self::sondeLanMemorisee($mac);
+      if (is_array($sonde)) {
+        return $sonde;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * MAC candidates de CET équipement pour un rapprochement LAN (UC03 du domaine
+   * post-mvp/02-strategies-de-transport, § 4.5 de sa spec technique) — EXTRACTION
+   * STRICTE, à comportement RIGOUREUSEMENT IDENTIQUE, de l'ancien corps de
+   * sondeLanEquipement() : `lan_mac` SAISIE puis SON INVERSE, puis `macEquipement()`
+   * puis SON INVERSE — ordre INTERFOLÉ, PAS groupé —, dédoublonnés, garde palindrome
+   * comprise. Désormais consommée par TROIS
+   * lecteurs : la sonde ci-dessus, le rapprochement de redécouverte
+   * (appareilRedecouvert()) et la résolution de clé d'écriture
+   * (memoriserSondeLanEquipement()) — un seul endroit connaît l'ordre des candidats.
+   *
+   * @return string[]
+   */
+  private function macsCandidatesLan() {
     $candidats = array();
     $lanMac = $this->getConfiguration(self::CLE_CONF_LAN_MAC);
     $lanMac = is_string($lanMac) ? self::normaliserMac($lanMac) : '';
@@ -3177,14 +3439,7 @@ class smartclim extends eqLogic {
         $macsAEssayer[] = $inversee;
       }
     }
-
-    foreach ($macsAEssayer as $mac) {
-      $sonde = self::sondeLanMemorisee($mac);
-      if (is_array($sonde)) {
-        return $sonde;
-      }
-    }
-    return null;
+    return $macsAEssayer;
   }
 
   /**
@@ -4573,6 +4828,84 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Diagnostic LECTURE SEULE de la redécouverte par diffusion (UC03 de ce domaine, § 9
+   * de sa spec technique) — instrument de CONSTAT de core/php/commande-lan.php
+   * --redecouvrir, MÊME PATRON que diagnosticTransport(), lireTrameAuxHome() et
+   * sonderIntentAuxHome() : UNE méthode publique plutôt que l'ouverture de six
+   * accesseurs privés (macsCandidatesLan(), decouverteParMac()…).
+   *
+   * ⚠️ Émet UNE diffusion (contrairement à diagnosticTransport(), qui n'émet AUCUN
+   * paquet réseau) : c'est le SEUL moyen de vérifier réellement la redécouverte sur une
+   * installation sans matériel climatiseur Broadlink (deux RM4 Pro y répondent, cf.
+   * brief.md § 19). Aucune écriture en cache/base/disque : les verdicts sont calculés en
+   * LECTURE SEULE, la mémoire de sonde et la 6ᵉ mémoire ne sont jamais touchées.
+   *
+   * @return array{diffusion:bool, decouverts:int, lignes:array}
+   */
+  public static function diagnosticRedecouverteLan() {
+    $decouverts = self::decouverteParMac(smartclimBroadlinkLan::FENETRE_DECOUVERTE);
+    $adoptes = array();
+    $lignes = array();
+    foreach (eqLogic::byType('smartclim', true) as $eqLogic) {
+      if (!($eqLogic instanceof smartclim)) {
+        continue;
+      }
+      if (smartclimTransport::mode($eqLogic) === smartclimTransport::MODE_CLOUD) {
+        continue;
+      }
+      $adresse = $eqLogic->adresseLan();
+      $candidats = $eqLogic->macsCandidatesLan();
+
+      $macTrouvee = '';
+      foreach ($candidats as $mac) {
+        if (isset($decouverts[$mac])) {
+          $macTrouvee = $mac;
+          break;
+        }
+      }
+
+      $verdict = 'aucune_correspondance';
+      $ipTrouvee = '';
+      if ($macTrouvee !== '') {
+        $macTrouveeInversee = self::macInversee($macTrouvee);
+        if ($macTrouveeInversee !== '' && $macTrouveeInversee !== $macTrouvee && isset($decouverts[$macTrouveeInversee])) {
+          // Même garde d'ambiguïté (A3) qu'appareilRedecouvert() — mais elle ne peut
+          // pas être réutilisée telle quelle : elle ne distingue pas, dans son 'null'
+          // de retour, l'ambiguïté du doublon ou de l'absence de correspondance, alors
+          // que ce rapport DOIT les distinguer.
+          $verdict = 'ambigu';
+        } elseif (isset($adoptes[$macTrouvee])) {
+          $verdict = 'deja_adopte';
+        } else {
+          $adoptes[$macTrouvee] = true;
+          $ipTrouvee = $decouverts[$macTrouvee]['ip'];
+          $verdict = ($adresse['ip'] !== '' && $ipTrouvee === $adresse['ip']) ? 'identique' : 'changement';
+        }
+      }
+
+      $lignes[] = array(
+        'nom' => self::neutraliserPourLog($eqLogic->getHumanName()),
+        'mode' => smartclimTransport::libelleMode($eqLogic),
+        'macsCandidates' => $candidats,
+        'adresseConnue' => $adresse['ip'],
+        'adresseSource' => $adresse['source'],
+        'macTrouvee' => $macTrouvee,
+        'ipTrouvee' => $ipTrouvee,
+        'verdict' => $verdict,
+      );
+    }
+
+    return array(
+      // Diffusible sur cet hôte (extension sockets/flux natif) — decouverteParMac()
+      // ne lève jamais, donc AUCUN autre moyen de distinguer "hôte incapable" de
+      // "réseau filtré, 0 appareil" à partir de son seul résultat.
+      'diffusion' => smartclimBroadlinkLan::diffusionDisponible(),
+      'decouverts' => count($decouverts),
+      'lignes' => $lignes,
+    );
+  }
+
+  /**
    * Instrument de MESURE (UC01 du domaine post-mvp/04-fonctions-avancees, § 5.5 de sa
    * spec technique), CLI UNIQUEMENT — garde INTERNE, au plus près du risque (même
    * patron que smartclimAuxHomeApi::sonderIntent()). Un SEUL listerAppareils(),
@@ -4712,9 +5045,16 @@ class smartclim extends eqLogic {
    * Sonde l'adresse LAN CONNUE de cet équipement (UC03 de ce domaine, § 4.2/5.3 de sa
    * spec technique) : hello préalable OBLIGATOIRE, seule source de 'octets_mac' et de
    * 'type_appareil' qu'exige smartclimBroadlinkLan::appliquerOrdre() (ni adresseLan()
-   * ni la mémoire de sonde ne les portent). ⚠️ AUCUNE diffusion à la volée (§ 9, R8) :
-   * 4 s de broadcast dans un chemin interactif est un mauvais compromis, le message
-   * curaté invite explicitement à relancer un scan.
+   * ni la mémoire de sonde ne les portent).
+   *
+   * MODIFIÉE par l'UC03 du domaine post-mvp/02-strategies-de-transport (§ 4.3 de sa
+   * spec technique) : le chemin NOMINAL (l'appareil répond, MAC concordante) reste
+   * STRICTEMENT inchangé — zéro paquet, zéro lecture de cache supplémentaire. Sur
+   * échec de la sonde unicast (silence OU MAC divergente), une redécouverte UNIQUE par
+   * diffusion est tentée AVANT de conclure : si elle retrouve l'appareil, sa nouvelle
+   * adresse est mémorisée (memoriserAdresseLan(), AC2) et RENVOYÉE — sinon
+   * l'EXCEPTION D'ORIGINE (mêmes message, type, contexte) est relevée telle quelle,
+   * messageErreurLan() n'étant PAS touchée (aucune chaîne nouvelle).
    *
    * @param float $_budget
    * @return array Ligne normalisée (smartclimBroadlinkLan::decouvrir()/interroger()).
@@ -4722,22 +5062,60 @@ class smartclim extends eqLogic {
    *   curation finale vit dans messageErreurLan(), SEUL point de bascule (§ 4.3).
    */
   private function sonderAppareilLan($_budget) {
+    $debut = microtime(true);
     $adresse = $this->adresseLan();
     if ($adresse['ip'] === '') {
+      // Chemin INCHANGÉ (§ 2.2, règle générale) : un équipement sans adresse connue
+      // n'est pas "injoignable", il est "jamais découvert" — le scan reste son vecteur.
       throw new smartclimException('Broadlink LAN : aucune adresse connue pour cet équipement', smartclimException::TYPE_RESEAU, self::CONTEXTE_LAN_ADRESSE_INCONNUE);
     }
 
     $appareil = smartclimBroadlinkLan::interroger($adresse['ip'], max(1, min(smartclimBroadlinkLan::TIMEOUT_ECHANGE, $_budget)));
-    if ($appareil === null) {
-      throw new smartclimException('Broadlink LAN : aucune réponse de l\'appareil sur le réseau local', smartclimException::TYPE_RESEAU);
+    if ($appareil !== null) {
+      $macAttendue = $adresse['mac'];
+      if ($macAttendue === '' || $appareil['mac'] === $macAttendue || $appareil['mac'] === self::macInversee($macAttendue)) {
+        // Chemin NOMINAL STRICTEMENT inchangé (§ 0.1) : aucune branche nouvelle n'est
+        // exécutée ici.
+        return $appareil;
+      }
+      $messageOrigine = 'Broadlink LAN : MAC de l\'appareil répondant différente de celle attendue';
+      $contexteOrigine = self::CONTEXTE_LAN_MAC_DIVERGENTE;
+    } else {
+      $messageOrigine = 'Broadlink LAN : aucune réponse de l\'appareil sur le réseau local';
+      $contexteOrigine = '';
     }
 
-    $macAttendue = $adresse['mac'];
-    if ($macAttendue !== '' && $appareil['mac'] !== $macAttendue && $appareil['mac'] !== self::macInversee($macAttendue)) {
-      throw new smartclimException('Broadlink LAN : MAC de l\'appareil répondant différente de celle attendue', smartclimException::TYPE_RESEAU, self::CONTEXTE_LAN_MAC_DIVERGENTE);
+    // UC03 (§ 4.3, étape 4) : fenêtre de redécouverte bornée par le budget RESTANT de
+    // cet ordre interactif, réserve RESERVE_APRES_REDECOUVERTE_LAN déduite. Sous 1 s,
+    // AUCUNE diffusion : l'exception d'origine part immédiatement (R6).
+    $restant = $_budget - (microtime(true) - $debut);
+    $fenetre = min(self::BUDGET_REDECOUVERTE_LAN, $restant - self::RESERVE_APRES_REDECOUVERTE_LAN);
+    if ($fenetre >= 1) {
+      $parMac = self::decouverteParMac((int) $fenetre);
+      $adoptes = array();
+      $trouve = self::appareilRedecouvert($this, $parMac, $adoptes);
+      if ($trouve !== null) {
+        self::memoriserAdresseLan($this, $trouve);
+        if ($trouve['ip'] !== $adresse['ip']) {
+          // Journalisation § 7 : condition UNIQUE, adresse RETROUVÉE différente de
+          // l'adresse enregistrée. Une adresse SAISIE reste prioritaire (AC5) mais un
+          // avertissement actionnable invite à mettre la configuration à jour.
+          if ($adresse['source'] === 'manuel') {
+            log::add('smartclim', 'warning', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : l\'adresse IP locale SAISIE (' . $adresse['ip'] . ') ne répond plus, appareil retrouvé en ' . $trouve['ip'] . ' — mettez à jour la configuration de l\'équipement (l\'adresse saisie reste prioritaire)');
+          } else {
+            log::add('smartclim', 'info', 'Équipement "' . self::neutraliserPourLog($this->getHumanName()) . '" : adresse IP locale mise à jour automatiquement (' . $adresse['ip'] . ' -> ' . $trouve['ip'] . ')');
+          }
+        }
+        return $trouve;
+      }
+      log::add('smartclim', 'debug', 'Redécouverte LAN : aucune correspondance pour l\'équipement "' . self::neutraliserPourLog($this->getHumanName()) . '"');
+    } else {
+      log::add('smartclim', 'debug', 'Redécouverte LAN : budget insuffisant pour l\'équipement "' . self::neutraliserPourLog($this->getHumanName()) . '"');
     }
 
-    return $appareil;
+    // Échec confirmé : l'exception D'ORIGINE, mêmes message/type/contexte (§ 4.3,
+    // étape 5) — le compteur d'échecs reste écrit par les catch() des APPELANTS.
+    throw new smartclimException($messageOrigine, smartclimException::TYPE_RESEAU, $contexteOrigine);
   }
 
   /**

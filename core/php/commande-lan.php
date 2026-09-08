@@ -27,6 +27,7 @@
 *   php core/php/commande-lan.php --equipement=<id> --lister
 *   php core/php/commande-lan.php --equipement=<id> --commande=<logicalId> [--valeur=<consigne>]
 *   php core/php/commande-lan.php --transport
+*   php core/php/commande-lan.php --redecouvrir
 *
 * Aiguillage SANS logique metier : toute la validation de fond (existence du
 * logicalId, bornes/quantification de la consigne, correspondance d'ecriture pour ce
@@ -38,6 +39,13 @@
 * mecanisme de repli, seul moyen de le verifier sur une installation sans materiel
 * Broadlink (le materiel de validation de l'utilisateur ignore ce protocole). Aucun
 * paquet reseau emis : rapport de lecture d'etat interne (cache), pas une sonde.
+*
+* --redecouvrir (UC03 du domaine post-mvp/02-strategies-de-transport, § 9 de sa spec
+* technique) : 4e usage, LECTURE SEULE COTE ECRITURE (aucune ecriture en base, en
+* cache ni sur disque) mais, a la difference de --transport, il EMET UNE DIFFUSION
+* reseau reelle - seul moyen de verifier reellement la redecouverte automatique sur
+* une installation sans climatiseur Broadlink (le brief.md § 19 etablit que deux RM4
+* Pro y repondent).
 */
 
 if (php_sapi_name() !== 'cli') {
@@ -52,6 +60,7 @@ $lister = false;
 $commande = null;
 $valeur = null;
 $transport = false;
+$redecouvrir = false;
 
 foreach (array_slice($argv, 1) as $argument) {
   if (strpos($argument, '--equipement=') === 0) {
@@ -64,9 +73,30 @@ foreach (array_slice($argv, 1) as $argument) {
     $valeur = substr($argument, strlen('--valeur='));
   } elseif ($argument === '--transport') {
     $transport = true;
+  } elseif ($argument === '--redecouvrir') {
+    $redecouvrir = true;
   } else {
     die('Option inconnue : ' . $argument . "\n");
   }
+}
+
+if ($redecouvrir) {
+  // UC03 du domaine post-mvp/02-strategies-de-transport (§ 9 de sa spec technique) :
+  // AUCUN --equipement requis, tous les equipements smartclim de mode != CLOUD.
+  $diagnostic = smartclim::diagnosticRedecouverteLan();
+  echo 'Diffusion possible sur cet hote : ' . ($diagnostic['diffusion'] ? 'oui' : 'non') . "\n";
+  echo 'Appareils decouverts par diffusion : ' . $diagnostic['decouverts'] . "\n\n";
+  foreach ($diagnostic['lignes'] as $ligne) {
+    echo $ligne['nom'] . "\n";
+    echo '  Mode                  : ' . $ligne['mode'] . "\n";
+    echo '  MAC candidates        : ' . implode(', ', $ligne['macsCandidates']) . "\n";
+    echo '  Adresse connue        : ' . ($ligne['adresseConnue'] !== '' ? $ligne['adresseConnue'] . ' (' . $ligne['adresseSource'] . ')' : 'aucune') . "\n";
+    echo '  MAC retrouvee         : ' . ($ligne['macTrouvee'] !== '' ? $ligne['macTrouvee'] : '-') . "\n";
+    echo '  IP retrouvee          : ' . ($ligne['ipTrouvee'] !== '' ? $ligne['ipTrouvee'] : '-') . "\n";
+    echo '  Verdict               : ' . $ligne['verdict'] . "\n";
+    echo "\n";
+  }
+  exit(0);
 }
 
 if ($transport) {
@@ -91,7 +121,7 @@ if ($transport) {
 }
 
 if ($idEquipement === null || !ctype_digit((string) $idEquipement)) {
-  die("Usage :\n  php core/php/commande-lan.php --equipement=<id> --lister\n  php core/php/commande-lan.php --equipement=<id> --commande=<logicalId> [--valeur=<consigne>]\n  php core/php/commande-lan.php --transport\n");
+  die("Usage :\n  php core/php/commande-lan.php --equipement=<id> --lister\n  php core/php/commande-lan.php --equipement=<id> --commande=<logicalId> [--valeur=<consigne>]\n  php core/php/commande-lan.php --transport\n  php core/php/commande-lan.php --redecouvrir\n");
 }
 
 $eqLogic = eqLogic::byId((int) $idEquipement);

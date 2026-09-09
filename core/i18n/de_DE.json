@@ -134,7 +134,11 @@
         "Magasin de certificats local de ce Jeedom illisible": "Lokaler Zertifikatspeicher dieses Jeedom nicht lesbar",
         "Serveur du cloud historique injoignable, réessayez plus tard": "Alter Cloud-Server nicht erreichbar, bitte versuchen Sie es später erneut",
         "Réponse inattendue du cloud historique — consultez les logs du plugin": "Unerwartete Antwort vom alten Cloud-Dienst — siehe Plugin-Logs",
-        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Ungültige Zugangsdaten — E-Mail-Adresse, Passwort und Region überprüfen"
+        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Ungültige Zugangsdaten — E-Mail-Adresse, Passwort und Region überprüfen",
+        "Ignoré — pompe à chaleur (hors périmètre du plugin)": "Ignoriert — Wärmepumpe (außerhalb des Plugin-Anwendungsbereichs)",
+        "Ignoré — appareil non reconnu comme climatiseur": "Ignoriert — Gerät nicht als Klimaanlage erkannt",
+        "Ignoré — budget de temps épuisé": "Ignoriert — Zeitbudget aufgebraucht",
+        "Cet équipement est relié au cloud historique (AC Freedom), qui ne peut pas encore être piloté par ce plugin — patientez pour une prochaine mise à jour": "Dieses Gerät ist mit der alten Cloud (AC Freedom) verbunden, die von diesem Plugin noch nicht gesteuert werden kann — bitte warten Sie auf ein zukünftiges Update"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albanien",
@@ -308,6 +312,8 @@
         "Climatiseurs (LAN + cloud)": "Klimaanlagen (LAN + Cloud)",
         "Disponible en LAN": "Über LAN verfügbar",
         "Disponible dans le cloud": "In der Cloud verfügbar",
+        "Disponible dans le cloud historique": "In der alten Cloud verfügbar",
+        "Climatiseurs trouvés sur le cloud historique": "In der alten Cloud gefundene Klimaanlagen",
         "Plage de température": "Temperaturbereich",
         "Détecté le": "Erkannt am",
         "Transport source": "Quell-Transport",

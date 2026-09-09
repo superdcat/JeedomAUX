@@ -302,6 +302,7 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
   $bouton.find('span').text("{{Scan en cours…}}")
   $('#table_scanClimatiseurs tbody').empty()
   $('#table_scanTrouves tbody').empty()
+  $('#table_scanAuxCloud tbody').empty()
   $('#table_scanDisparus tbody').empty()
   $('#table_scanLan tbody').empty()
   $('#bt_scanRecharger').addClass('hidden')
@@ -311,10 +312,12 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
     url: 'plugins/smartclim/core/ajax/smartclim.ajax.php',
     data: { action: 'scannerClimatiseurs' },
     dataType: 'json',
-    // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.6 de la spec technique) :
-    // pire cas 18 s (phase LAN, BUDGET_LAN) + 25 s (phase cloud, BUDGET_SCAN) ≈ 43 s ; un
-    // timeout jQuery n'interrompt PAS le PHP, il ne doit donc jamais couper court.
-    timeout: 60000,
+    // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 5.6 de la spec technique),
+    // porté à 80000 par l'UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 6.2/R5 de sa
+    // spec technique) : pire cas 18 s (LAN, BUDGET_LAN) + 25 s (legacy, BUDGET_DECOUVERTE)
+    // + 25 s (AUX Home, BUDGET_SCAN) ≈ 68 s ; un timeout jQuery n'interrompt PAS le PHP,
+    // il ne doit donc jamais couper court.
+    timeout: 80000,
     global: false,
     error: function (jqXHR, textStatus) {
       if (textStatus === 'timeout') {
@@ -331,14 +334,16 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
       var resultat = data.result
       $('#span_scanResume').text(resultat.resume)
       // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 3/5.10 de la spec
-      // technique) : table de synthèse, DÉJÀ curatée côté serveur (lignesFusionScan())
-      // — ce JS n'assemble rien, il injecte les 5 valeurs déjà traduites.
+      // technique), enrichie à l'UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 6.2) :
+      // table de synthèse, DÉJÀ curatée côté serveur (lignesFusionScan()) — ce JS
+      // n'assemble rien, il injecte les 6 valeurs déjà traduites.
       $.each(resultat.climatiseurs, function (index, climatiseur) {
         ajouterLigneScan($('#table_scanClimatiseurs'), [
           climatiseur.nom,
           climatiseur.mac,
           climatiseur.lan,
           climatiseur.cloud,
+          climatiseur.cloudHistorique,
           climatiseur.transport
         ])
       })
@@ -347,6 +352,25 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
       // — un cloudErreur non vide est un avertissement (warning), jamais une panne (danger).
       if (resultat.cloudErreur) {
         $('#div_alert').showAlert({ message: resultat.cloudErreur, level: 'warning' })
+      }
+      // UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 6.2 de sa spec technique) : même
+      // doctrine que cloudErreur ci-dessus — un legacyErreur non vide est un
+      // avertissement, jamais une panne (un utilisateur purement AUX Home n'a pas de
+      // compte legacy configuré, ce n'est pas une erreur pour lui).
+      if (resultat.legacyErreur) {
+        $('#div_alert').showAlert({ message: resultat.legacyErreur, level: 'warning' })
+      }
+      if (resultat.legacy) {
+        $.each(resultat.legacy.appareils, function (index, appareil) {
+          ajouterLigneScan($('#table_scanAuxCloud'), [
+            appareil.nom,
+            appareil.modele,
+            appareil.mac,
+            appareil.identifiant,
+            appareil.enLigneLibelle,
+            appareil.statutLibelle
+          ])
+        })
       }
       if (resultat.lan) {
         $('#span_scanResumeLan').text(resultat.lan.resume)
@@ -381,8 +405,11 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
       // UC04 du domaine post-mvp/01-transport-broadlink-lan : une création peut venir
       // du LAN (resultat.lan.compteurs.crees) tout autant que du cloud
       // (resultat.compteurs.crees) — les deux comptent pour proposer le rechargement.
+      // UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 6.2 de sa spec technique) : même
+      // motif pour le cloud historique (resultat.legacy.compteurs.crees).
       var lanCrees = (resultat.lan && resultat.lan.compteurs) ? resultat.lan.compteurs.crees : 0
-      if (resultat.compteurs.crees > 0 || lanCrees > 0) {
+      var legacyCrees = (resultat.legacy && resultat.legacy.compteurs) ? resultat.legacy.compteurs.crees : 0
+      if (resultat.compteurs.crees > 0 || lanCrees > 0 || legacyCrees > 0) {
         $('#bt_scanRecharger').find('span').text("{{Afficher les nouveaux équipements}}")
         $('#bt_scanRecharger').removeClass('hidden')
       }

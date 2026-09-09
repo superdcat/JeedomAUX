@@ -134,7 +134,11 @@
         "Magasin de certificats local de ce Jeedom illisible": "This Jeedom's local certificate store is unreadable",
         "Serveur du cloud historique injoignable, réessayez plus tard": "Legacy cloud server unreachable, please try again later",
         "Réponse inattendue du cloud historique — consultez les logs du plugin": "Unexpected response from the legacy cloud — check the plugin logs",
-        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Invalid credentials — check the e-mail, password and region"
+        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Invalid credentials — check the e-mail, password and region",
+        "Ignoré — pompe à chaleur (hors périmètre du plugin)": "Ignored — heat pump (outside the plugin's scope)",
+        "Ignoré — appareil non reconnu comme climatiseur": "Ignored — device not recognized as an air conditioner",
+        "Ignoré — budget de temps épuisé": "Ignored — time budget exhausted",
+        "Cet équipement est relié au cloud historique (AC Freedom), qui ne peut pas encore être piloté par ce plugin — patientez pour une prochaine mise à jour": "This device is linked to the legacy cloud (AC Freedom), which cannot yet be controlled by this plugin — please wait for a future update"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -308,6 +312,8 @@
         "Climatiseurs (LAN + cloud)": "Air conditioners (LAN + cloud)",
         "Disponible en LAN": "Available on LAN",
         "Disponible dans le cloud": "Available in the cloud",
+        "Disponible dans le cloud historique": "Available on the legacy cloud",
+        "Climatiseurs trouvés sur le cloud historique": "Air conditioners found on the legacy cloud",
         "Plage de température": "Temperature range",
         "Détecté le": "Detected on",
         "Transport source": "Source transport",

@@ -21,15 +21,21 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 // méthodes publiques de cette classe lèvent une smartclimException, que l'autoloader du
 // core ne résoudra jamais seul (cf. core/php/smartclim.inc.php). require_once idempotent.
 require_once __DIR__ . '/smartclimException.class.php';
+// UC02 du domaine post-mvp/03-cloud-aux-legacy : capacitesAppareil() ci-dessous appelle
+// smartclimCapabilities::bornesParDefaut()/TRANSPORT_AUX_CLOUD_LEGACY. require_once
+// idempotent, sans coût quand smartclim.inc.php l'a déjà chargée.
+require_once __DIR__ . '/smartclimCapabilities.class.php';
 
 /**
  * Brique de transport "AUX Cloud legacy" (cloud historique Broadlink, connu aussi sous
  * AC Freedom / AUX Cloud, hôtes app-service-(region).smarthomecs.* ou ibroadlink.com).
  *
- * UC01 du domaine post-mvp/03-cloud-aux-legacy — périmètre : authentification
- * multi-régions UNIQUEMENT (login(), session(), purgerSession()). La découverte des
- * familles/pièces/appareils (UC02) et la lecture/écriture d'état (UC03) sont HORS
- * périmètre de cette classe pour l'instant.
+ * UC01 du domaine post-mvp/03-cloud-aux-legacy — authentification multi-régions
+ * (login(), session(), purgerSession()). UC02 du même domaine y ajoute la DÉCOUVERTE
+ * du parc (familles -> appareils propres et partagés -> jeu de paramètres réellement
+ * annoncé par chaque appareil -> profil de capacités générique) : listerAppareils(),
+ * capacitesAppareil(), etatAppareil(). La lecture/écriture continue de l'état (UC03) reste
+ * HORS périmètre de cette classe pour l'instant.
  *
  * Conformément à CLAUDE.md (« tous les appels HTTP passent par la brique du transport
  * concerné »), c'est ici et nulle part ailleurs que vit la connaissance de protocole
@@ -54,6 +60,18 @@ class smartclimAuxCloudApi {
   const TIMEOUT_CONNEXION = 5;
   const TIMEOUT_REQUETE = 10;
   const BUDGET_LOGIN = 12;
+
+  // Budget de temps GLOBAL d'une découverte (UC02, § 6.1 de la spec technique), mesuré
+  // depuis l'entrée de listerAppareils() — session (login éventuel) COMPRISE. Parité
+  // avec smartclimAuxHomeApi::BUDGET_SCAN : chaque requête reçoit
+  // max(3, min(TIMEOUT_REQUETE, restant)), arrêt DUR évalué avant chaque famille et
+  // chaque appareil.
+  const BUDGET_DECOUVERTE = 25;
+
+  // Longueur maximale acceptée pour un identifiant de produit avant journalisation (AC4,
+  // § 7.3 de la spec technique) : 32 caractères hexadécimaux observés (§ 1.3), marge
+  // large pour ne jamais tronquer une valeur exploitable en diagnostic.
+  const PRODUIT_INCONNU_MAX = 64;
 
   // Cache (chiffré) de la session AUX Cloud legacy — parallèle de
   // smartclimAuxHomeApi::CLE_CACHE_SESSION, GLOBALE au compte (pas par appareil). TTL
@@ -87,6 +105,12 @@ class smartclimAuxCloudApi {
   // d'échappement d'octet non imprimable comme "\x…") — hex2bin() à l'usage (§ 3 de la
   // spec technique). 16 octets.
   const AES_INITIAL_VECTOR_HEX = 'EAAAAA3ABB5862A21918B5771D1615AA';
+  // UC02, § 1.5 de la spec technique : embarquée DÈS cette UC (et non à l'UC03 comme
+  // l'annonçait par erreur le § 1.5 de la spec technique d'UC01) — la détection de
+  // capacités d'AC2 passe par "sdkcontrol", qui exige "?license=". Recopiée VERBATIM
+  // depuis legacyConstants.ts (même licence MIT, même bloc d'attribution que les
+  // constantes ci-dessus).
+  const LEGACY_LICENSE = 'PAFbJJ3WbvDxH5vvWezXN5BujETtH/iuTtIIW5CE/SeHN7oNKqnEajgljTcL0fBQQWM0XAAAAAAnBhJyhMi7zIQMsUcwR/PEwGA3uB5HLOnr+xRrci+FwHMkUtK7v4yo0ZHa+jPvb6djelPP893k7SagmffZmOkLSOsbNs8CAqsu8HuIDs2mDQAAAAA=';
   const LICENSE_ID = '3c015b249dd66ef0f11f9bef59ecd737';
   const COMPANY_ID = '48eb1b36cf0202ab2ef07b880ecda60d';
   const SPOOF_APP_VERSION = '2.2.10.456537160';
@@ -232,7 +256,11 @@ class smartclimAuxCloudApi {
       // spec technique — le piège le plus coûteux que cette UC puisse produire).
       $status = isset($donnees['status']) && is_scalar($donnees['status']) ? (int) $donnees['status'] : -1;
       if ($status !== 0) {
-        self::journaliserErreurLegacy($donnees);
+        // § 6.1.1 de la spec technique UC02 : journaliserErreurLegacy() porte désormais
+        // $_contexte en 1er paramètre — appel mis à jour DANS LE MÊME GESTE que
+        // l'extension de signature (sinon $donnees atterrirait dans $_contexte, un log
+        // d'erreur de login silencieusement cassé, invisible à php -l comme en CI).
+        self::journaliserErreurLegacy('login', $donnees);
         throw new smartclimException('AUX Cloud legacy login : status ' . $status, smartclimException::TYPE_AUTH);
       }
 
@@ -460,29 +488,47 @@ class smartclimAuxCloudApi {
    * @param string $_token Valeur de l'en-tête "token" (§ 1.2).
    * @param int $_tempsRequete Timeout de cette requête, en secondes.
    * @param array{loginsession:string,userid:string}|null $_session En-têtes de session
-   *   optionnels (non utilisés par le login lui-même — préparés pour l'UC02, qui
-   *   authentifiera ses appels via ces deux en-têtes plutôt qu'un bearer).
-   * @return array Enveloppe JSON décodée (contient au moins 'status').
+   *   optionnels : non fournis par le login lui-même, fournis par TOUS les appels
+   *   authentifiés de découverte (UC02).
+   * @param array{familyid?:string,query?:string,corps_json?:string} $_options Extension
+   *   ADDITIVE (UC02, § 6.1 de la spec technique) : 'query' (suffixe de query string,
+   *   TOUJOURS un littéral serveur, ex. '?action=select'), 'corps_json' (corps JSON en
+   *   CLAIR — remplace $_corpsChiffre pour toutes les routes de découverte, § 1.1 : SEULE
+   *   la route de login a un corps chiffré), 'familyid' (donnée backend qui repart dans
+   *   un EN-TÊTE HTTP — validée par valeurEnteteConforme() AVANT concaténation, § 7.1).
+   * @return array Enveloppe JSON décodée.
    * @throws smartclimException TYPE_RESEAU ou TYPE_PROTOCOLE.
    */
-  private static function requete($_chemin, $_corpsChiffre, $_horodatage, $_token, $_tempsRequete, $_session = null) {
+  private static function requete($_chemin, $_corpsChiffre, $_horodatage, $_token, $_tempsRequete, $_session = null, array $_options = array()) {
     $hote = self::hoteRegion(smartclim::regionAuxCloud());
+    // 'query' est TOUJOURS un littéral SERVEUR (§ 7.1 de la spec technique — aucune
+    // entrée utilisateur n'atteint jamais CURLOPT_URL) : '?action=select',
+    // '?querytype=shared', ou '?license=' . LEGACY_LICENSE (constante embarquée).
+    $chemin = $_chemin . (isset($_options['query']) && is_string($_options['query']) ? $_options['query'] : '');
 
     $entetes = array(
       'Content-Type: application/x-java-serialized-object',
-      'timestamp: ' . $_horodatage,
-      'token: ' . $_token,
-      'licenseId: ' . self::LICENSE_ID,
-      'lid: ' . self::LICENSE_ID,
-      'language: en',
-      'appVersion: ' . self::SPOOF_APP_VERSION,
-      'User-Agent: ' . self::SPOOF_USER_AGENT,
-      'system: ' . self::SPOOF_SYSTEM,
-      'appPlatform: ' . self::SPOOF_APP_PLATFORM,
     );
+    // § 1.1 de la spec technique UC02 : SEULE la route de login envoie "timestamp"/
+    // "token" — les routes de découverte n'en émettent AUCUN. Traitement conditionnel
+    // (émis SEULEMENT si non vides), même doctrine que "loginsession"/"userid" ci-dessous.
+    if ($_horodatage !== '' && $_horodatage !== null) {
+      $entetes[] = 'timestamp: ' . $_horodatage;
+    }
+    if ($_token !== '' && $_token !== null) {
+      $entetes[] = 'token: ' . $_token;
+    }
+    $entetes[] = 'licenseId: ' . self::LICENSE_ID;
+    $entetes[] = 'lid: ' . self::LICENSE_ID;
+    $entetes[] = 'language: en';
+    $entetes[] = 'appVersion: ' . self::SPOOF_APP_VERSION;
+    $entetes[] = 'User-Agent: ' . self::SPOOF_USER_AGENT;
+    $entetes[] = 'system: ' . self::SPOOF_SYSTEM;
+    $entetes[] = 'appPlatform: ' . self::SPOOF_APP_PLATFORM;
+
     // On n'émet "loginsession"/"userid" QUE non vides (§ 1.2 de la spec technique) : au
-    // login ils n'existent pas encore ($_session est null ici), l'UC02 les fournira pour
-    // ses appels authentifiés.
+    // login ils n'existent pas encore ($_session est null ici), toutes les requêtes de
+    // découverte (UC02) les fournissent.
     if (is_array($_session)) {
       if (isset($_session['loginsession']) && $_session['loginsession'] !== '') {
         $entetes[] = 'loginsession: ' . $_session['loginsession'];
@@ -491,9 +537,24 @@ class smartclimAuxCloudApi {
         $entetes[] = 'userid: ' . $_session['userid'];
       }
     }
+    // 'familyid' est la SEULE valeur d'origine BACKEND de $_options qui reparte dans un
+    // en-tête HTTP (§ 7.1) : validée par valeurEnteteConforme() (ancre \z, jamais $)
+    // AVANT concaténation — sans cela, un familyid porteur d'un CRLF injecterait des
+    // en-têtes arbitraires dans la requête.
+    if (isset($_options['familyid']) && $_options['familyid'] !== '') {
+      if (!self::valeurEnteteConforme($_options['familyid'], 128)) {
+        throw new smartclimException('AUX Cloud legacy : familyid de forme inattendue', smartclimException::TYPE_PROTOCOLE);
+      }
+      $entetes[] = 'familyid: ' . $_options['familyid'];
+    }
+
+    // 'corps_json' (corps en CLAIR des routes de découverte) prime sur $_corpsChiffre
+    // (réservé au corps CHIFFRÉ du login, § 1.1) — les deux ne sont jamais fournis
+    // ensemble par un même appelant.
+    $corps = (isset($_options['corps_json']) && is_string($_options['corps_json'])) ? $_options['corps_json'] : $_corpsChiffre;
 
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $hote . $_chemin);
+    curl_setopt($ch, CURLOPT_URL, $hote . $chemin);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::TIMEOUT_CONNEXION);
     curl_setopt($ch, CURLOPT_TIMEOUT, $_tempsRequete);
@@ -501,7 +562,7 @@ class smartclimAuxCloudApi {
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $_corpsChiffre);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $corps);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $entetes);
 
     $reponse = curl_exec($ch);
@@ -533,9 +594,18 @@ class smartclimAuxCloudApi {
       throw new smartclimException('AUX Cloud legacy : HTTP ' . $codeHttp, smartclimException::TYPE_RESEAU);
     }
 
-    // Étape 5 : corps non-JSON, ou "status" absent.
+    // Étape 5 : corps non-JSON. ⚠️ Ajustement UC02 (constat direct sur le code de
+    // référence, § 1.2 de la spec technique de cette UC) : SEULES les routes
+    // "account/login"/"getfamilylist"/"dev/query"/"sharedev/querylist" portent un champ
+    // "status" au PREMIER niveau de l'enveloppe — "querystate" et "sdkcontrol" le portent
+    // sous "event.payload.status" (ou pas du tout pour "sdkcontrol", identifié par
+    // "event.header.name"). Exiger "status" ICI ferait donc échouer en TYPE_PROTOCOLE
+    // ces deux routes à CHAQUE appel. La validation du "status" de premier niveau reste à
+    // la charge de chaque appelant (login() ci-dessus, classerStatutLegacy() plus bas) —
+    // exactement comme le classement des codes métier AUX Home reste à la charge de
+    // classerCodeMetier(), jamais de requeteAppareils().
     $donnees = json_decode((string) $reponse, true);
-    if (!is_array($donnees) || !isset($donnees['status'])) {
+    if (!is_array($donnees)) {
       throw new smartclimException('AUX Cloud legacy : enveloppe JSON invalide ou absente', smartclimException::TYPE_PROTOCOLE);
     }
 
@@ -610,9 +680,15 @@ class smartclimAuxCloudApi {
    * 🚫 Ne journalise JAMAIS json_encode($_donnees) brut (ce que font les trois
    * références) : ce serait contourner les 4 neutralisations ci-dessus.
    *
+   * ⚠️ § 6.1.1 de la spec technique UC02 : $_contexte est INSÉRÉ en 1er paramètre (donc
+   * l'ordre des arguments CHANGE) — l'unique appel existant (login()) a été mis à jour
+   * DANS LE MÊME GESTE. Ne jamais toucher à cette signature sans relire cet appel.
+   *
+   * @param string $_contexte 'login', 'getfamilylist', 'dev_query' ou 'sharedev' (log
+   *   uniquement — jamais une donnée backend).
    * @param array $_donnees Enveloppe décodée renvoyée par requete().
    */
-  private static function journaliserErreurLegacy($_donnees) {
+  private static function journaliserErreurLegacy($_contexte, $_donnees) {
     $status = isset($_donnees['status']) && is_scalar($_donnees['status']) ? (int) $_donnees['status'] : 0;
     $message = '';
     if (isset($_donnees['message']) && is_string($_donnees['message'])) {
@@ -633,6 +709,800 @@ class smartclimAuxCloudApi {
     $message = preg_replace('/[0-9A-Fa-f]{32,}/', '[hex]', $message);
     // 5. Troncature finale.
     $message = substr($message, 0, 120);
-    log::add('smartclim', 'error', 'AUX Cloud legacy (login) : status=' . $status . ' message=' . $message);
+    log::add('smartclim', 'error', 'AUX Cloud legacy (' . $_contexte . ') : status=' . $status . ' message=' . $message);
+  }
+
+  /**
+   * Classe un "status" != 0 renvoyé par une route AUTHENTIFIÉE de découverte
+   * (getfamilylist/dev_query/sharedev) et lève l'exception correspondante, après
+   * journalisation (UC02, § 6.1/7 de la spec technique) — patron IMPÉRATIF identique à
+   * smartclimAuxHomeApi::classerCodeMetier() : cet ordre n'est écrit qu'UNE fois pour les
+   * trois routes authentifiées de découverte. Ne fait RIEN si le "status" vaut 0 (succès).
+   *
+   * ⚠️ $_typeParDefaut vaut TOUJOURS TYPE_AUTH ici (hypothèse "session expirée", § 1.6 —
+   * aucune source ne documente de code dédié) : c'est CE classement qui ARME le rejeu
+   * unique de listerAppareils().
+   *
+   * @param string $_contexte 'getfamilylist', 'dev_query' ou 'sharedev' (log uniquement).
+   * @param array $_donnees Enveloppe décodée renvoyée par requete().
+   * @param int $_typeParDefaut Type à lever si le "status" est != 0.
+   * @throws smartclimException Si et seulement si le "status" est != 0.
+   */
+  private static function classerStatutLegacy($_contexte, $_donnees, $_typeParDefaut) {
+    $status = isset($_donnees['status']) && is_scalar($_donnees['status']) ? (int) $_donnees['status'] : -1;
+    if ($status === 0) {
+      return;
+    }
+    self::journaliserErreurLegacy($_contexte, $_donnees);
+    throw new smartclimException('AUX Cloud legacy ' . $_contexte . ' : status ' . $status, $_typeParDefaut);
+  }
+
+  /**
+   * Liste les familles, appareils (propres ET partagés) et jeux de paramètres réellement
+   * annoncés par chaque appareil du compte AUX Cloud legacy configuré (UC02, § 2/6.1 de la
+   * spec technique). Un tableau vide est un SUCCÈS (compte sans appareil), jamais une
+   * exception.
+   *
+   * Budget de temps GLOBAL (BUDGET_DECOUVERTE = 25 s), session comprise (parité
+   * smartclimAuxHomeApi::listerAppareils()) : arrêt DUR évalué avant chaque famille et
+   * chaque appareil. Re-login réactif borné à UN SEUL rejeu de la découverte ENTIÈRE
+   * (booléen local, JAMAIS de récursion) : le try n'entoure QUE l'exécution métier,
+   * jamais session() — un TYPE_AUTH levé par une route authentifiée de découverte
+   * (getfamilylist/dev_query/sharedev) fait repartir tout executerDecouverte() une seule
+   * fois après re-login ; une erreur SUR UN SEUL appareil (paramètres illisibles) reste,
+   * elle, locale au try/catch PAR APPAREIL (AC3 — jamais de rejeu pour ce cas).
+   *
+   * ⚠️ Correctif reviews croisées (findings major #1/#2) : cette méthode ne FILTRE plus
+   * AUCUN appareil — TOUS ceux rencontrés (y compris pompe à chaleur, budget épuisé, ou
+   * sans preuve de climatiseur) sont RENVOYÉS, porteurs de leur verdict
+   * (`motif_exclusion`/`preuve_climatiseur`). La décision de créer ou non un équipement
+   * appartient à smartclim::scannerAuxCloud(), seul endroit qui connaît l'état de
+   * rapprochement Jeedom (§ 3.1/D1 de la spec technique).
+   *
+   * @param int $_budget Budget de temps GLOBAL, en secondes.
+   * @return array<int, array> Lignes normalisées à clés génériques françaises
+   *   (normaliserAppareilLegacy(), enrichies de `motif_exclusion`/`preuve_climatiseur`
+   *   par executerDecouverte()) — aucun nom de champ propriétaire n'en sort.
+   * @throws smartclimException message TECHNIQUE, recréée sur place avant propagation
+   *   (même motif que login()/session() : la trace de requete() peut porter loginsession).
+   */
+  public static function listerAppareils($_budget = self::BUDGET_DECOUVERTE) {
+    try {
+      $debut = microtime(true);
+      $session = self::session();
+      $rejoue = false;
+
+      while (true) {
+        try {
+          return self::executerDecouverte($session, $debut, $_budget);
+        } catch (smartclimException $e) {
+          $budgetRestant = $_budget - (microtime(true) - $debut);
+          if (!$rejoue && $e->getType() === smartclimException::TYPE_AUTH && $budgetRestant >= self::BUDGET_LOGIN + 3) {
+            $rejoue = true;
+            log::add('smartclim', 'info', 'AUX Cloud legacy : rejeu après re-login (découverte)');
+            self::purgerSession();
+            $session = self::login();
+            continue;
+          }
+          throw $e;
+        }
+      }
+    } catch (smartclimException $e) {
+      // Recrée l'exception À CE POINT D'APPEL, même motif que login()/session()
+      // ci-dessus : la trace d'origine peut embarquer, via la frame de requete(),
+      // loginsession.
+      throw new smartclimException($e->getMessage(), $e->getType(), $e->getContexte());
+    }
+  }
+
+  /**
+   * Corps de listerAppareils() une fois la session en main — EXTRAIT pour permettre le
+   * rejeu (booléen local de l'appelant), jamais de récursion (§ 6.1 de la spec
+   * technique). Un TYPE_AUTH levé par une route authentifiée de découverte REMONTE tel
+   * quel (pour armer le rejeu de l'appelant) ; toute autre erreur, PAR FAMILLE ou PAR
+   * APPAREIL, est journalisée et absorbée localement (AC1/AC3 : la découverte des autres
+   * familles/appareils n'est jamais interrompue).
+   *
+   * @param array $_session
+   * @param float $_debut microtime(true) de l'entrée de listerAppareils().
+   * @param int $_budget
+   * @return array<int, array>
+   * @throws smartclimException UNIQUEMENT TYPE_AUTH (pour armer le rejeu de l'appelant).
+   */
+  private static function executerDecouverte(array $_session, $_debut, $_budget) {
+    $tempsRestant = function () use ($_debut, $_budget) {
+      return $_budget - (microtime(true) - $_debut);
+    };
+    $tempsRequete = function () use ($tempsRestant) {
+      return (int) max(3, min(self::TIMEOUT_REQUETE, $tempsRestant()));
+    };
+
+    $familles = self::requeteFamilles($_session, $tempsRequete());
+
+    $appareils = array();
+    foreach ($familles as $familyId) {
+      if ($tempsRestant() <= 0) {
+        log::add('smartclim', 'warning', 'AUX Cloud legacy : budget de temps épuisé, familles restantes ignorées');
+        break;
+      }
+
+      $bruts = array();
+      try {
+        foreach (self::requeteAppareilsFamille($_session, $familyId, false, $tempsRequete()) as $brut) {
+          $bruts[] = array('brut' => $brut, 'partage' => false);
+        }
+      } catch (smartclimException $e) {
+        if ($e->getType() === smartclimException::TYPE_AUTH) {
+          throw $e;
+        }
+        log::add('smartclim', 'warning', 'AUX Cloud legacy : appareils propres d\'une famille ignorés (type ' . $e->getType() . ')');
+      }
+      try {
+        foreach (self::requeteAppareilsFamille($_session, $familyId, true, $tempsRequete()) as $brut) {
+          $bruts[] = array('brut' => $brut, 'partage' => true);
+        }
+      } catch (smartclimException $e) {
+        if ($e->getType() === smartclimException::TYPE_AUTH) {
+          throw $e;
+        }
+        log::add('smartclim', 'warning', 'AUX Cloud legacy : appareils partagés d\'une famille ignorés (type ' . $e->getType() . ')');
+      }
+
+      if (empty($bruts)) {
+        continue;
+      }
+
+      $paires = array();
+      foreach ($bruts as $entree) {
+        $normalise = self::normaliserAppareilLegacy($entree['brut'], $familyId, $entree['partage']);
+        if ($normalise !== null) {
+          $paires[] = array('brut' => $entree['brut'], 'normalise' => $normalise);
+        }
+      }
+      if (empty($paires)) {
+        continue;
+      }
+
+      // AC5 : état groupé PAR FAMILLE — O(familles), jamais O(appareils). Ne lève
+      // JAMAIS (requeteEtatsGroupe()) : un état groupé indisponible laisse 'online'
+      // absent (invariant « une clé absente ne touche pas sa commande »).
+      $brutsRaw = array();
+      foreach ($paires as $paire) {
+        $brutsRaw[] = $paire['brut'];
+      }
+      $etats = self::requeteEtatsGroupe($_session, $brutsRaw, $tempsRequete());
+
+      foreach ($paires as $paire) {
+        $brut = $paire['brut'];
+        $normalise = $paire['normalise'];
+        $identifiant = $normalise['identifiant'];
+
+        $normalise['enLigne_connue'] = array_key_exists($identifiant, $etats);
+        $normalise['enLigne'] = $normalise['enLigne_connue'] ? (bool) $etats[$identifiant] : false;
+
+        // ⚠️ Correctif reviews croisées (findings major #1/#2) : cette méthode ne
+        // FILTRE plus AUCUN appareil — chaque appareil rencontré est RENVOYÉ, porteur
+        // de son verdict ('motif_exclusion' + 'preuve_climatiseur'). La décision de
+        // CRÉER ou non un équipement (qui dépend du RAPPROCHEMENT Jeedom — § 3.1/D1 de
+        // la spec technique) n'est structurellement pas de son ressort : elle vit
+        // désormais dans smartclim::scannerAuxCloud(), seul endroit qui appelle
+        // chercherEquipementExistant(). Seuls les deux motifs INDÉPENDANTS du
+        // rapprochement — budget de temps épuisé et pompe à chaleur — sont établis ICI.
+        if ($tempsRestant() <= 0) {
+          log::add('smartclim', 'warning', 'AUX Cloud legacy : budget de temps épuisé, appareil ignoré (identifiant=' . $identifiant . ')');
+          $normalise['motif_exclusion'] = 'budget_epuise';
+          $normalise['parametres'] = array();
+          $normalise['preuve_climatiseur'] = false;
+          $appareils[] = $normalise;
+          continue;
+        }
+
+        // Pompes à chaleur : HORS PÉRIMÈTRE du plugin (§ 0 de la spec fonctionnelle) —
+        // AUCUNE requête sdkcontrol (reconnues par leur productId seul), mais DÉSORMAIS
+        // renvoyées (motif_exclusion) pour rester visibles dans l'écran de scan.
+        if (in_array($normalise['type_produit'], self::produitsPompeAChaleur(), true)) {
+          log::add('smartclim', 'debug', 'AUX Cloud legacy : appareil ignoré (pompe à chaleur, hors périmètre du plugin), identifiant=' . $identifiant);
+          $normalise['motif_exclusion'] = 'pompe_a_chaleur';
+          $normalise['parametres'] = array();
+          $normalise['preuve_climatiseur'] = false;
+          $appareils[] = $normalise;
+          continue;
+        }
+
+        if (!$normalise['type_produit_connu']) {
+          // AC4 : ligne 'info' SÉPARÉE, construite APRÈS nettoyerTexteExterne() SEUL —
+          // JAMAIS journaliserErreurLegacy() (§ 7.3 : ce productId hexadécimal de 32
+          // caractères serait remplacé par '[b64]' dès l'étape 3 de sa neutralisation,
+          // rendant AC4 invérifiable sans aucune erreur visible). ⚠️ 'type_produit_connu'
+          // ne gouverne plus QUE ce log depuis le correctif reviews croisées — plus la
+          // création (cf. plus haut) : produitsClimatiseurConnus() n'a plus d'autre rôle.
+          log::add('smartclim', 'info', 'AUX Cloud legacy : identifiant de produit inconnu (' . $normalise['type_produit'] . ') pour un appareil découvert, identifiant=' . $identifiant);
+        }
+
+        $noms = array();
+        $parametresLisibles = false;
+        try {
+          $noms = self::requeteParametres($_session, $brut, $tempsRequete());
+          $parametresLisibles = true;
+        } catch (smartclimException $e) {
+          if ($e->getType() === smartclimException::TYPE_AUTH) {
+            throw $e;
+          }
+          log::add('smartclim', 'warning', 'AUX Cloud legacy : paramètres illisibles pour un appareil (identifiant=' . $identifiant . ', type ' . $e->getType() . ')');
+        }
+
+        // ⚠️ 'preuve_climatiseur' est calculée pour TOUT appareil, QUEL QUE SOIT le
+        // productId (correctif reviews croisées) — c'est smartclim::scannerAuxCloud()
+        // qui décide si elle est EXIGÉE (appareil non rapproché) ou pas (appareil déjà
+        // rapproché, § 3.1/D1 : « on pose seulement les clés auxcloud_* et online »).
+        // 'motif_exclusion' reste '' ICI dans tous les cas : ce n'est PAS un motif
+        // établi par le transport.
+        $normalise['motif_exclusion'] = '';
+        $normalise['parametres'] = $noms;
+        $normalise['preuve_climatiseur'] = $parametresLisibles && self::estClimatiseur($noms);
+        $appareils[] = $normalise;
+      }
+    }
+
+    return $appareils;
+  }
+
+  /**
+   * `POST /appsync/group/member/getfamilylist` (§ 1.2/6.1 de la spec technique) :
+   * AUCUN corps, AUCUN en-tête supplémentaire. Renvoie la liste des `familyid`, chacun
+   * validé par valeurEnteteConforme() — il repart en EN-TÊTE HTTP dans les requêtes
+   * suivantes (§ 7.1).
+   *
+   * @param array $_session
+   * @param int $_temps
+   * @return string[]
+   * @throws smartclimException TYPE_AUTH (via classerStatutLegacy()) ou TYPE_*
+   *   (via requete()).
+   */
+  private static function requeteFamilles(array $_session, $_temps) {
+    $donnees = self::requete('/appsync/group/member/getfamilylist', '', '', '', $_temps, $_session);
+    self::classerStatutLegacy('getfamilylist', $donnees, smartclimException::TYPE_AUTH);
+
+    $familles = array();
+    if (isset($donnees['data']['familyList']) && is_array($donnees['data']['familyList'])) {
+      foreach ($donnees['data']['familyList'] as $famille) {
+        if (!is_array($famille) || !isset($famille['familyid']) || !is_scalar($famille['familyid'])) {
+          continue;
+        }
+        $familyId = (string) $famille['familyid'];
+        if (!self::valeurEnteteConforme($familyId, 128)) {
+          log::add('smartclim', 'warning', 'AUX Cloud legacy : famille ignorée (familyid de forme inattendue)');
+          continue;
+        }
+        $familles[] = $familyId;
+      }
+    }
+    return $familles;
+  }
+
+  /**
+   * Appareils d'UNE famille — propres (`dev/query?action=select`, corps `{"pids":[]}`)
+   * ou partagés (`sharedev/querylist?querytype=shared`, corps `{"endpointId":""}`) selon
+   * `$_partages` (§ 1.2/Écart 1 de la spec technique : les PIÈCES ne sont PAS un niveau
+   * de parcours, `room/query` n'est jamais appelée).
+   *
+   * @param array $_session
+   * @param string $_familyId
+   * @param bool $_partages
+   * @param int $_temps
+   * @return array<int,array> Éléments BRUTS (`data.endpoints[]` ou
+   *   `data.shareFromOther[].devinfo`), pas encore normalisés.
+   * @throws smartclimException TYPE_AUTH (via classerStatutLegacy()) ou TYPE_*
+   *   (via requete()).
+   */
+  private static function requeteAppareilsFamille(array $_session, $_familyId, $_partages, $_temps) {
+    if ($_partages) {
+      $donnees = self::requete('/appsync/group/sharedev/querylist', '', '', '', $_temps, $_session, array(
+        'query' => '?querytype=shared',
+        'corps_json' => '{"endpointId":""}',
+        'familyid' => $_familyId,
+      ));
+      self::classerStatutLegacy('sharedev', $donnees, smartclimException::TYPE_AUTH);
+      $bruts = array();
+      if (isset($donnees['data']['shareFromOther']) && is_array($donnees['data']['shareFromOther'])) {
+        foreach ($donnees['data']['shareFromOther'] as $partage) {
+          if (is_array($partage) && isset($partage['devinfo']) && is_array($partage['devinfo'])) {
+            $bruts[] = $partage['devinfo'];
+          }
+        }
+      }
+      return $bruts;
+    }
+
+    $donnees = self::requete('/appsync/group/dev/query', '', '', '', $_temps, $_session, array(
+      'query' => '?action=select',
+      'corps_json' => '{"pids":[]}',
+      'familyid' => $_familyId,
+    ));
+    self::classerStatutLegacy('dev_query', $donnees, smartclimException::TYPE_AUTH);
+    $bruts = array();
+    if (isset($donnees['data']['endpoints']) && is_array($donnees['data']['endpoints'])) {
+      foreach ($donnees['data']['endpoints'] as $endpoint) {
+        if (is_array($endpoint)) {
+          $bruts[] = $endpoint;
+        }
+      }
+    }
+    return $bruts;
+  }
+
+  /**
+   * État en ligne/hors ligne de TOUS les appareils BRUTS fournis, en UNE SEULE requête
+   * `POST /device/control/v2/querystate` (AC5, § 1.2/3.2/6.1 de la spec technique) —
+   * O(familles), jamais O(appareils). ⚠️ NE LÈVE JAMAIS : tout échec devient un
+   * `log warning` + tableau vide, ce qui laisse 'online' ABSENT de l'état pour chaque
+   * appareil concerné (invariant « une clé absente ne touche pas sa commande »).
+   *
+   * ⚠️ Directive `DNA.QueryState`/`queryState`, préfixe de messageId = `userid`, extras
+   * `messageType: "controlgw.batch"` ET **`timstamp`** — faute de frappe présente dans
+   * les DEUX références (§ 1.2), reproduite VERBATIM.
+   * ⚠️ Écart 3 (§ 1.4) : lit `data`, replie sur `studata` — coût nul, la forme n'est pas
+   * prouvée par les références (aucune des deux ne le fait).
+   *
+   * @param array $_session
+   * @param array $_bruts Éléments BRUTS (endpointId/devSession) d'UNE famille.
+   * @param int $_temps
+   * @return array<string,bool> did (endpointId) => en ligne.
+   */
+  private static function requeteEtatsGroupe(array $_session, array $_bruts, $_temps) {
+    if (empty($_bruts)) {
+      return array();
+    }
+    try {
+      $studata = array();
+      foreach ($_bruts as $brut) {
+        if (!is_array($brut) || !isset($brut['endpointId']) || !is_scalar($brut['endpointId'])) {
+          continue;
+        }
+        $studata[] = array(
+          'did' => (string) $brut['endpointId'],
+          'devSession' => isset($brut['devSession']) && is_scalar($brut['devSession']) ? (string) $brut['devSession'] : '',
+        );
+      }
+      if (empty($studata)) {
+        return array();
+      }
+
+      $entete = self::enveloppeDirective('DNA.QueryState', 'queryState', isset($_session['userid']) ? (string) $_session['userid'] : '', array(
+        'messageType' => 'controlgw.batch',
+        'timstamp' => (string) time(),
+      ));
+      $corps = array(
+        'directive' => array(
+          'header' => $entete,
+          'payload' => array('studata' => $studata, 'msgtype' => 'batch'),
+        ),
+      );
+      $corpsJson = json_encode($corps, JSON_UNESCAPED_SLASHES);
+      if ($corpsJson === false) {
+        log::add('smartclim', 'warning', 'AUX Cloud legacy : encodage JSON du querystate impossible');
+        return array();
+      }
+
+      $donnees = self::requete('/device/control/v2/querystate', '', '', '', $_temps, $_session, array('corps_json' => $corpsJson));
+      if (!isset($donnees['event']['payload']) || !is_array($donnees['event']['payload'])) {
+        log::add('smartclim', 'warning', 'AUX Cloud legacy : querystate — enveloppe inattendue');
+        return array();
+      }
+      $payload = $donnees['event']['payload'];
+      $status = isset($payload['status']) && is_scalar($payload['status']) ? (int) $payload['status'] : -1;
+      if ($status !== 0) {
+        log::add('smartclim', 'warning', 'AUX Cloud legacy : querystate refusé (status ' . $status . ')');
+        return array();
+      }
+
+      $liste = array();
+      if (isset($payload['data']) && is_array($payload['data'])) {
+        $liste = $payload['data'];
+      } elseif (isset($payload['studata']) && is_array($payload['studata'])) {
+        // Écart 3 (§ 1.4) : repli, forme non prouvée.
+        $liste = $payload['studata'];
+      }
+
+      $etats = array();
+      foreach ($liste as $ligne) {
+        if (!is_array($ligne) || !isset($ligne['did']) || !is_scalar($ligne['did'])) {
+          continue;
+        }
+        $etats[(string) $ligne['did']] = isset($ligne['state']) && (int) $ligne['state'] === 1;
+      }
+      return $etats;
+    } catch (Throwable $t) {
+      log::add('smartclim', 'warning', 'AUX Cloud legacy : état groupé indisponible (' . get_class($t) . ')');
+      return array();
+    }
+  }
+
+  /**
+   * Gabarit UNIQUE d'en-tête de directive (§ 1.2/6.1 de la spec technique) : 5 clés
+   * FIXES (`namespace`, `name`, `interfaceVersion: "2"`, `senderId: "sdk"`,
+   * `messageId: "<préfixe>-<epoch s>"`) + extras. Un seul endroit pour ces 5 clés — un
+   * piège signalé pour une future UC03, qui l'aurait sinon dupliqué une 3e fois avec un
+   * risque de divergence silencieuse.
+   *
+   * @param string $_namespace
+   * @param string $_nom
+   * @param string $_prefixeMessage 'userid' pour querystate, 'endpointId' pour sdkcontrol.
+   * @param array $_extra Clés additionnelles fusionnées SANS écraser les 5 clés fixes.
+   * @return array
+   */
+  private static function enveloppeDirective($_namespace, $_nom, $_prefixeMessage, array $_extra) {
+    return array_merge($_extra, array(
+      'namespace' => $_namespace,
+      'name' => $_nom,
+      'interfaceVersion' => '2',
+      'senderId' => 'sdk',
+      'messageId' => $_prefixeMessage . '-' . time(),
+    ));
+  }
+
+  /**
+   * Décode le `cookie` base64 d'un appareil BRUT et reconstruit le `cookie` "mappé"
+   * attendu par `sdkcontrol` (§ 1.3/3 de la spec technique) : base64 d'un JSON
+   * `{device:{id,key,devSession,aeskey,did,pid,mac}}`, où `id`/`key`/`aeskey` viennent
+   * du `cookie` d'ORIGINE (`terminalid`/`aeskey`) et `devSession`/`did`/`pid`/`mac`
+   * viennent de l'appareil BRUT. Chaîne vide si le `cookie` d'origine est inexploitable
+   * (§ 7 : l'appelant traite alors l'échec de `sdkcontrol` comme un échec de requête
+   * ordinaire, jamais une exception dédiée).
+   *
+   * @param array $_brut
+   * @return string
+   */
+  private static function cookieMappe(array $_brut) {
+    $cookieBrut = isset($_brut['cookie']) && is_scalar($_brut['cookie']) ? (string) $_brut['cookie'] : '';
+    if ($cookieBrut === '') {
+      return '';
+    }
+    $decode = base64_decode($cookieBrut, true);
+    if ($decode === false) {
+      return '';
+    }
+    $cookie = json_decode($decode, true);
+    if (!is_array($cookie) || !isset($cookie['terminalid']) || !isset($cookie['aeskey'])) {
+      return '';
+    }
+    $enveloppe = array(
+      'device' => array(
+        'id' => $cookie['terminalid'],
+        'key' => $cookie['aeskey'],
+        'devSession' => isset($_brut['devSession']) && is_scalar($_brut['devSession']) ? (string) $_brut['devSession'] : '',
+        'aeskey' => $cookie['aeskey'],
+        'did' => isset($_brut['endpointId']) && is_scalar($_brut['endpointId']) ? (string) $_brut['endpointId'] : '',
+        'pid' => isset($_brut['productId']) && is_scalar($_brut['productId']) ? (string) $_brut['productId'] : '',
+        'mac' => isset($_brut['mac']) && is_scalar($_brut['mac']) ? (string) $_brut['mac'] : '',
+      ),
+    );
+    $json = json_encode($enveloppe, JSON_UNESCAPED_SLASHES);
+    return ($json !== false) ? base64_encode($json) : '';
+  }
+
+  /**
+   * `POST /device/control/v2/sdkcontrol?license=<LEGACY_LICENSE>` avec `act: "get"`,
+   * `params: []` (§ 1.2/6.1 de la spec technique) : renvoie les NOMS des paramètres
+   * effectivement annoncés par CET appareil — les VALEURS sont ignorées (hors périmètre
+   * UC02). Rejette toute réponse dont `event.header.name !== 'Response'` (une
+   * `'ErrorResponse'` ou une enveloppe inattendue).
+   *
+   * @param array $_session
+   * @param array $_brut Élément BRUT (endpointId/productId/mac/devicetypeFlag/cookie/devSession).
+   * @param int $_temps
+   * @return string[] Noms de paramètres (ex. 'pwr', 'ac_mode', 'temp'...).
+   * @throws smartclimException TYPE_PROTOCOLE ou TYPE_* (via requete()).
+   */
+  private static function requeteParametres(array $_session, array $_brut, $_temps) {
+    $endpointId = isset($_brut['endpointId']) && is_scalar($_brut['endpointId']) ? (string) $_brut['endpointId'] : '';
+
+    $entete = self::enveloppeDirective('DNA.KeyValueControl', 'KeyValueControl', $endpointId, array(
+      'timstamp' => (string) time(),
+    ));
+
+    $corps = array(
+      'directive' => array(
+        'header' => $entete,
+        'endpoint' => array(
+          'devicePairedInfo' => array(
+            'did' => $endpointId,
+            'pid' => isset($_brut['productId']) && is_scalar($_brut['productId']) ? (string) $_brut['productId'] : '',
+            'mac' => isset($_brut['mac']) && is_scalar($_brut['mac']) ? (string) $_brut['mac'] : '',
+            'devicetypeflag' => isset($_brut['devicetypeFlag']) && is_scalar($_brut['devicetypeFlag']) ? (string) $_brut['devicetypeFlag'] : '',
+            'cookie' => self::cookieMappe($_brut),
+          ),
+          'endpointId' => $endpointId,
+          // {} VIDE, littéralement (source de référence, § 1.2) — stdClass et non un
+          // tableau [] PHP, sinon json_encode() produirait "[]" au lieu de "{}".
+          'cookie' => new stdClass(),
+          'devSession' => isset($_brut['devSession']) && is_scalar($_brut['devSession']) ? (string) $_brut['devSession'] : '',
+        ),
+        'payload' => array('act' => 'get', 'params' => array(), 'vals' => array(), 'did' => $endpointId),
+      ),
+    );
+    $corpsJson = json_encode($corps, JSON_UNESCAPED_SLASHES);
+    if ($corpsJson === false) {
+      throw new smartclimException('AUX Cloud legacy : échec de l\'encodage JSON du corps sdkcontrol', smartclimException::TYPE_INTERNE);
+    }
+
+    // ⚠️ rawurlencode() : LEGACY_LICENSE porte '+'/'/'='  — une concaténation nue
+    // corromprait la query string (§ 7.1 : query TOUJOURS un littéral serveur, mais
+    // encodée comme toute valeur placée dans une URL).
+    $donnees = self::requete('/device/control/v2/sdkcontrol', '', '', '', $_temps, $_session, array(
+      'query' => '?license=' . rawurlencode(self::LEGACY_LICENSE),
+      'corps_json' => $corpsJson,
+    ));
+
+    if (!isset($donnees['event']['header']['name']) || $donnees['event']['header']['name'] !== 'Response') {
+      throw new smartclimException('AUX Cloud legacy : sdkcontrol — réponse refusée ou inattendue', smartclimException::TYPE_PROTOCOLE);
+    }
+    $donneesBrutes = isset($donnees['event']['payload']['data']) ? $donnees['event']['payload']['data'] : '';
+    if (!is_string($donneesBrutes) || $donneesBrutes === '') {
+      throw new smartclimException('AUX Cloud legacy : sdkcontrol — champ data absent', smartclimException::TYPE_PROTOCOLE);
+    }
+    $reponse = json_decode($donneesBrutes, true);
+    if (!is_array($reponse) || !isset($reponse['params']) || !is_array($reponse['params'])) {
+      throw new smartclimException('AUX Cloud legacy : sdkcontrol — champ data non re-parsable', smartclimException::TYPE_PROTOCOLE);
+    }
+
+    $noms = array();
+    foreach ($reponse['params'] as $nom) {
+      if (is_string($nom) && preg_match('/\A[A-Za-z0-9_]{1,40}\z/', $nom) === 1) {
+        $noms[] = $nom;
+      }
+    }
+    return $noms;
+  }
+
+  /**
+   * Concept générique -> nom de paramètre AUX Cloud legacy (§ 6.1 de la spec technique) —
+   * SEUL endroit du plugin où vivent 'pwr'/'ac_mode'/'temp'/'envtemp'/'ac_mark'. Pendant
+   * exact d'intentionsAuxHome(). ⚠️ Grandira à l'UC03 de ce domaine (oscillations,
+   * confort, err_flag/ac_errcode1) — ne pas la figer en simple liste plate.
+   *
+   * @return array<string,array{cle:string}>
+   */
+  private static function parametresAuxCloud() {
+    return array(
+      smartclimCapabilities::CONCEPT_POWER => array('cle' => 'pwr'),
+      smartclimCapabilities::CONCEPT_MODE => array('cle' => 'ac_mode'),
+      smartclimCapabilities::CONCEPT_TARGET_TEMP => array('cle' => 'temp'),
+      smartclimCapabilities::CONCEPT_AMBIENT_TEMP => array('cle' => 'envtemp'),
+      smartclimCapabilities::CONCEPT_FAN_SPEED => array('cle' => 'ac_mark'),
+    );
+  }
+
+  /**
+   * `productId` de pompes à chaleur DOCUMENTÉS (§ 1.3 de la spec technique) —
+   * EXCLUSION sur preuve positive, jamais une inclusion : hors périmètre du plugin
+   * (§ 0 de la spec fonctionnelle), qui cible les climatiseurs.
+   *
+   * @return string[]
+   */
+  private static function produitsPompeAChaleur() {
+    return array('000000000000000000000000c3aa0000');
+  }
+
+  /**
+   * `productId` de climatiseurs DOCUMENTÉS (§ 1.3 de la spec technique).
+   *
+   * ⚠️ Correctif reviews croisées (finding major #1) : NE GOUVERNE PLUS la création ni
+   * l'exigence de la preuve estClimatiseur() — cette table ne gouvernait qu'un critère
+   * (l'appartenance au catalogue), quand le § 3.1/D1 de la spec technique en visait un
+   * autre (l'état de RAPPROCHEMENT Jeedom, décidé dans smartclim::scannerAuxCloud()).
+   * Son SEUL rôle restant : `type_produit_connu` gouverne la ligne `log info` d'AC4
+   * (« identifiant de produit inconnu ») — rien d'autre.
+   *
+   * @return string[]
+   */
+  private static function produitsClimatiseurConnus() {
+    return array(
+      '000000000000000000000000c0620000',
+      '0000000000000000000000002a4e0000',
+    );
+  }
+
+  /**
+   * Preuve qu'un appareil au `productId` INCONNU est bien un climatiseur (§ 3.1/D1 de la
+   * spec technique) : `pwr` présent ET (`temp` OU `ac_mode`) présent. ⚠️ `pwr` NU
+   * discrimine climatiseur de pompe à chaleur : `HP_PARAMS` porte `ac_pwr`/`ac_temp`,
+   * jamais `pwr`/`temp` (vérifié sur `const.py`, § 1.3).
+   *
+   * @param string[] $_noms
+   * @return bool
+   */
+  private static function estClimatiseur(array $_noms) {
+    return in_array('pwr', $_noms, true) && (in_array('temp', $_noms, true) || in_array('ac_mode', $_noms, true));
+  }
+
+  /**
+   * Ligne normalisée à clés génériques FRANÇAISES pour un appareil BRUT (§ 6.1 de la
+   * spec technique) — AUCUN nom de champ propriétaire n'en sort. `cookie`/`dev_session`
+   * ont une destination EXCLUSIVE (mémoire chiffrée `smartclim::appareil_auxcloud::<id>`,
+   * jamais journalisés ni rendus), même statut que `capacites_brutes` chez AUX Home.
+   *
+   * ⚠️ Renvoie `null` si `endpointId` est vide après nettoyage — sans identifiant
+   * exploitable, aucun rapprochement ni création n'est possible (même doctrine que
+   * `ignore_identifiant` côté AUX Home).
+   *
+   * ⚠️ Correctif reviews croisées (findings major #1/#2) : `motif_exclusion` (`''` /
+   * `'pompe_a_chaleur'` / `'budget_epuise'`, JAMAIS `'non_climatiseur'` — ce motif-là se
+   * décide en fonction du RAPPROCHEMENT Jeedom, hors de portée de cette classe, cf.
+   * smartclim::scannerAuxCloud()) et `preuve_climatiseur` (bool) sont posées ICI en
+   * valeurs de base, puis RENSEIGNÉES par executerDecouverte() — cette méthode-ci ne
+   * décide plus rien, elle ne fait QUE normaliser les champs bruts.
+   *
+   * @param mixed $_brut
+   * @param string $_familyId
+   * @param bool $_partage
+   * @return array{mac:string,identifiant:string,nom:string,type_produit:string,type_produit_connu:bool,devicetype_flag:string,famille:string,partage:bool,enLigne:bool,parametres:array,motif_exclusion:string,preuve_climatiseur:bool,cookie:string,dev_session:string}|null
+   */
+  private static function normaliserAppareilLegacy($_brut, $_familyId, $_partage) {
+    if (!is_array($_brut)) {
+      return null;
+    }
+
+    $macBrute = isset($_brut['mac']) ? $_brut['mac'] : '';
+    $mac = '';
+    if (is_scalar($macBrute)) {
+      $mac = preg_replace('/[^0-9a-f]/', '', strtolower((string) $macBrute));
+      if (strlen($mac) !== 12) {
+        $mac = '';
+      }
+    }
+
+    $identifiantBrut = isset($_brut['endpointId']) ? $_brut['endpointId'] : '';
+    $identifiant = is_scalar($identifiantBrut) ? self::nettoyerTexteExterne($identifiantBrut, 100) : '';
+    if ($identifiant === '') {
+      return null;
+    }
+
+    $nomBrut = isset($_brut['friendlyName']) ? $_brut['friendlyName'] : '';
+    $nom = is_scalar($nomBrut) ? self::nettoyerTexteExterne($nomBrut, 127) : '';
+
+    $typeProduitBrut = isset($_brut['productId']) ? $_brut['productId'] : '';
+    $typeProduit = is_scalar($typeProduitBrut) ? self::nettoyerTexteExterne($typeProduitBrut, self::PRODUIT_INCONNU_MAX) : '';
+
+    $devicetypeFlagBrut = isset($_brut['devicetypeFlag']) ? $_brut['devicetypeFlag'] : '';
+    $devicetypeFlag = is_scalar($devicetypeFlagBrut) ? self::nettoyerTexteExterne($devicetypeFlagBrut, 32) : '';
+
+    $cookieBrut = isset($_brut['cookie']) ? $_brut['cookie'] : '';
+    $cookie = self::jetonAppareilConforme($cookieBrut, 4096) ? (string) $cookieBrut : '';
+    if ($cookieBrut !== '' && ($cookie === '' || !self::cookieDecodable($cookie))) {
+      // § 7 de la spec technique : log SANS AUCUN CONTENU (jamais le cookie), la
+      // mémorisation du brut a lieu QUAND MÊME (l'appelant, smartclim::, la fera).
+      log::add('smartclim', 'warning', 'AUX Cloud legacy : jeton d\'appairage illisible pour un appareil, identifiant=' . $identifiant);
+    }
+
+    $devSessionBrut = isset($_brut['devSession']) ? $_brut['devSession'] : '';
+    $devSession = self::jetonAppareilConforme($devSessionBrut, 512) ? (string) $devSessionBrut : '';
+
+    return array(
+      'mac' => $mac,
+      'identifiant' => $identifiant,
+      'nom' => $nom,
+      'type_produit' => $typeProduit,
+      'type_produit_connu' => in_array($typeProduit, self::produitsClimatiseurConnus(), true),
+      'devicetype_flag' => $devicetypeFlag,
+      'famille' => $_familyId,
+      'partage' => (bool) $_partage,
+      'enLigne' => false,
+      'parametres' => array(),
+      'motif_exclusion' => '',
+      'preuve_climatiseur' => false,
+      'cookie' => $cookie,
+      'dev_session' => $devSession,
+    );
+  }
+
+  /**
+   * Profil de capacités générique de CET appareil (UC02, § 3.3/6.1 de la spec
+   * technique) : concepts = UNION sûre des clés RÉELLEMENT annoncées (preuve de
+   * présence, jamais une inclusion devinée). `modes`/`vitesses` PUBLIÉS VIDES,
+   * délibérément — même raison que `smartclimBroadlinkLan::capacitesAppareil()` : ce
+   * transport n'a AUCUN équivalent de `feature.coolType`/`coolType`, donc il ne peut
+   * RIEN exclure. Publier un catalogue figé réintroduirait, par l'union
+   * d'`appliquerCapacites()`, un mode qu'un autre transport vient de prouver absent.
+   * `modes_exclus` reste VIDE pour la même raison (aucune preuve disponible).
+   *
+   * ⚠️ Ne lève JAMAIS.
+   *
+   * @param array $_appareil Ligne normalisée par normaliserAppareilLegacy() (enrichie de
+   *   'parametres' par listerAppareils()).
+   * @return array{concepts:array,modes:array,vitesses:array,modes_exclus:array,temperature:array,source:string}
+   */
+  public static function capacitesAppareil(array $_appareil) {
+    $parametres = isset($_appareil['parametres']) && is_array($_appareil['parametres']) ? $_appareil['parametres'] : array();
+    $concepts = array();
+    foreach (self::parametresAuxCloud() as $concept => $definition) {
+      if (in_array($definition['cle'], $parametres, true)) {
+        $concepts[] = $concept;
+      }
+    }
+    return array(
+      'concepts' => $concepts,
+      'modes' => array(),
+      'vitesses' => array(),
+      'modes_exclus' => array(),
+      'temperature' => smartclimCapabilities::bornesParDefaut(),
+      'source' => smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY,
+    );
+  }
+
+  /**
+   * État de CET appareil : `online` UNIQUEMENT — aucune valeur de paramètre (UC02, § 0/6.1
+   * de la spec technique : la lecture d'état continue est hors périmètre, c'est l'UC03).
+   * `online` ABSENT si l'état groupé (requeteEtatsGroupe()) n'a pas couvert ce `did` —
+   * invariant « une clé absente ne touche pas sa commande ». ⚠️ Ne lève JAMAIS.
+   *
+   * @param array $_appareil Ligne enrichie par listerAppareils() ('enLigne'/'enLigne_connue').
+   * @return array{online?:bool,source:string}
+   */
+  public static function etatAppareil(array $_appareil) {
+    $etat = array('source' => smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY);
+    if (!empty($_appareil['enLigne_connue'])) {
+      $etat['online'] = (bool) $_appareil['enLigne'];
+    }
+    return $etat;
+  }
+
+  /**
+   * 3e frontière d'assainissement du plugin (UC02, § 6.1 de la spec technique) —
+   * STRICTEMENT symétrique de smartclimAuxHomeApi::nettoyerTexteExterne() et
+   * smartclimBroadlinkLan::nettoyerNomExterne() : caractères de contrôle -> garde UTF-8
+   * -> retrait `<`/`>` -> trim -> troncature UTF-8-safe. Un même appareil vu par deux
+   * transports doit porter le même nom.
+   *
+   * @param mixed $_valeur
+   * @param int $_max
+   * @return string
+   */
+  private static function nettoyerTexteExterne($_valeur, $_max) {
+    if (!is_scalar($_valeur)) {
+      return '';
+    }
+    $valeur = preg_replace('/[\x00-\x1F\x7F]/', ' ', (string) $_valeur);
+    if (preg_match('//u', $valeur) !== 1) {
+      $valeur = preg_replace('/[^\x20-\x7E]/', ' ', $valeur);
+    }
+    $valeur = str_replace(array('<', '>'), '', $valeur);
+    $valeur = trim($valeur);
+    $valeur = substr($valeur, 0, $_max);
+    while ($valeur !== '' && preg_match('//u', $valeur) !== 1) {
+      $valeur = substr($valeur, 0, -1);
+    }
+    return $valeur;
+  }
+
+  /**
+   * Forme d'un `cookie`/`devSession` AVANT mémorisation (§ 7 de la spec technique) —
+   * jamais journalisés, jamais rendus. Classe volontairement LARGE (base64 étendu) :
+   * aucune référence ne documente la forme exacte de ces deux jetons.
+   *
+   * @param mixed $_valeur
+   * @param int $_max
+   * @return bool
+   */
+  private static function jetonAppareilConforme($_valeur, $_max) {
+    return is_string($_valeur) && $_valeur !== '' && preg_match('/\A[A-Za-z0-9+\/=_.~-]{1,' . (int) $_max . '}\z/', $_valeur) === 1;
+  }
+
+  /**
+   * `cookie` décodable en base64 STRICT puis JSON, portant `terminalid` ET `aeskey`
+   * (§ 7 de la spec technique). Sert UNIQUEMENT à décider d'un `log warning` (jamais de
+   * contenu) — la mémorisation du brut a lieu quand même (§ 4 : « la mémoire sera le
+   * plus souvent EXPIRÉE », contrat imposé à l'UC03).
+   *
+   * @param string $_cookie
+   * @return bool
+   */
+  private static function cookieDecodable($_cookie) {
+    $decode = base64_decode($_cookie, true);
+    if ($decode === false) {
+      return false;
+    }
+    $json = json_decode($decode, true);
+    return is_array($json) && isset($json['terminalid']) && isset($json['aeskey']);
   }
 }

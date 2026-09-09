@@ -115,10 +115,11 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   supportée » **hors** de l'interface, pas seulement dans l'UI.
   ⚠️ **Tout ordre de mode ou de consigne porte TOUJOURS `power => 1`** : changer le mode d'un appareil
   éteint l'allume, en **une** requête. Ne pas « optimiser » en retirant cette clé.
-  ⚠️ **Six mémoires de cache, six rôles distincts, à ne pas confondre** — aucune ne vit en
+  ⚠️ **Sept mémoires de cache, sept rôles distincts, à ne pas confondre** — aucune ne vit en
   configuration d'équipement (la cinquième, `smartclim::dernier_cycle_lan`, est arrivée avec l'UC01 du
   domaine post-MVP 02 : cf. sa ligne après `dernier_incident` ; la sixième,
-  `smartclim::echecs_transport::<id>`, avec l'UC02 du même domaine) :
+  `smartclim::echecs_transport::<id>`, avec l'UC02 du même domaine ; la septième,
+  `smartclim::appareil_auxcloud::<id>`, avec l'UC02 du domaine post-MVP 03) :
   - `smartclim::ordre_recent::<id>` (`CLE_CACHE_DEDUP`, **10 s**) — empreinte du **contenu** de l'ordre,
     posée **avant** l'appel réseau et supprimée en cas d'échec : anti-double-bip. La clé est le contenu,
     **pas** l'équipement — deux ordres *différents* rapprochés passent donc bien tous les deux.
@@ -161,6 +162,16 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
     désynchronisations inoffensives, jamais la seule dangereuse (une `preuve` posée sans
     `STATUT_ETAT_LU`) — celle-là est rendue **inatteignable** par l'aiguillage `noterOperationLan()`, seul
     chemin des sites de lecture vers `memoriserSuccesLan()`.
+  - `smartclim::appareil_auxcloud::<id>` (`CLE_CACHE_APPAREIL_AUXCLOUD`,
+    `DUREE_MEMOIRE_APPAREIL_AUXCLOUD` = **1800 s**) — **jetons d'appairage legacy** de l'UC02 du domaine
+    post-MVP 03 : `{cookie, dev_session, cree_le}`, **par équipement** et **chiffrée** (`utils::encrypt`),
+    contrairement aux deux précédentes — le `cookie` est un base64 portant une **clé AES d'appairage**.
+    Clé par `getId()`, **jamais** par MAC ni par `endpointId`, même leçon que `echecs_transport`.
+    ⚠️ **Écrite sans aucun lecteur pour l'instant**, et elle sera le plus souvent **expirée** à son premier
+    usage réel : l'usage est « scan le matin, commande le soir ». Contrat imposé à l'UC03, écrit au § 4.1
+    de sa spec technique : traiter son absence comme le **cas nominal** et re-obtenir les jetons par un
+    `dev/query` ciblé sur `auxcloud_family_id`. ⚠️ Ne pas la rapprocher de `session_auxcloud` : une session
+    se régénère seule par `login()`, ces jetons non.
   ⚠️ L'**état optimiste** poussé après succès est celui **réellement envoyé** (après quantification), pas
   celui demandé par l'utilisateur.
 
@@ -268,9 +279,10 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   **avant** de construire un `logicalId` ou d'être journalisée.
   ⚠️ Depuis l'UC04 du domaine post-MVP 01, elle retire aussi **`<` et `>`**, exactement comme son jumeau
   `smartclimBroadlinkLan::nettoyerNomExterne()` : `cleanComponanteName()` du core **n'est pas un filtre
-  HTML** (il ne retire ni l'un ni l'autre), et un nom d'équipement finit dans du HTML rendu. Ces deux
-  fonctions doivent rester **symétriques** — même jeu de caractères, même emplacement dans le pipeline
-  (après la validation UTF-8, avant le `trim()`) : sinon un appareil vu par les deux transports porterait
+  HTML** (il ne retire ni l'un ni l'autre), et un nom d'équipement finit dans du HTML rendu. ⚠️ Elles sont
+  **TROIS** depuis l'UC02 du domaine post-MVP 03 (`smartclimAuxCloudApi::nettoyerTexteExterne()`), et les
+  trois doivent rester **symétriques** — même jeu de caractères, même emplacement dans le pipeline
+  (après la validation UTF-8, avant le `trim()`) : sinon un appareil vu par deux transports porterait
   deux noms différents selon le chemin de découverte. ⚠️ Ce filtrage est de la **défense en profondeur**,
   jamais la protection principale : l'échappement se fait **au point de sortie**
   (`htmlspecialchars(..., ENT_QUOTES, 'UTF-8')` dans `desktop/php/smartclim.php`). Détail :
@@ -289,6 +301,10 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   (16-32 °C, pas 0,5) et leur enveloppe personnalisable (5-35 °C), les libellés français `__()` et les
   accesseurs de lecture (`valeursLisibles()`, `versTransport()`, `depuisTransport()`, `libelle()`,
   `libelleConcept()`, `libelleTransport()`, `conceptsConnus()`).
+  ⚠️ Depuis l'UC02 du domaine post-MVP 03 elle porte `TRANSPORT_AUX_CLOUD_LEGACY` et son libellé
+  (« AUX Cloud (AC Freedom) », **nom de marque sans `__()`**), mais **AUCUNE entrée dans `tables()`** :
+  la numérotation legacy (`ac_mode` : 0 COOL, 1 HEAT, 2 DRY, 3 FAN, 4 AUTO — **une troisième**, différente
+  d'AUX Home *et* du LAN) naîtra à l'UC03, avec le pilotage qui la consomme.
   ⚠️ **La colonne `'fil' => null` exclut une valeur au niveau du TRANSPORT** : une valeur sans
   correspondance de **lecture** vérifiée n'apparaît jamais dans l'interface plutôt que d'y figurer
   approximativement. ⚠️ Ce n'est plus le **seul** mécanisme d'exclusion depuis le 2026-08-26 : le second
@@ -585,8 +601,35 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   du transport **AUX Cloud legacy / AC Freedom**, second point cURL du plugin (cf. `smartclimAuxHomeApi`
   ci-dessus). Cette UC n'en livre que l'**authentification** : table des 4 régions (`regions()`,
   `regionsDisponibles()`, `regionConnue()`, `hoteRegion()`), `login()`, `session()`, `purgerSession()`, la
-  crypto (SHA1/MD5/AES-128-CBC), le classement d'erreurs et `journaliserErreurLegacy()`. Aucune découverte
-  d'appareil (UC02), aucune lecture/écriture d'état (UC03), aucun `eqLogic`, aucune commande.
+  crypto (SHA1/MD5/AES-128-CBC), le classement d'erreurs et `journaliserErreurLegacy()`.
+  **Depuis l'UC02 du même domaine, elle porte aussi la découverte** : `listerAppareils()` (familles →
+  appareils propres **et** partagés → un `sdkcontrol get params:[]` par appareil), `capacitesAppareil()`,
+  `etatAppareil()` (`{online, source}` **seuls**), `parametresAuxCloud()`, `estClimatiseur()` et la
+  **3ᵉ frontière d'assainissement** du plugin, `nettoyerTexteExterne()` — **strictement symétrique** de ses
+  deux jumelles (cf. `smartclimAuxHomeApi`). Toujours aucune lecture/écriture d'état (UC03), aucun
+  `eqLogic`, aucune commande.
+  ⚠️⚠️ **Les routes de découverte n'ont NI corps chiffré NI en-têtes `timestamp`/`token`** — seule
+  `/account/login` les porte. Recopier l'enveloppe de `login()` ferait échouer **toute** la découverte.
+  C'est le symétrique exact du piège `status == 0` ci-dessous : les invariants de ce transport ne sont pas
+  uniformes d'une route à l'autre.
+  ⚠️⚠️ **`requete()` ne valide plus qu'une enveloppe JSON — la sentinelle de statut appartient à CHAQUE
+  appelant**, et c'est structurel : `querystate` porte son statut sous `event.payload.status`, `sdkcontrol`
+  n'en a aucun (il s'identifie par `event.header.name`). L'exigence d'un `status` de premier niveau, héritée
+  de l'UC01, faisait échouer ces deux routes **à chaque appel**. Une 7ᵉ route ajoutée sans sa sentinelle
+  transformerait donc une erreur backend en **succès silencieux**. Même doctrine qu'AUX Home, où le
+  classement des codes métier appartient à `classerCodeMetier()`, jamais à la fonction de requête.
+  ⚠️ **Le transport ne FILTRE aucun appareil** : il renvoie tout, avec `preuve_climatiseur` (fait) et
+  `motif_exclusion` (`''` / `'pompe_a_chaleur'` / `'budget_epuise'`). La **création** est décidée par
+  `smartclim::scannerAuxCloud()`, qui n'exige la preuve que si `chercherEquipementExistant()` n'a rien
+  trouvé — un appareil déjà rapproché pose ses clés et son `online` **sans preuve**. Le motif
+  `'non_climatiseur'` n'est **jamais** posé par le transport : c'est une décision, pas un fait de protocole.
+  ⚠️ **Le `productId` inconnu se journalise HORS de `journaliserErreurLegacy()`** : 32 caractères
+  hexadécimaux, il serait masqué en `[hex]` par la passe de neutralisation, et l'exigence de traçabilité
+  deviendrait invérifiable **sans aucune erreur visible**.
+  ⚠️ **Le profil LAN et le profil legacy publient tous deux `modes`/`vitesses` VIDES**, pour la raison
+  identique : le jeu de paramètres dit que `ac_mode` existe, jamais **quelles valeurs** l'appareil accepte —
+  aucun équivalent de `feature.coolType`, donc **rien à exclure**. Publier le catalogue réintroduirait
+  « Chauffage » sur une unité froid-seul par l'union de `appliquerCapacites()`.
   ⚠️⚠️ **La sentinelle de succès de ce backend est `status == 0`, PAS `code == 200`** comme AUX Home. Un
   `!== 200` recopié depuis le transport jumeau ferait échouer **tous** les logins **et** classerait l'échec
   en `TYPE_AUTH` — donc afficherait « vérifiez vos identifiants » sur des identifiants parfaitement valides.
@@ -860,7 +903,17 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   chiffrent via les méthodes d'instance `encrypt()`/`decrypt()`.
   **Clés posées depuis l'UC04** : `capacites` (profil **détecté**, réécrit par chaque scan) et
   `temp_min` / `temp_max` / `temp_pas` (bornes **personnalisées** par l'utilisateur, `''` = « non
-  personnalisé »). **Depuis l'UC01 du domaine post-MVP 02** : `transport_mode` — mode de transport de
+  personnalisé »). **Depuis l'UC02 du domaine post-MVP 03** : `auxcloud_endpoint_id`,
+  `auxcloud_product_id`, `auxcloud_devicetype_flag`, `auxcloud_family_id`, `auxcloud_partage` — identité
+  legacy de l'appareil, **en clair** parce que non sensible et stable ; `auxcloud_family_id` est ce qui
+  permettra à l'UC03 de re-obtenir les jetons d'appairage sans relister tout le compte.
+  ⚠️ **Les secrets, eux, ne sont PAS ici** : `cookie` et `dev_session` vivent dans le cache chiffré
+  `smartclim::appareil_auxcloud::<id>` (cf. la 7ᵉ mémoire ci-dessus) — même séparation que
+  détecté/personnalisé, appliquée cette fois à identité/secret. Ne jamais graver un `cookie` en
+  configuration : `dev/query` le re-livre gratuitement.
+  ⚠️ `auxcloud_endpoint_id` est indexée par `indexerEquipements()` et sert la **8ᵉ étape** de
+  `chercherEquipementExistant()`, **gardée par le transport** comme l'est `lan_mac`.
+  **Depuis l'UC01 du domaine post-MVP 02** : `transport_mode` — mode de transport de
   l'équipement (`auto` / `local` / `cloud`), lu **exclusivement** par `smartclimTransport::mode()` et
   normalisé en **double barrière** (`preSave()` autoritaire et silencieux, plus `mode()` à la lecture).
   ⚠️ **Le défaut AUTO tient à l'ABSENCE de clé**, pas à une valeur écrite : `normaliserMode()` renvoie

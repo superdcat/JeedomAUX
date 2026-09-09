@@ -134,7 +134,11 @@
         "Magasin de certificats local de ce Jeedom illisible": "Almacén de certificados local de este Jeedom ilegible",
         "Serveur du cloud historique injoignable, réessayez plus tard": "Servidor de la nube histórica no disponible, inténtelo de nuevo más tarde",
         "Réponse inattendue du cloud historique — consultez les logs du plugin": "Respuesta inesperada de la nube histórica — consulte los registros del plugin",
-        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Credenciales no válidas — compruebe el correo electrónico, la contraseña y la región"
+        "Identifiants invalides — vérifiez l'e-mail, le mot de passe et la région": "Credenciales no válidas — compruebe el correo electrónico, la contraseña y la región",
+        "Ignoré — pompe à chaleur (hors périmètre du plugin)": "Ignorado — bomba de calor (fuera del alcance del plugin)",
+        "Ignoré — appareil non reconnu comme climatiseur": "Ignorado — dispositivo no reconocido como climatizador",
+        "Ignoré — budget de temps épuisé": "Ignorado — presupuesto de tiempo agotado",
+        "Cet équipement est relié au cloud historique (AC Freedom), qui ne peut pas encore être piloté par ce plugin — patientez pour une prochaine mise à jour": "Este equipo está vinculado a la nube histórica (AC Freedom), que este plugin todavía no puede controlar — espere a una futura actualización"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -308,6 +312,8 @@
         "Climatiseurs (LAN + cloud)": "Climatizadores (LAN + nube)",
         "Disponible en LAN": "Disponible en LAN",
         "Disponible dans le cloud": "Disponible en la nube",
+        "Disponible dans le cloud historique": "Disponible en la nube histórica",
+        "Climatiseurs trouvés sur le cloud historique": "Climatizadores encontrados en la nube histórica",
         "Plage de température": "Rango de temperatura",
         "Détecté le": "Detectado el",
         "Transport source": "Transporte de origen",

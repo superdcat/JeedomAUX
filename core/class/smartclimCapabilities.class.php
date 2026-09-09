@@ -70,6 +70,13 @@ class smartclimCapabilities {
   // de ce domaine — rien ne l'établit tant qu'aucun ordre n'a été émis).
   const TRANSPORT_BROADLINK_LAN = 'BROADLINK_LAN';
 
+  // Identifiant du transport cloud historique (UC02 du domaine
+  // post-mvp/03-cloud-aux-legacy, § 6.3 de sa spec technique). ⚠️ AUCUNE entrée dans
+  // tables() ci-dessous : la numérotation legacy des modes/vitesses est l'UC03 de ce
+  // domaine (§ 3.3/R9 de la spec technique) — cette constante ne sert, pour l'instant,
+  // qu'à libelleTransport() et aux clés de rapprochement de smartclim::.
+  const TRANSPORT_AUX_CLOUD_LEGACY = 'AUX_CLOUD_LEGACY';
+
   const CONCEPT_ONLINE = 'online';
   const CONCEPT_POWER = 'power';
   const CONCEPT_MODE = 'mode';
@@ -735,6 +742,9 @@ class smartclimCapabilities {
     }
     if ($_transport === self::TRANSPORT_BROADLINK_LAN) {
       return 'Broadlink LAN';
+    }
+    if ($_transport === self::TRANSPORT_AUX_CLOUD_LEGACY) {
+      return 'AUX Cloud (AC Freedom)';
     }
     return '';
   }

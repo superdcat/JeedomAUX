@@ -60,6 +60,7 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 								<th>{{Adresse MAC}}</th>
 								<th>{{Disponible en LAN}}</th>
 								<th>{{Disponible dans le cloud}}</th>
+								<th>{{Disponible dans le cloud historique}}</th>
 								<th>{{Transport actif}}</th>
 							</tr>
 						</thead>
@@ -72,6 +73,25 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 				<h4>{{Climatiseurs trouvés}}</h4>
 				<div class="table-responsive">
 					<table id="table_scanTrouves" class="table table-bordered table-condensed">
+						<thead>
+							<tr>
+								<th>{{Nom}}</th>
+								<th>{{Modèle}}</th>
+								<th>{{Adresse MAC}}</th>
+								<th>{{Identifiant cloud}}</th>
+								<th>{{État}}</th>
+								<th>{{Résultat}}</th>
+							</tr>
+						</thead>
+						<tbody>
+						</tbody>
+					</table>
+				</div>
+			</div>
+			<div id="div_scanAuxCloudWrapper">
+				<h4>{{Climatiseurs trouvés sur le cloud historique}}</h4>
+				<div class="table-responsive">
+					<table id="table_scanAuxCloud" class="table table-bordered table-condensed">
 						<thead>
 							<tr>
 								<th>{{Nom}}</th>

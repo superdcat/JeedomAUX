@@ -214,6 +214,27 @@ class smartclim extends eqLogic {
   const CLE_CACHE_ECHECS_TRANSPORT = 'smartclim::echecs_transport::';
   const DUREE_MEMOIRE_ECHECS_TRANSPORT = 86400;
 
+  // UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 4/6.2 de sa spec technique) : clés de
+  // configuration PAR ÉQUIPEMENT de la découverte legacy — identité stable, non sensible,
+  // séparation par NATURE de donnée (pas par commodité) de la mémoire chiffrée
+  // ci-dessous, qui porte le SECRET d'appairage.
+  const CLE_CONF_AUXCLOUD_ENDPOINT_ID = 'auxcloud_endpoint_id';
+  const CLE_CONF_AUXCLOUD_PRODUCT_ID = 'auxcloud_product_id';
+  const CLE_CONF_AUXCLOUD_DEVICETYPE_FLAG = 'auxcloud_devicetype_flag';
+  const CLE_CONF_AUXCLOUD_FAMILY_ID = 'auxcloud_family_id';
+  const CLE_CONF_AUXCLOUD_PARTAGE = 'auxcloud_partage';
+
+  // 7ᵉ mémoire de cache du plugin (§ 4 de la spec technique) : `cookie` (secret
+  // d'appairage) + `devSession` (jeton périssable) d'un équipement legacy, CHIFFRÉE,
+  // clé par getId() (jamais par MAC ni par endpointId — même leçon que
+  // CLE_CACHE_ECHECS_TRANSPORT). ⚠️ Écrite SANS lecteur dans cette UC (§ 4.1 — contrat
+  // imposé à l'UC03 : cette mémoire sera le plus souvent EXPIRÉE, le pilotage devra
+  // savoir la re-obtenir par un dev/query ciblé sur CLE_CONF_AUXCLOUD_FAMILY_ID). Les
+  // postConfig_auxcloud_* ne la purgent PAS (§ 4 : itérer sur tout le parc ne se
+  // justifie pas, la TTL de 30 min suffit, aucun secret DE COMPTE dedans).
+  const CLE_CACHE_APPAREIL_AUXCLOUD = 'smartclim::appareil_auxcloud::';
+  const DUREE_MEMOIRE_APPAREIL_AUXCLOUD = 1800;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -577,10 +598,35 @@ class smartclim extends eqLogic {
    * FUSIONNENT ceux du LAN et ceux du cloud (array_replace, le CLOUD gagne en cas de
    * collision — reflet de l'ordre réel d'exécution, le cloud passant EN DERNIER).
    *
-   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, cloudErreur:string, climatiseurs:array}
+   * Depuis l'UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 3.5/6.2 de sa spec
+   * technique) : le scan legacy est INTERCALÉ entre le LAN et AUX Home — ordre de
+   * composition LAN -> legacy -> AUX Home (D6). `array_replace` fait gagner le
+   * DERNIER : intercaler (plutôt qu'ajouter en fin) laisse l'affichage existant d'un
+   * équipement piloté par AUX Home strictement INCHANGÉ. Son exception éventuelle est
+   * capturée SÉPARÉMENT ('legacyErreur'), même doctrine que 'cloudErreur' ci-dessus.
+   *
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, legacy:array, legacyErreur:string, cloudErreur:string, climatiseurs:array}
    */
   public static function scannerClimatiseurs() {
     $lan = self::scannerReseauLocal();
+
+    $resultatLegacy = array(
+      'resume' => '',
+      'compteurs' => array(),
+      'appareils' => array(),
+      'disparus' => array(),
+      'profils' => array(),
+      'etatsConnexion' => array(),
+    );
+    $legacyErreur = '';
+    try {
+      $resultatLegacy = self::scannerAuxCloud();
+    } catch (smartclimException $e) {
+      // Message déjà curaté en français (scannerAuxCloud() journalise déjà le
+      // technique avant de lever) : niveau warning côté JS, pas une panne — même
+      // doctrine que 'cloudErreur' (D-POSTMVP0101-10).
+      $legacyErreur = $e->getMessage();
+    }
 
     $resultatCloud = array(
       'resume' => '',
@@ -603,17 +649,22 @@ class smartclim extends eqLogic {
     $lanEtatsConnexion = isset($lan['etatsConnexion']) && is_array($lan['etatsConnexion']) ? $lan['etatsConnexion'] : array();
     // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 5.10 de sa spec
     // technique) : le cloud passe EN DERNIER et gagne — reflète l'ordre RÉEL d'exécution
-    // (LAN puis cloud), donc le transport RÉELLEMENT en usage.
-    $etatsConnexionFusionnes = array_replace($lanEtatsConnexion, $resultatCloud['etatsConnexion']);
+    // (LAN puis legacy puis AUX Home), donc le transport RÉELLEMENT en usage.
+    $etatsConnexionFusionnes = array_replace($lanEtatsConnexion, $resultatLegacy['etatsConnexion'], $resultatCloud['etatsConnexion']);
+    $profilsFusionnes = array_replace($lanProfils, $resultatLegacy['profils'], $resultatCloud['profils']);
 
     return array_merge($resultatCloud, array(
-      'profils' => array_replace($lanProfils, $resultatCloud['profils']),
+      'profils' => $profilsFusionnes,
       'etatsConnexion' => $etatsConnexionFusionnes,
       'lan' => $lan,
+      'legacy' => $resultatLegacy,
+      'legacyErreur' => $legacyErreur,
       'cloudErreur' => $cloudErreur,
-      // UC04 (§ 5.10) : une ligne de synthèse par climatiseur (LAN oui/non, cloud
-      // oui/non, transport actif), calculée APRÈS les deux phases.
-      'climatiseurs' => self::lignesFusionScan($lan['appareils'], $resultatCloud['appareils'], $etatsConnexionFusionnes),
+      // UC04 (§ 5.10), enrichie à l'UC02 du domaine post-mvp/03-cloud-aux-legacy
+      // (§ 6.2) : une ligne de synthèse par climatiseur (LAN oui/non, cloud historique
+      // oui/non, cloud AUX Home oui/non, transport actif), calculée APRÈS les trois
+      // phases.
+      'climatiseurs' => self::lignesFusionScan($lan['appareils'], $resultatCloud['appareils'], $etatsConnexionFusionnes, $resultatLegacy['appareils']),
     ));
   }
 
@@ -798,6 +849,270 @@ class smartclim extends eqLogic {
     } finally {
       cache::delete(self::CLE_CACHE_VERROU_SCAN);
     }
+  }
+
+  /**
+   * Scanne le compte AUX Cloud legacy configuré (UC02 du domaine
+   * post-mvp/03-cloud-aux-legacy, § 6.2 de sa spec technique) : familles -> appareils
+   * propres ET partagés -> jeu de paramètres réellement annoncé -> profil de capacités
+   * générique. JUMEAU de scannerAuxHome() (même verrou CLE_CACHE_VERROU_SCAN, même
+   * indexerEquipements(), même try/catch PAR appareil), avec DEUX divergences
+   * assumées :
+   *
+   * - garde SILENCIEUSE (`!compteAuxCloudConfigure()` -> résultat vide + `log debug`,
+   *   JAMAIS d'exception) : un compte legacy non configuré est le cas NOMINAL d'un
+   *   utilisateur purement AUX Home (contrairement à scannerAuxHome(), appelée seule
+   *   par le cron et devant donc signaler une absence de configuration) ;
+   * - AUCUN calcul de « disparus » : appareilsDisparus() reste indexée sur
+   *   `auxhome_device_id` et n'est PAS touchée ici.
+   *
+   * ⚠️ Correctif reviews croisées (findings major #1/#2, § 3.1/D1 de la spec
+   * technique) : c'est ICI, et nulle part ailleurs, que se décide si la preuve
+   * `estClimatiseur()` (portée par `preuve_climatiseur` sur chaque appareil renvoyé par
+   * `listerAppareils()`) est EXIGÉE — elle ne l'est que pour un appareil NON rapproché
+   * (`chercherEquipementExistant()` renvoie `null`). Un appareil DÉJÀ rapproché pose ses
+   * clés `auxcloud_*`/`online` même sans cette preuve. Les motifs d'exclusion
+   * indépendants du rapprochement (`pompe_a_chaleur`, `budget_epuise`) restent, eux,
+   * établis par le transport et simplement RELAYÉS ici en ligne de résultat.
+   *
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array}
+   * @throws smartclimException Message DÉJÀ curaté en français (via messageErreurAuxCloud()).
+   */
+  public static function scannerAuxCloud() {
+    if (!self::compteAuxCloudConfigure()) {
+      log::add('smartclim', 'debug', 'Scan AUX Cloud legacy ignoré : compte non configuré');
+      return array(
+        'resume' => '',
+        'compteurs' => array(),
+        'appareils' => array(),
+        'disparus' => array(),
+        'profils' => array(),
+        'etatsConnexion' => array(),
+      );
+    }
+
+    if (cache::byKey(self::CLE_CACHE_VERROU_SCAN)->getValue(null) !== null) {
+      throw new smartclimException(__('Un scan est déjà en cours, réessayez dans quelques instants', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    cache::set(self::CLE_CACHE_VERROU_SCAN, '1', self::DUREE_VERROU_SCAN);
+
+    try {
+      try {
+        $appareilsBruts = smartclimAuxCloudApi::listerAppareils();
+      } catch (smartclimException $e) {
+        log::add('smartclim', 'error', 'Scan AUX Cloud legacy échoué (type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+        throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+      }
+
+      $index = self::indexerEquipements();
+      $compteurs = array(
+        'trouves' => count($appareilsBruts),
+        'crees' => 0,
+        'existants' => 0,
+        'ignores' => 0,
+        'erreurs' => 0,
+        'disparus' => 0,
+      );
+      $appareilsResultat = array();
+      $consommes = array();
+      $eqLogicsTouches = array();
+
+      foreach ($appareilsBruts as $appareil) {
+        $macNorm = self::normaliserMac($appareil['mac']);
+        $identifiant = is_string($appareil['identifiant']) ? $appareil['identifiant'] : '';
+        $nomAffiche = $appareil['nom'];
+
+        try {
+          if ($macNorm === '' && $identifiant === '') {
+            $compteurs['ignores']++;
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_identifiant');
+            continue;
+          }
+
+          // Correctif reviews croisées (findings major #1/#2) : les motifs d'exclusion
+          // ÉTABLIS PAR LE TRANSPORT — indépendants de tout rapprochement Jeedom — sont
+          // désormais RENVOYÉS par listerAppareils() au lieu d'être filtrés en silence.
+          // Ils s'affichent, comme les deux autres cas d'ignoré, via ligneResultatScan().
+          $motifTransport = isset($appareil['motif_exclusion']) ? $appareil['motif_exclusion'] : '';
+          if ($motifTransport === 'pompe_a_chaleur') {
+            $compteurs['ignores']++;
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_pompe_chaleur');
+            continue;
+          }
+          if ($motifTransport === 'budget_epuise') {
+            $compteurs['ignores']++;
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_budget');
+            continue;
+          }
+
+          $logicalId = $macNorm !== '' ? ('mac:' . $macNorm) : ('auxcloud:' . $identifiant);
+          // +1 étape de rapprochement (parEndpointAuxCloud), gardée par $_transport ===
+          // TRANSPORT_AUX_CLOUD_LEGACY (§ 6.2 de la spec technique) — $_deviceId passé
+          // '' : l'étape 7 (auxhome_device_id) reste réservée à AUX Home.
+          $eqLogic = self::chercherEquipementExistant($macNorm, '', $index, smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY, $identifiant);
+          $cleConsommee = is_object($eqLogic) ? $eqLogic->getLogicalId() : $logicalId;
+
+          if (in_array($cleConsommee, $consommes, true)) {
+            $compteurs['ignores']++;
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_doublon', is_object($eqLogic) ? $eqLogic->getId() : 0);
+            continue;
+          }
+
+          // Correctif reviews croisées (finding major #1) : la preuve estClimatiseur()
+          // (portée par 'preuve_climatiseur') n'est EXIGÉE que pour un appareil NON
+          // rapproché — § 3.1/D1 de la spec technique : « sur un appareil déjà
+          // rapproché, on pose seulement les clés auxcloud_* et online ». Un appareil
+          // jamais vu par Jeedom, sans cette preuve, n'est PAS créé — quel que soit son
+          // productId, catalogue ou non (produitsClimatiseurConnus() ne gouverne plus
+          // cette décision, cf. son docblock côté transport).
+          if (!is_object($eqLogic) && empty($appareil['preuve_climatiseur'])) {
+            $compteurs['ignores']++;
+            $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_non_climatiseur');
+            continue;
+          }
+
+          $capacites = smartclimAuxCloudApi::capacitesAppareil($appareil);
+
+          if (is_object($eqLogic)) {
+            $consommes[] = $cleConsommee;
+            $modifie = self::appliquerDecouverteAuxCloud($eqLogic, $appareil);
+            if ($eqLogic->appliquerCapacites($capacites)) {
+              $modifie = true;
+            }
+            if (self::memoriserMacEquipement($eqLogic, $macNorm)) {
+              $modifie = true;
+            }
+            if ($modifie) {
+              $eqLogic->save();
+            }
+            self::memoriserAppareilAuxCloud($eqLogic, $appareil);
+            $compteurs['existants']++;
+            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'existant', $eqLogic->getId());
+            $eqLogicsTouches[] = $eqLogic;
+          } else {
+            $eqLogic = self::creerEquipement($logicalId, $appareil['nom'], $macNorm, $index['noms'], $capacites, array(
+              self::CLE_CONF_AUXCLOUD_ENDPOINT_ID => $identifiant,
+              self::CLE_CONF_AUXCLOUD_PRODUCT_ID => $appareil['type_produit'],
+              self::CLE_CONF_AUXCLOUD_DEVICETYPE_FLAG => $appareil['devicetype_flag'],
+              self::CLE_CONF_AUXCLOUD_FAMILY_ID => $appareil['famille'],
+              self::CLE_CONF_AUXCLOUD_PARTAGE => $appareil['partage'] ? 1 : 0,
+            ));
+            $consommes[] = $logicalId;
+            self::memoriserAppareilAuxCloud($eqLogic, $appareil);
+            $compteurs['crees']++;
+            $appareilsResultat[] = self::ligneResultatScan($eqLogic->getName(), $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'cree', $eqLogic->getId());
+            $eqLogicsTouches[] = $eqLogic;
+          }
+
+          try {
+            $eqLogic->appliquerEtat(smartclimAuxCloudApi::etatAppareil($appareil));
+          } catch (Throwable $t) {
+            log::add('smartclim', 'error', 'AUX Cloud legacy : application de l\'état impossible (identifiant=' . $identifiant . ') : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+          }
+        } catch (Exception $e) {
+          log::add('smartclim', 'error', 'Scan AUX Cloud legacy : erreur lors du traitement de l\'appareil (identifiant=' . $identifiant . ') : ' . self::neutraliserPourLog($e->getMessage()));
+          $compteurs['erreurs']++;
+          $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'erreur');
+        } catch (Throwable $t) {
+          log::add('smartclim', 'error', 'Scan AUX Cloud legacy : erreur inattendue lors du traitement de l\'appareil (identifiant=' . $identifiant . ') : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+          $compteurs['erreurs']++;
+          $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'erreur');
+        }
+      }
+
+      return array(
+        'resume' => self::resumeScanAuxCloud($compteurs),
+        'compteurs' => $compteurs,
+        'appareils' => $appareilsResultat,
+        'disparus' => array(),
+        'profils' => self::profilsAffichables($eqLogicsTouches),
+        'etatsConnexion' => self::etatsConnexionAffichables($eqLogicsTouches),
+      );
+    } finally {
+      cache::delete(self::CLE_CACHE_VERROU_SCAN);
+    }
+  }
+
+  /**
+   * Phrase française résumant le résultat du scan AUX Cloud legacy (§ 6.2 de la spec
+   * technique) — réutilise les fragments EXISTANTS de resumeScan() (`%d créé(s)`, `%d
+   * déjà connu(s)`, `%d ignoré(s)`, `%d en erreur`) : aucune clé i18n nouvelle. Pas de
+   * fragment « disparus » (scannerAuxCloud() n'en calcule jamais).
+   *
+   * @param array $_compteurs
+   * @return string
+   */
+  private static function resumeScanAuxCloud(array $_compteurs) {
+    if ($_compteurs['trouves'] === 0) {
+      return __('Aucun climatiseur trouvé sur ce compte', __FILE__);
+    }
+    $fragments = array();
+    $fragments[] = sprintf(__('%d climatiseur(s) trouvé(s) sur le compte', __FILE__), $_compteurs['trouves']);
+    if ($_compteurs['crees'] > 0) {
+      $fragments[] = sprintf(__('%d créé(s)', __FILE__), $_compteurs['crees']);
+    }
+    if ($_compteurs['existants'] > 0) {
+      $fragments[] = sprintf(__('%d déjà connu(s)', __FILE__), $_compteurs['existants']);
+    }
+    if ($_compteurs['ignores'] > 0) {
+      $fragments[] = sprintf(__('%d ignoré(s)', __FILE__), $_compteurs['ignores']);
+    }
+    if ($_compteurs['erreurs'] > 0) {
+      $fragments[] = sprintf(__('%d en erreur', __FILE__), $_compteurs['erreurs']);
+    }
+    return implode(', ', $fragments);
+  }
+
+  /**
+   * Pose les 5 clés `auxcloud_*` d'un équipement EXISTANT, EN COMPARANT AVANT D'ÉCRIRE
+   * (§ 6.2 de la spec technique, même doctrine que le bloc équivalent AUX Home) — jamais
+   * de save() ici, c'est à l'appelant de décider.
+   *
+   * @param smartclim $_eq
+   * @param array $_appareil Ligne normalisée par smartclimAuxCloudApi::listerAppareils().
+   * @return bool true si l'objet a été modifié.
+   */
+  private static function appliquerDecouverteAuxCloud(smartclim $_eq, array $_appareil) {
+    $modifie = false;
+    $paires = array(
+      self::CLE_CONF_AUXCLOUD_ENDPOINT_ID => is_string($_appareil['identifiant']) ? $_appareil['identifiant'] : '',
+      self::CLE_CONF_AUXCLOUD_PRODUCT_ID => is_string($_appareil['type_produit']) ? $_appareil['type_produit'] : '',
+      self::CLE_CONF_AUXCLOUD_DEVICETYPE_FLAG => is_string($_appareil['devicetype_flag']) ? $_appareil['devicetype_flag'] : '',
+      self::CLE_CONF_AUXCLOUD_FAMILY_ID => is_string($_appareil['famille']) ? $_appareil['famille'] : '',
+      self::CLE_CONF_AUXCLOUD_PARTAGE => !empty($_appareil['partage']) ? 1 : 0,
+    );
+    foreach ($paires as $cle => $valeur) {
+      if ($_eq->getConfiguration($cle) !== $valeur) {
+        $_eq->setConfiguration($cle, $valeur);
+        $modifie = true;
+      }
+    }
+    return $modifie;
+  }
+
+  /**
+   * Mémorise `cookie`/`devSession` d'un appareil legacy en cache CHIFFRÉ, clé par
+   * `getId()` (§ 4/6.2 de la spec technique — JAMAIS par MAC ni par `endpointId`, même
+   * leçon que CLE_CACHE_ECHECS_TRANSPORT). Sans effet si `cookie` est vide (appareil pas
+   * encore enregistré, ou jeton illisible) : ne mémorise JAMAIS un secret vide sous une
+   * clé valide.
+   *
+   * @param smartclim $_eq
+   * @param array $_appareil
+   */
+  private static function memoriserAppareilAuxCloud(smartclim $_eq, array $_appareil) {
+    if ($_eq->getId() == '' || empty($_appareil['cookie'])) {
+      return;
+    }
+    $contenu = json_encode(array(
+      'cookie' => $_appareil['cookie'],
+      'dev_session' => isset($_appareil['dev_session']) ? $_appareil['dev_session'] : '',
+      'cree_le' => time(),
+    ));
+    if ($contenu === false) {
+      return;
+    }
+    cache::set(self::CLE_CACHE_APPAREIL_AUXCLOUD . $_eq->getId(), utils::encrypt($contenu), self::DUREE_MEMOIRE_APPAREIL_AUXCLOUD);
   }
 
   /**
@@ -1942,7 +2257,11 @@ class smartclim extends eqLogic {
    * ⚠️ Premier arrivé gagne sur parMac/parLanMac, avec un log 'debug' en cas de
    * collision (doublon RÉEL du parc, pas une anomalie de code).
    *
-   * @return array{parLogicalId:array<string,smartclim>, parMac:array<string,smartclim>, parLanMac:array<string,smartclim>, parDeviceId:array<string,smartclim>, tous:smartclim[], noms:array<string,bool>}
+   * ⚠️ +1 index (UC02 du domaine post-mvp/03-cloud-aux-legacy, § 6.2 de sa spec
+   * technique) : `parEndpointAuxCloud`, FILTRÉ « non vide » — même piège que
+   * `parLanMac` (une clé vide collisionnerait tous les équipements sans endpoint legacy).
+   *
+   * @return array{parLogicalId:array<string,smartclim>, parMac:array<string,smartclim>, parLanMac:array<string,smartclim>, parDeviceId:array<string,smartclim>, parEndpointAuxCloud:array<string,smartclim>, tous:smartclim[], noms:array<string,bool>}
    */
   private static function indexerEquipements() {
     $tous = eqLogic::byType('smartclim');
@@ -1950,6 +2269,7 @@ class smartclim extends eqLogic {
     $parMac = array();
     $parLanMac = array();
     $parDeviceId = array();
+    $parEndpointAuxCloud = array();
     $noms = array();
     foreach ($tous as $eqLogic) {
       $parLogicalId[$eqLogic->getLogicalId()] = $eqLogic;
@@ -1976,6 +2296,14 @@ class smartclim extends eqLogic {
       if (is_string($deviceId) && $deviceId !== '') {
         $parDeviceId[$deviceId] = $eqLogic;
       }
+      $endpointAuxCloud = $eqLogic->getConfiguration(self::CLE_CONF_AUXCLOUD_ENDPOINT_ID);
+      if (is_string($endpointAuxCloud) && $endpointAuxCloud !== '') {
+        if (isset($parEndpointAuxCloud[$endpointAuxCloud])) {
+          log::add('smartclim', 'debug', 'Collision d\'index endpoint AUX Cloud legacy entre équipements lors de l\'indexation');
+        } else {
+          $parEndpointAuxCloud[$endpointAuxCloud] = $eqLogic;
+        }
+      }
       $noms[$eqLogic->getName()] = true;
     }
     return array(
@@ -1983,6 +2311,7 @@ class smartclim extends eqLogic {
       'parMac' => $parMac,
       'parLanMac' => $parLanMac,
       'parDeviceId' => $parDeviceId,
+      'parEndpointAuxCloud' => $parEndpointAuxCloud,
       'tous' => $tous,
       'noms' => $noms,
     );
@@ -2006,14 +2335,23 @@ class smartclim extends eqLogic {
    * déclencherait à tort sur une MAC symétrique alors que c'est le MÊME équipement
    * que l'étape 1.
    *
+   * ⚠️ +1 étape (8, UC02 du domaine post-mvp/03-cloud-aux-legacy, § 6.2 de sa spec
+   * technique) : `auxcloud_endpoint_id`, gardée par `$_transport ===
+   * TRANSPORT_AUX_CLOUD_LEGACY` — même doctrine que la garde `lan_mac` (« ne rapproche
+   * que pour son transport »). Le scan legacy passe `$_deviceId = ''` : l'étape 7
+   * (`auxhome_device_id`) reste réservée à AUX Home, SANS modification.
+   *
    * @param string $_macNorm
    * @param string $_deviceId
    * @param array $_index Index construit par indexerEquipements().
-   * @param string $_transport '' (cloud, comportement historique inchangé) ou
-   *   smartclimCapabilities::TRANSPORT_BROADLINK_LAN.
+   * @param string $_transport '' (cloud AUX Home, comportement historique inchangé),
+   *   smartclimCapabilities::TRANSPORT_BROADLINK_LAN ou
+   *   smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY.
+   * @param string $_endpointAuxCloud `auxcloud_endpoint_id` de l'appareil recherché
+   *   (UC02 du domaine post-mvp/03-cloud-aux-legacy), '' pour les deux autres transports.
    * @return smartclim|null
    */
-  private static function chercherEquipementExistant($_macNorm, $_deviceId, array $_index, $_transport = '') {
+  private static function chercherEquipementExistant($_macNorm, $_deviceId, array $_index, $_transport = '', $_endpointAuxCloud = '') {
     $lan = ($_transport === smartclimCapabilities::TRANSPORT_BROADLINK_LAN);
 
     if ($_macNorm !== '') {
@@ -2054,6 +2392,10 @@ class smartclim extends eqLogic {
     // 7. auxhome_device_id (cloud seulement, le LAN passe '').
     if ($_deviceId !== '' && isset($_index['parDeviceId'][$_deviceId])) {
       return $_index['parDeviceId'][$_deviceId];
+    }
+    // 8. auxcloud_endpoint_id (AUX Cloud legacy seulement).
+    if ($_transport === smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY && $_endpointAuxCloud !== '' && isset($_index['parEndpointAuxCloud'][$_endpointAuxCloud])) {
+      return $_index['parEndpointAuxCloud'][$_endpointAuxCloud];
     }
     return null;
   }
@@ -2275,12 +2617,19 @@ class smartclim extends eqLogic {
    * cette méthode tourne APRÈS deux phases coûteuses, elle ne doit jamais faire perdre
    * leur résultat.
    *
+   * ⚠️ +1 paramètre (UC02 du domaine post-mvp/03-cloud-aux-legacy, § 6.2 de sa spec
+   * technique) : `$_auxCloud`, lignes normalisées par ligneResultatScan()
+   * (scannerAuxCloud()) — alimente `equipementId > 0` comme les deux autres phases et
+   * ajoute la colonne `cloudHistorique` (via libelleDisponibilite(), ZÉRO chaîne
+   * nouvelle).
+   *
    * @param array $_lignesLan Lignes normalisées par ligneResultatLan() (scannerReseauLocal()).
    * @param array $_lignesCloud Lignes normalisées par ligneResultatScan() (scannerAuxHome()).
    * @param array $_etatsConnexion Carte id eqLogic => etatConnexionAffichable(), déjà FUSIONNÉE (LAN puis cloud).
-   * @return array<int, array{nom:string, mac:string, lan:string, cloud:string, transport:string}>
+   * @param array $_auxCloud Lignes normalisées par ligneResultatScan() (scannerAuxCloud()).
+   * @return array<int, array{nom:string, mac:string, lan:string, cloud:string, cloudHistorique:string, transport:string}>
    */
-  private static function lignesFusionScan(array $_lignesLan, array $_lignesCloud, array $_etatsConnexion) {
+  private static function lignesFusionScan(array $_lignesLan, array $_lignesCloud, array $_etatsConnexion, array $_auxCloud = array()) {
     try {
       $ids = array();
       foreach ($_lignesLan as $ligneLan) {
@@ -2291,6 +2640,11 @@ class smartclim extends eqLogic {
       foreach ($_lignesCloud as $ligneCloud) {
         if (isset($ligneCloud['equipementId']) && (int) $ligneCloud['equipementId'] > 0) {
           $ids[(int) $ligneCloud['equipementId']] = true;
+        }
+      }
+      foreach ($_auxCloud as $ligneAuxCloud) {
+        if (isset($ligneAuxCloud['equipementId']) && (int) $ligneAuxCloud['equipementId'] > 0) {
+          $ids[(int) $ligneAuxCloud['equipementId']] = true;
         }
       }
       if (empty($ids)) {
@@ -2323,6 +2677,13 @@ class smartclim extends eqLogic {
             break;
           }
         }
+        $cloudHistorique = false;
+        foreach ($_auxCloud as $ligneAuxCloud) {
+          if (isset($ligneAuxCloud['equipementId']) && (int) $ligneAuxCloud['equipementId'] === $id && isset($ligneAuxCloud['statut']) && in_array($ligneAuxCloud['statut'], array('cree', 'existant'), true)) {
+            $cloudHistorique = true;
+            break;
+          }
+        }
 
         $transport = (isset($_etatsConnexion[$id]['transport']) && is_string($_etatsConnexion[$id]['transport']) && $_etatsConnexion[$id]['transport'] !== '')
           ? $_etatsConnexion[$id]['transport']
@@ -2333,6 +2694,7 @@ class smartclim extends eqLogic {
           'mac' => $eqLogic->macEquipement(),
           'lan' => self::libelleDisponibilite($lan),
           'cloud' => self::libelleDisponibilite($cloud),
+          'cloudHistorique' => self::libelleDisponibilite($cloudHistorique),
           'transport' => $transport,
         );
       }
@@ -2386,6 +2748,20 @@ class smartclim extends eqLogic {
     }
     if ($_statut === 'ignore_doublon') {
       return __('Ignoré — doublon dans la réponse du cloud', __FILE__);
+    }
+    // UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 7 de sa spec technique, correctif
+    // reviews croisées findings major #1/#2) : les 3 motifs d'exclusion propres au
+    // cloud legacy — jusqu'ici invisibles hors des logs — alimentent désormais aussi le
+    // compteur 'ignores' de resumeScanAuxCloud(), même doctrine que les deux 'ignore_*'
+    // existants ci-dessus.
+    if ($_statut === 'ignore_pompe_chaleur') {
+      return __('Ignoré — pompe à chaleur (hors périmètre du plugin)', __FILE__);
+    }
+    if ($_statut === 'ignore_non_climatiseur') {
+      return __('Ignoré — appareil non reconnu comme climatiseur', __FILE__);
+    }
+    if ($_statut === 'ignore_budget') {
+      return __('Ignoré — budget de temps épuisé', __FILE__);
     }
     if ($_statut === 'erreur') {
       return __('Erreur lors de la création — consultez les logs du plugin', __FILE__);
@@ -4747,6 +5123,21 @@ class smartclim extends eqLogic {
     }
 
     $transport = smartclimTransport::transportRetenu($this);
+
+    // UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 3.6/D7 de sa spec technique) :
+    // message HONNÊTE pour un équipement legacy PUR, routé vers le LAN faute de LAN
+    // joignable ET de compte AUX Home (transportRetenu() ne renvoie jamais de chaîne
+    // vide, § 5.1 de smartclimTransport) — sans cette garde, messageErreurLan()
+    // afficherait « lancez un scan ou renseignez l'adresse IP », un message AFFIRMATIF
+    // et FAUX pour un appareil qui ne parle pas Broadlink (arbitrage du 2026-09-08,
+    // § 7.1 d'UC01 de ce domaine). Placée ICI, juste après transportRetenu() et AVANT
+    // ordreDeCommandeAction() : c'est le SEUL point de cette UC hors découverte pure.
+    if ($transport === smartclimCapabilities::TRANSPORT_BROADLINK_LAN && $this->adresseLan()['ip'] === '' && !smartclimTransport::cloudDisponible($this)) {
+      $endpointAuxCloud = $this->getConfiguration(self::CLE_CONF_AUXCLOUD_ENDPOINT_ID);
+      if (is_string($endpointAuxCloud) && $endpointAuxCloud !== '') {
+        throw new smartclimException(__('Cet équipement est relié au cloud historique (AC Freedom), qui ne peut pas encore être piloté par ce plugin — patientez pour une prochaine mise à jour', __FILE__), smartclimException::TYPE_INTERNE);
+      }
+    }
 
     // UC02 du domaine post-mvp/02-strategies-de-transport (§ 6.2 de sa spec technique) :
     // garde de TEMPORISATION cloud — disjoncteur à DEMI-OUVERTURE, refus immédiat DATÉ,

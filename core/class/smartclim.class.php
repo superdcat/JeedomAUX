@@ -194,6 +194,17 @@ class smartclim extends eqLogic {
   const CONTEXTE_LAN_ADRESSE_INCONNUE = 'lan_adresse_inconnue';
   const CONTEXTE_LAN_MAC_DIVERGENTE = 'lan_mac_divergente';
 
+  // Correctif post-review UC03 du domaine post-mvp/03-cloud-aux-legacy (point 2) :
+  // marqueur LOCAL à envoyerOrdreAuxCloud() — « ce message est DÉJÀ curaté à la
+  // source, ne le retraduis pas via messageErreurAuxCloud() » — DISTINCT de
+  // smartclimAuxCloudApi::CONTEXTE_ETAT_INCONNU (qui, lui, garde son sens RÉEL :
+  // « aucune des 4 sources d'etatMarcheCourant() n'a permis de conclure »). Les deux
+  // sont testés côte à côte au point de retraduction : un contexte dont le SENS ment
+  // (ex. réutiliser CONTEXTE_ETAT_INCONNU pour « budget insuffisant ») est un défaut à
+  // part entière sur ce plugin — un futur lecteur testant getContexte() croirait lire
+  // le cas qu'il ne lit pas.
+  const CONTEXTE_MESSAGE_DEJA_CURATE = 'message_deja_curate';
+
   // UC01 du domaine post-mvp/02-strategies-de-transport (§ 5.2 de sa spec technique) :
   // clé de configuration PAR ÉQUIPEMENT du mode de transport choisi (AUTO/LOCAL/CLOUD,
   // cf. smartclimTransport). CLE_CACHE_DERNIER_CYCLE_LAN / INTERVALLE_CYCLE_LAN
@@ -234,6 +245,29 @@ class smartclim extends eqLogic {
   // justifie pas, la TTL de 30 min suffit, aucun secret DE COMPTE dedans).
   const CLE_CACHE_APPAREIL_AUXCLOUD = 'smartclim::appareil_auxcloud::';
   const DUREE_MEMOIRE_APPAREIL_AUXCLOUD = 1800;
+
+  // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 3.5/5.3 de sa spec technique) : clé
+  // d'équipement du mécanisme d'ajustement SANS MODIFICATION DE CODE d'AC6 — inverse la
+  // convention 'actif'/'fixe' des deux axes d'oscillation, au décodage COMME à
+  // l'encodage (smartclimAuxCloudApi::decoderParametres()/appliquerOrdre()).
+  const CLE_CONF_AUXCLOUD_SWING_INVERSE = 'auxcloud_swing_inverse';
+
+  // Cadencement du 3ᵉ cycle cron (UC03 du domaine post-mvp/03-cloud-aux-legacy, § 3.4/D4
+  // de sa spec technique) — marqueur SÉPARÉ de CLE_CACHE_DERNIER_CYCLE_LAN : les deux
+  // cycles dérivent et ne coïncident donc pas systématiquement, DÉCOUPLÉS de
+  // refresh_interval pour la même raison que le cycle LAN (plugin::cron est PARTAGÉ par
+  // tous les plugins). Budgets § 4 : BUDGET_CYCLE_AUXCLOUD (cycle O(N) global, arrêt
+  // dur), BUDGET_ETAT_AUXCLOUD (une lecture interactive), BUDGET_COMMANDE_AUXCLOUD +
+  // RESERVE_ECRITURE_AUXCLOUD (écriture interactive, § 4.1). AGE_MAX_POWER_AUXCLOUD
+  // s'écrit DÉRIVÉE, jamais en littéral (§ 3.3/D3) : un `power` plus vieux que le cycle
+  // plus un tick n'est plus une observation, c'est une supposition.
+  const CLE_CACHE_DERNIER_CYCLE_AUXCLOUD = 'smartclim::dernier_cycle_auxcloud';
+  const INTERVALLE_CYCLE_AUXCLOUD = 900;
+  const BUDGET_CYCLE_AUXCLOUD = 20;
+  const BUDGET_ETAT_AUXCLOUD = 12;
+  const BUDGET_COMMANDE_AUXCLOUD = 20;
+  const RESERVE_ECRITURE_AUXCLOUD = 6;
+  const AGE_MAX_POWER_AUXCLOUD = self::INTERVALLE_CYCLE_AUXCLOUD + 60;
 
   /*     * ***********************Methode static*************************** */
 
@@ -1005,6 +1039,14 @@ class smartclim extends eqLogic {
           }
 
           try {
+            // Correctif post-review UC03 (point 3) : $appareil vient de
+            // normaliserAppareilLegacy()/listerAppareils(), qui ne porte JAMAIS
+            // 'swing_inverse' (contrairement à appareilAuxCloud()) — sans cette
+            // injection, un re-scan d'un équipement dont l'utilisateur a coché la case
+            // décoderait l'oscillation avec la convention PAR DÉFAUT. $eqLogic est
+            // disponible ICI dans les DEUX branches ci-dessus (rapproché ou fraîchement
+            // créé) : injection possible sans forcer.
+            $appareil['swing_inverse'] = (bool) $eqLogic->getConfiguration(self::CLE_CONF_AUXCLOUD_SWING_INVERSE);
             $eqLogic->appliquerEtat(smartclimAuxCloudApi::etatAppareil($appareil));
           } catch (Throwable $t) {
             log::add('smartclim', 'error', 'AUX Cloud legacy : application de l\'état impossible (identifiant=' . $identifiant . ') : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
@@ -1097,22 +1139,22 @@ class smartclim extends eqLogic {
    * encore enregistré, ou jeton illisible) : ne mémorise JAMAIS un secret vide sous une
    * clé valide.
    *
+   * ⚠️ UC03 du domaine post-mvp/03-cloud-aux-legacy : DÉLÈGUE désormais à
+   * memoriserJetonsAuxCloud() (méthode d'instance, § 5.3 de sa spec technique) — pour
+   * qu'un SEUL endroit écrive le format de cette mémoire, jamais deux formats
+   * potentiellement divergents (celui du scan, celui du pilotage continu).
+   *
    * @param smartclim $_eq
    * @param array $_appareil
    */
   private static function memoriserAppareilAuxCloud(smartclim $_eq, array $_appareil) {
-    if ($_eq->getId() == '' || empty($_appareil['cookie'])) {
+    if (empty($_appareil['cookie'])) {
       return;
     }
-    $contenu = json_encode(array(
+    $_eq->memoriserJetonsAuxCloud(array(
       'cookie' => $_appareil['cookie'],
       'dev_session' => isset($_appareil['dev_session']) ? $_appareil['dev_session'] : '',
-      'cree_le' => time(),
     ));
-    if ($contenu === false) {
-      return;
-    }
-    cache::set(self::CLE_CACHE_APPAREIL_AUXCLOUD . $_eq->getId(), utils::encrypt($contenu), self::DUREE_MEMOIRE_APPAREIL_AUXCLOUD);
   }
 
   /**
@@ -1719,6 +1761,117 @@ class smartclim extends eqLogic {
       return $resultat;
     } catch (Throwable $t) {
       log::add('smartclim', 'error', 'Cycle de sonde LAN : erreur interne inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return $resultat;
+    }
+  }
+
+  /**
+   * Cycle de rafraîchissement AUX Cloud legacy (UC03 du domaine post-mvp/03-cloud-aux-
+   * legacy, § 3.4/D4 de sa spec technique), déclenché par cron() toutes les
+   * INTERVALLE_CYCLE_AUXCLOUD secondes (900 s FIXES, DÉCOUPLÉES de refresh_interval).
+   * NE LÈVE JAMAIS (try/catch(Throwable) GLOBAL + PAR équipement) — même doctrine que
+   * rafraichirAuxHome()/rafraichirLan().
+   *
+   * Portée : équipements dont lectureLegacyAutorisee() est vraie — PLUS STRICTE que
+   * lectureCloudAutorisee() (§ 3.6/D6 de la spec technique) : un équipement vu par les
+   * DEUX clouds n'entre JAMAIS dans ce cycle O(N), contrairement au cycle AUX Home,
+   * UNE requête pour tout le parc.
+   *
+   * ⚠️ Optimisation NON négociable (§ 3.4) : les équipements ciblés sont GROUPÉS par
+   * `auxcloud_family_id` avant tout appel réseau — sans conséquence directe sur le
+   * nombre de requêtes de CE cycle (chaque équipement continue d'appeler
+   * lireParametres() individuellement, la 7ᵉ mémoire étant PAR équipement), mais c'est
+   * ce groupement qui borne le budget par famille plutôt que par appareil isolé et
+   * documente l'intention pour une future optimisation (dev/query par famille).
+   *
+   * ⚠️ AUCUN appliquerCapacites(), AUCUN eqLogic->save() : lecture d'état SEULE, comme
+   * les deux autres cycles. AUCUN basculerHorsLigne() ni memoriserIncident() : cette
+   * mémoire décrit le cycle AUTOMATIQUE AUX HOME, y écrire depuis ici falsifierait
+   * l'état de connexion affiché d'un AUTRE transport (piège déjà payé sur
+   * postConfig_auxcloud_*).
+   *
+   * @return array{lance:bool, appareils:int, rafraichis:int, erreurs:int}
+   */
+  private static function rafraichirAuxCloud() {
+    $resultat = array(
+      'lance' => false,
+      'appareils' => 0,
+      'rafraichis' => 0,
+      'erreurs' => 0,
+    );
+    try {
+      // Zéro requête réseau, et AUCUN marqueur posé si le compte n'est pas configuré
+      // (même règle que rafraichirAuxHome()) : dès que l'utilisateur configure son
+      // compte legacy, le tick suivant lance un cycle sans attendre un intervalle
+      // complet.
+      if (!self::compteAuxCloudConfigure()) {
+        log::add('smartclim', 'debug', 'Cycle de rafraîchissement AUX Cloud legacy ignoré : compte non configuré');
+        return $resultat;
+      }
+
+      // Marqueur posé AVANT tout appel réseau (même règle que marquerCycle()/
+      // marquerCycleLan()) : un backend en panne ne doit pas être re-sollicité chaque
+      // minute dans le processus plugin::cron, PARTAGÉ par tous les plugins.
+      self::marquerCycleAuxCloud();
+      $resultat['lance'] = true;
+
+      $debut = microtime(true);
+      $cibles = array();
+      foreach (eqLogic::byType('smartclim', true) as $eqLogic) {
+        if ($eqLogic instanceof smartclim && smartclimTransport::lectureLegacyAutorisee($eqLogic)) {
+          $cibles[] = $eqLogic;
+        }
+      }
+      if (empty($cibles)) {
+        return $resultat;
+      }
+      $resultat['appareils'] = count($cibles);
+
+      // Groupement PAR FAMILLE (§ 3.4 de la spec technique) : deux boucles imbriquées,
+      // le budget GLOBAL restant est réévalué avant chaque famille ET avant chaque
+      // équipement — un appareil lent d'une famille ne peut donc pas consommer le
+      // budget des familles suivantes au-delà du plafond global.
+      $parFamille = array();
+      foreach ($cibles as $eqLogic) {
+        $familyId = $eqLogic->getConfiguration(self::CLE_CONF_AUXCLOUD_FAMILY_ID);
+        $familyId = is_string($familyId) ? $familyId : '';
+        $parFamille[$familyId][] = $eqLogic;
+      }
+
+      foreach ($parFamille as $groupe) {
+        if ((microtime(true) - $debut) >= self::BUDGET_CYCLE_AUXCLOUD) {
+          log::add('smartclim', 'warning', 'Cycle de rafraîchissement AUX Cloud legacy : budget de temps épuisé, familles restantes ignorées');
+          break;
+        }
+        foreach ($groupe as $eqLogic) {
+          $restant = self::BUDGET_CYCLE_AUXCLOUD - (microtime(true) - $debut);
+          if ($restant <= 0) {
+            break;
+          }
+          try {
+            $appareil = $eqLogic->appareilAuxCloud(max(3, $restant));
+            $restant = self::BUDGET_CYCLE_AUXCLOUD - (microtime(true) - $debut);
+            // Correctif post-review UC03 (point 1) : REJEU D'APPAIRAGE, PAR ÉQUIPEMENT,
+            // à l'intérieur de ce même try/catch — respecte l'arrêt dur de budget du
+            // cycle (le rejeu interne est lui-même conditionné à $restant, cf. son
+            // docblock) : un équipement ne peut donc pas consommer plus que le budget
+            // GLOBAL restant de cette famille/ce cycle.
+            $valeurs = $eqLogic->lireParametresAvecRejeuAppairage($appareil, max(3, $restant));
+            $appareil['valeurs'] = $valeurs;
+            $eqLogic->appliquerEtat(smartclimAuxCloudApi::etatAppareil($appareil));
+            $resultat['rafraichis']++;
+          } catch (Throwable $t) {
+            // Une Error PHP 8 ne doit pas traverser : la boucle continue.
+            $resultat['erreurs']++;
+            log::add('smartclim', 'warning', 'Cycle de rafraîchissement AUX Cloud legacy : équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" en échec : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+          }
+        }
+      }
+
+      log::add('smartclim', 'debug', 'Cycle de rafraîchissement AUX Cloud legacy : ' . $resultat['appareils'] . ' équipement(s) ciblé(s), ' . $resultat['rafraichis'] . ' rafraîchi(s), ' . $resultat['erreurs'] . ' erreur(s)');
+      return $resultat;
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Cloud legacy : erreur interne inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
       return $resultat;
     }
   }
@@ -3165,6 +3318,18 @@ class smartclim extends eqLogic {
     } catch (Throwable $t) {
       log::add('smartclim', 'error', 'Cycle de sonde LAN : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
     }
+
+    // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 3.0/3.4/D4 de sa spec technique,
+    // arbitrage A) : TROISIÈME cycle, sa PROPRE garde d'échéance et son PROPRE
+    // try/catch(Throwable) — ⚠️ jamais de `return` dans les DEUX blocs ci-dessus, qui
+    // court-circuiterait celui-ci (piège déjà payé sur le cycle LAN).
+    try {
+      if (self::cycleAuxCloudEchu()) {
+        self::rafraichirAuxCloud();
+      }
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Cloud legacy : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+    }
   }
 
   /*
@@ -3281,6 +3446,32 @@ class smartclim extends eqLogic {
    */
   private static function marquerCycleLan() {
     cache::set(self::CLE_CACHE_DERNIER_CYCLE_LAN, (string) time(), self::DUREE_MEMOIRE_CYCLE);
+  }
+
+  /**
+   * Garde d'échéance du 3ᵉ cycle (UC03 du domaine post-mvp/03-cloud-aux-legacy, § 3.4/D4
+   * de sa spec technique) — jumelle EXACTE de cycleLanEchu() : marqueur DÉDIÉ, cadence
+   * FIXE INTERVALLE_CYCLE_AUXCLOUD (900 s), horloge reculée neutralisée.
+   *
+   * @return bool
+   */
+  private static function cycleAuxCloudEchu() {
+    $dernier = cache::byKey(self::CLE_CACHE_DERNIER_CYCLE_AUXCLOUD)->getValue(null);
+    if (!is_numeric($dernier)) {
+      return true;
+    }
+    $ecoule = time() - (int) $dernier;
+    if ($ecoule < 0) {
+      return true;
+    }
+    return $ecoule >= (self::INTERVALLE_CYCLE_AUXCLOUD - self::MARGE_ECHEANCE_CYCLE);
+  }
+
+  /**
+   * Pose le marqueur de dernier cycle AUX Cloud legacy (même patron que marquerCycleLan()).
+   */
+  private static function marquerCycleAuxCloud() {
+    cache::set(self::CLE_CACHE_DERNIER_CYCLE_AUXCLOUD, (string) time(), self::DUREE_MEMOIRE_CYCLE);
   }
 
   /**
@@ -3927,6 +4118,11 @@ class smartclim extends eqLogic {
     // ci-dessus — AC1 (« un équipement fraîchement créé par le scan est en AUTO ») est
     // satisfait PAR CONSTRUCTION, sans toucher creerEquipement().
     $this->setConfiguration(self::CLE_CONF_TRANSPORT_MODE, smartclimTransport::normaliserMode($this->getConfiguration(self::CLE_CONF_TRANSPORT_MODE)));
+
+    // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 3.5 de sa spec technique) :
+    // barrière AUTORITAIRE et SILENCIEUSE, même patron — un booléon d'équipement (0/1),
+    // au même endroit que transport_mode ci-dessus.
+    $this->setConfiguration(self::CLE_CONF_AUXCLOUD_SWING_INVERSE, $this->getConfiguration(self::CLE_CONF_AUXCLOUD_SWING_INVERSE) ? 1 : 0);
   }
 
   // Fonction exécutée automatiquement après la sauvegarde (création ou mise à jour) de l'équipement
@@ -4443,6 +4639,24 @@ class smartclim extends eqLogic {
     $conceptsDetectes = isset($_detecte['concepts']) && is_array($_detecte['concepts']) ? $_detecte['concepts'] : array();
     $modesDetectes = isset($_detecte['modes']) && is_array($_detecte['modes']) ? $_detecte['modes'] : array();
     $vitessesDetectees = isset($_detecte['vitesses']) && is_array($_detecte['vitesses']) ? $_detecte['vitesses'] : array();
+
+    // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 3.1/D1 de sa spec technique) :
+    // neutralise le CATALOGUE publié par un transport qui ne sait RIEN exclure — colonne
+    // DÉCLARATIVE 'catalogue_par_defaut' (JAMAIS un test 'source === TRANSPORT_AUX_CLOUD_LEGACY'
+    // en dur, cf. le docblock de smartclimAuxCloudApi::capacitesAppareil()) — DÈS QUE cet
+    // équipement est AUSSI connu d'AUX Home (auxhome_device_id non vide) : sinon l'union
+    // ci-dessous réintroduirait un mode qu'AUX Home vient de PROUVER absent, exactement
+    // la régression du 2026-08-26. Un équipement legacy PUR (sans compte AUX Home) garde
+    // le catalogue admis (AC1). ⚠️ Seuls 'modes'/'vitesses' sont neutralisés : 'concepts'
+    // reste unionné SANS CONDITION (une preuve de présence de clé, pas un catalogue).
+    // ⚠️ 'catalogue_par_defaut' n'est PAS recopiée dans $fusion ci-dessous (construit clé
+    // par clé) : elle n'entre donc ni dans le profil stocké ni dans la comparaison
+    // json_encode — aucun save() de migration sur le parc existant.
+    if (!empty($_detecte['catalogue_par_defaut']) && $this->getConfiguration('auxhome_device_id') !== '') {
+      $modesDetectes = array();
+      $vitessesDetectees = array();
+    }
+
     // SEULE chose qui puisse AMPUTER un profil, et la seule exception à l'union ci-dessous
     // (« un profil ne s'ampute jamais »). L'exception est légitime parce que ce n'est pas
     // une absence de détection mais une PREUVE fournie par l'appareil lui-même : sans
@@ -5132,10 +5346,18 @@ class smartclim extends eqLogic {
     // et FAUX pour un appareil qui ne parle pas Broadlink (arbitrage du 2026-09-08,
     // § 7.1 d'UC01 de ce domaine). Placée ICI, juste après transportRetenu() et AVANT
     // ordreDeCommandeAction() : c'est le SEUL point de cette UC hors découverte pure.
+    // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 5.3 de sa spec technique) : garde
+    // D7 d'UC02 REMPLACÉE, PAS supprimée. Elle est désormais INATTEIGNABLE dès que le
+    // compte legacy est configuré : transportRetenu() route alors cet équipement vers
+    // TRANSPORT_AUX_CLOUD_LEGACY (jamais LAN) dans exactement ce cas de figure. Elle
+    // reste utile — avec un message CORRIGÉ, TYPE_AUTH — pour le cas où seul un scan a
+    // relié cet équipement au cloud historique SANS que son compte soit configuré :
+    // l'ANCIEN message (« ne peut pas encore être piloté ») y était devenu FAUX, ce
+    // pilotage étant désormais possible dès la configuration du compte.
     if ($transport === smartclimCapabilities::TRANSPORT_BROADLINK_LAN && $this->adresseLan()['ip'] === '' && !smartclimTransport::cloudDisponible($this)) {
       $endpointAuxCloud = $this->getConfiguration(self::CLE_CONF_AUXCLOUD_ENDPOINT_ID);
-      if (is_string($endpointAuxCloud) && $endpointAuxCloud !== '') {
-        throw new smartclimException(__('Cet équipement est relié au cloud historique (AC Freedom), qui ne peut pas encore être piloté par ce plugin — patientez pour une prochaine mise à jour', __FILE__), smartclimException::TYPE_INTERNE);
+      if (is_string($endpointAuxCloud) && $endpointAuxCloud !== '' && !smartclimTransport::cloudLegacyDisponible($this)) {
+        throw new smartclimException(__('Cet équipement est relié au cloud historique (AC Freedom) — configurez ce compte (e-mail, mot de passe, région) pour le piloter', __FILE__), smartclimException::TYPE_AUTH);
       }
     }
 
@@ -5193,6 +5415,26 @@ class smartclim extends eqLogic {
       } catch (Throwable $t) {
         cache::delete($cleDedup);
         log::add('smartclim', 'error', 'Commande action "' . $_logicalId . '" (LAN) échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
+      }
+    }
+
+    // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 5.3 de sa spec technique) : +1
+    // branche, CALQUÉE sur la branche LAN ci-dessus (même try/catch(smartclimException)
+    // puis catch(Throwable) en DERNIER bloc, même purge du marqueur de déduplication en
+    // échec — un ordre échoué doit rester rejouable immédiatement).
+    if ($transport === smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY) {
+      try {
+        $this->envoyerOrdreAuxCloud($ordre);
+        return;
+      } catch (smartclimException $e) {
+        // ⚠️ NE PAS re-curer : envoyerOrdreAuxCloud() rend déjà un message français
+        // curaté par messageErreurAuxCloud() (ou un littéral déjà curaté à la source).
+        cache::delete($cleDedup);
+        throw $e;
+      } catch (Throwable $t) {
+        cache::delete($cleDedup);
+        log::add('smartclim', 'error', 'Commande action "' . $_logicalId . '" (AUX Cloud legacy) échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
         throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
       }
     }
@@ -5263,6 +5505,15 @@ class smartclim extends eqLogic {
    * @throws smartclimException Message DÉJÀ CURATÉ en français.
    */
   public function rafraichirMaintenant() {
+    // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 5.3 de sa spec technique) : +1
+    // branche, placée AVANT le test MODE_LOCAL existant — un équipement dont
+    // transportRetenu() désigne le cloud historique (quel que soit le mode configuré)
+    // rafraîchit CET équipement SEUL, comme le fait déjà la branche LOCAL/LAN
+    // ci-dessous — jamais le cycle GLOBAL cloud, qui ne le concerne pas.
+    if (smartclimTransport::transportRetenu($this) === smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY) {
+      $this->rafraichirAuxCloudEquipement();
+      return;
+    }
     // UC01 du domaine post-mvp/02-strategies-de-transport (§ 5.4 de sa spec
     // technique) : LOCAL -> LAN (cet équipement seul) ; AUTO et CLOUD -> cycle cloud
     // GLOBAL inchangé. Pour AUTO, le cycle cloud reste la lecture la plus riche (seul
@@ -5407,6 +5658,449 @@ class smartclim extends eqLogic {
     $this->appliquerEtat($applique + array('source' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN), true);
 
     return $applique;
+  }
+
+  /**
+   * Reconstitue l'appareil legacy PILOTABLE de cet équipement (UC03 du domaine
+   * post-mvp/03-cloud-aux-legacy, § 3.7/D7 de sa spec technique) : identité stable
+   * depuis la configuration (`auxcloud_*`, en clair), jetons d'appairage depuis la 7ᵉ
+   * mémoire — et SI ABSENTS SEULEMENT (contrat imposé par l'UC02 § 4.1 : l'absence de
+   * cette mémoire est le cas NOMINAL, TTL 1800 s pour un usage « scan le matin,
+   * commande le soir ») via un `dev/query` ciblé sur `auxcloud_family_id`, jamais un
+   * relistage complet.
+   *
+   * @param int $_budget Budget PROPAGÉ à smartclimAuxCloudApi::jetonsAppareil() si les
+   *   jetons doivent être re-obtenus.
+   * @return array{identifiant:string,type_produit:string,mac:string,devicetype_flag:string,cookie:string,dev_session:string,swing_inverse:bool}
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  private function appareilAuxCloud($_budget) {
+    $familyId = $this->getConfiguration(self::CLE_CONF_AUXCLOUD_FAMILY_ID);
+    if (!is_string($familyId) || $familyId === '') {
+      throw new smartclimException(__('Cet équipement n\'est pas relié à un appareil du cloud historique — relancez un scan', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $identifiant = $this->getConfiguration(self::CLE_CONF_AUXCLOUD_ENDPOINT_ID);
+    $identifiant = is_string($identifiant) ? $identifiant : '';
+    $typeProduit = $this->getConfiguration(self::CLE_CONF_AUXCLOUD_PRODUCT_ID);
+    $typeProduit = is_string($typeProduit) ? $typeProduit : '';
+    $devicetypeFlag = $this->getConfiguration(self::CLE_CONF_AUXCLOUD_DEVICETYPE_FLAG);
+    $devicetypeFlag = is_string($devicetypeFlag) ? $devicetypeFlag : '';
+    $partage = (bool) $this->getConfiguration(self::CLE_CONF_AUXCLOUD_PARTAGE);
+    $swingInverse = (bool) $this->getConfiguration(self::CLE_CONF_AUXCLOUD_SWING_INVERSE);
+
+    $jetons = $this->jetonsAuxCloud();
+    if (empty($jetons)) {
+      try {
+        $jetons = smartclimAuxCloudApi::jetonsAppareil($familyId, $identifiant, $partage, $_budget);
+      } catch (smartclimException $e) {
+        log::add('smartclim', 'error', 'AUX Cloud legacy : obtention des jetons d\'appairage échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+        throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+      }
+      $this->memoriserJetonsAuxCloud($jetons);
+    }
+
+    return array(
+      'identifiant' => $identifiant,
+      'type_produit' => $typeProduit,
+      'mac' => $this->macEquipement(),
+      'devicetype_flag' => $devicetypeFlag,
+      'cookie' => isset($jetons['cookie']) ? $jetons['cookie'] : '',
+      'dev_session' => isset($jetons['dev_session']) ? $jetons['dev_session'] : '',
+      'swing_inverse' => $swingInverse,
+    );
+  }
+
+  /**
+   * Lit la 7ᵉ mémoire de cache (CHIFFRÉE) de CET équipement (UC03, § 3.7/5.3 de la spec
+   * technique) — VALIDE LA FORME et renvoie array() plutôt qu'un contenu forgé (même
+   * patron que incidentMemorise()). Ne fait QUE lire ; l'écriture est
+   * memoriserJetonsAuxCloud() ci-dessous.
+   *
+   * @return array{cookie:string,dev_session:string}
+   */
+  private function jetonsAuxCloud() {
+    $brut = cache::byKey(self::CLE_CACHE_APPAREIL_AUXCLOUD . $this->getId())->getValue(null);
+    if (!is_string($brut) || $brut === '') {
+      return array();
+    }
+    $dechiffre = utils::decrypt($brut);
+    if (!is_string($dechiffre) || $dechiffre === '') {
+      return array();
+    }
+    $jetons = json_decode($dechiffre, true);
+    if (!is_array($jetons) || !isset($jetons['cookie'], $jetons['dev_session']) || !is_string($jetons['cookie']) || $jetons['cookie'] === '' || !is_string($jetons['dev_session'])) {
+      return array();
+    }
+    return array('cookie' => $jetons['cookie'], 'dev_session' => $jetons['dev_session']);
+  }
+
+  /**
+   * Écrit la 7ᵉ mémoire de cache (CHIFFRÉE) de CET équipement — TTL
+   * DUREE_MEMOIRE_APPAREIL_AUXCLOUD (§ 3.7 de la spec technique). Sans effet si
+   * `cookie` est vide : ne mémorise JAMAIS un secret vide sous une clé valide.
+   *
+   * @param array $_jetons {cookie, dev_session}
+   */
+  private function memoriserJetonsAuxCloud(array $_jetons) {
+    if ($this->getId() == '' || empty($_jetons['cookie'])) {
+      return;
+    }
+    $contenu = json_encode(array(
+      'cookie' => $_jetons['cookie'],
+      'dev_session' => isset($_jetons['dev_session']) ? $_jetons['dev_session'] : '',
+      'cree_le' => time(),
+    ));
+    if ($contenu === false) {
+      return;
+    }
+    cache::set(self::CLE_CACHE_APPAREIL_AUXCLOUD . $this->getId(), utils::encrypt($contenu), self::DUREE_MEMOIRE_APPAREIL_AUXCLOUD);
+  }
+
+  /**
+   * État de marche COURANT de cet équipement, 4 sources DANS CET ORDRE (AC2 de la spec
+   * fonctionnelle, § 3.3/D3 de la spec technique UC03) : (a) — gérée par l'APPELANT,
+   * qui n'invoque cette méthode QUE si l'ordre ne porte pas déjà `power` — ; (b) mémoire
+   * d'ordres, dans la période de grâce ; (c) commande info `power`, si sa dernière
+   * valeur n'est pas plus vieille qu'AGE_MAX_POWER_AUXCLOUD ; (d) lecture réseau
+   * fraîche, SI le budget le permet.
+   *
+   * ⚠️ PROPAGE toute smartclimException levée par la lecture de repli (d) : une panne
+   * réseau ne doit jamais se travestir en « état inconnu » — seule l'ABSENCE de valeur
+   * exploitable, SANS exception, renvoie `null`.
+   *
+   * @param array $_appareil Cf. appareilAuxCloud().
+   * @param float|int $_budget Budget RESTANT de l'appelant.
+   * @return int|null 0, 1, ou null si aucune des 4 sources n'a permis de conclure.
+   * @throws smartclimException Si la lecture de repli (d) échoue (message TECHNIQUE).
+   */
+  private function etatMarcheCourant(array $_appareil, $_budget) {
+    $memoire = $this->memoireOrdres();
+    if (isset($memoire[smartclimCapabilities::CONCEPT_POWER])) {
+      return $memoire[smartclimCapabilities::CONCEPT_POWER]['valeur'] ? 1 : 0;
+    }
+
+    $cmdPower = null;
+    foreach ($this->getCmd(null, null) as $cmdExistante) {
+      if ($cmdExistante->getType() === 'info' && $cmdExistante->getLogicalId() === smartclimCapabilities::CONCEPT_POWER) {
+        $cmdPower = $cmdExistante;
+        break;
+      }
+    }
+    if ($cmdPower instanceof cmd) {
+      $dateValeur = $cmdPower->getValueDate();
+      $ts = is_string($dateValeur) ? strtotime($dateValeur) : false;
+      if ($ts !== false && (time() - $ts) <= self::AGE_MAX_POWER_AUXCLOUD) {
+        return ((int) $cmdPower->execCmd()) ? 1 : 0;
+      }
+    }
+
+    // (d) — l'écriture est servie D'ABORD (§ 4.1 de la spec technique) : cette source
+    // ne se déclenche QUE s'il reste assez de budget pour ELLE ET pour le `set` qui
+    // suivra.
+    if ($_budget < self::RESERVE_ECRITURE_AUXCLOUD + 3) {
+      return null;
+    }
+    // ⚠️ Correctif post-review UC03 (point 1) : appel DIRECT à
+    // smartclimAuxCloudApi::lireParametres(), JAMAIS lireParametresAvecRejeuAppairage() —
+    // cette méthode est appelée DEPUIS envoyerOrdreAuxCloud(), qui porte DÉJÀ son propre
+    // rejeu d'appairage (purge 7ᵉ mémoire + jetonsAppareil() + un seul rejeu). Passer par
+    // le wrapper ici doublerait la purge/ré-obtention pour UNE SEULE commande — exactement
+    // la rafale que le § 3.8/D8 de la spec technique interdit.
+    $valeurs = smartclimAuxCloudApi::lireParametres($_appareil, $_budget - self::RESERVE_ECRITURE_AUXCLOUD);
+    if (array_key_exists('pwr', $valeurs) && is_scalar($valeurs['pwr'])) {
+      return ((int) $valeurs['pwr']) ? 1 : 0;
+    }
+    return null;
+  }
+
+  /**
+   * Lit les paramètres d'UN appareil legacy avec REJEU D'APPAIRAGE (correctif
+   * post-review UC03, point 1 — factorisation du patron déjà écrit dans
+   * envoyerOrdreAuxCloud()) : sur `TYPE_PROTOCOLE` + `CONTEXTE_APPAIRAGE_REFUSE`
+   * UNIQUEMENT, purge la 7ᵉ mémoire de CET équipement, ré-obtient les jetons via
+   * appareilAuxCloud() (le SEUL chemin qui connaît `auxcloud_family_id`, une clé de
+   * CONFIGURATION D'ÉQUIPEMENT structurellement indisponible dans smartclimAuxCloudApi),
+   * et rejoue UNE SEULE fois. Booléen local, JAMAIS de récursion, conditionné au budget
+   * RESTANT — même patron que le rejeu d'écriture.
+   *
+   * ⚠️ RÉSERVÉ aux DEUX cycles de LECTURE D'ÉTAT (rafraichirAuxCloudEquipement(),
+   * rafraichirAuxCloud()) — JAMAIS à etatMarcheCourant() (cf. son propre commentaire :
+   * elle est appelée DEPUIS un rejeu déjà en cours). ⚠️ JAMAIS non plus à
+   * diagnosticAuxCloud()/sonderParametreAuxCloud()/sonderSpecialAuxCloud() : ce sont des
+   * INSTRUMENTS DE MESURE, ils doivent rendre le comportement BRUT du backend — un
+   * rejeu automatique masquerait précisément le refus qu'on cherche à observer, même
+   * doctrine que « ces méthodes ne rendent jamais la mémoire d'ordres ni le marqueur de
+   * déduplication ».
+   *
+   * @param array $_appareil Passé PAR RÉFÉRENCE : mis à jour en place si un rejeu a eu
+   *   lieu (l'appelant continue de l'utiliser après l'appel, ex. pour etatAppareil()).
+   * @param int $_budget Budget de temps GLOBAL de CETTE lecture (session comprise).
+   * @return array<string, mixed> nom brut => valeur brute.
+   * @throws smartclimException Message TECHNIQUE (à curer par l'appelant).
+   */
+  private function lireParametresAvecRejeuAppairage(array &$_appareil, $_budget) {
+    $debut = microtime(true);
+    $rejoueAppairage = false;
+    while (true) {
+      $restant = $_budget - (microtime(true) - $debut);
+      try {
+        return smartclimAuxCloudApi::lireParametres($_appareil, max(3, $restant));
+      } catch (smartclimException $e) {
+        $restant = $_budget - (microtime(true) - $debut);
+        if (
+          !$rejoueAppairage
+          && $e->getType() === smartclimException::TYPE_PROTOCOLE
+          && $e->getContexte() === smartclimAuxCloudApi::CONTEXTE_APPAIRAGE_REFUSE
+          && $restant >= smartclimAuxCloudApi::BUDGET_REJEU_ORDRE
+        ) {
+          $rejoueAppairage = true;
+          log::add('smartclim', 'info', 'AUX Cloud legacy : rejeu (lecture) après ré-obtention des jetons d\'appairage (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '")');
+          cache::delete(self::CLE_CACHE_APPAREIL_AUXCLOUD . $this->getId());
+          // appareilAuxCloud() lève déjà une exception CURATÉE si elle échoue : elle
+          // sort donc telle quelle de cette boucle, sans passer par un second catch.
+          $_appareil = $this->appareilAuxCloud($restant);
+          continue;
+        }
+        throw $e;
+      }
+    }
+  }
+
+  /**
+   * Façade du pilotage AUX CLOUD LEGACY (UC03 du domaine post-mvp/03-cloud-aux-legacy,
+   * § 3.3/4.1/5.3 de sa spec technique) — JUMELLE d'envoyerOrdreLan() : fusionne
+   * l'ordre DEMANDÉ avec la mémoire des valeurs COMMANDÉES encore sous grâce (mécanisme
+   * d'AC5), complète `power` via etatMarcheCourant() si absent (AC2 de la spec
+   * fonctionnelle : une écriture inclut TOUJOURS l'état de marche courant), puis
+   * appliquerOrdre() et pousse l'état OPTIMISTE.
+   *
+   * ⚠️ Contrairement à envoyerOrdreLan(), la fusion de grâce ne passe PAS par
+   * valeursCommandees() (restreinte à smartclimFrame::conceptsEncodables(), LAN
+   * UNIQUEMENT) : le seul concept en lecture seule de ce transport (`ambient_temp`)
+   * n'est de toute façon jamais COMMANDÉ, donc jamais présent dans cette mémoire.
+   *
+   * Budget PARTAGÉ BUDGET_COMMANDE_AUXCLOUD (§ 4.1) : mesuré depuis l'entrée, propagé
+   * en secondes RESTANTES à chaque étape — l'écriture est refusée (daté, propre) sous
+   * RESERVE_ECRITURE_AUXCLOUD, jamais une requête tronquée.
+   *
+   * @param array $_ordreGenerique Map GÉNÉRIQUE concept => valeur générique.
+   * @return array Ordre RÉELLEMENT appliqué (consigne après quantification).
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function envoyerOrdreAuxCloud(array $_ordreGenerique) {
+    $debut = microtime(true);
+    // appareilAuxCloud() lève déjà une exception CURATÉE (§ 3.7) : appelée HORS du
+    // try/catch ci-dessous pour ne jamais la faire retraduire par messageErreurAuxCloud().
+    $appareil = $this->appareilAuxCloud(self::BUDGET_COMMANDE_AUXCLOUD);
+
+    $grace = array();
+    foreach ($this->memoireOrdres() as $concept => $entree) {
+      $grace[$concept] = $entree['valeur'];
+    }
+    $ordre = array_merge($grace, $_ordreGenerique);
+
+    // § 3.8/D8 de la spec technique : DEUXIÈME rejeu, INDÉPENDANT de celui de
+    // smartclimAuxCloudApi (TYPE_AUTH, interne à la session) — CONTEXTE_APPAIRAGE_REFUSE
+    // exige de RE-OBTENIR cookie/devSession, connaissance EXCLUSIVE de la 7ᵉ mémoire,
+    // donc de CET orchestrateur. Booléen local, jamais de récursion, borné à UN rejeu.
+    $rejoueAppairage = false;
+    while (true) {
+      try {
+        if (!array_key_exists(smartclimCapabilities::CONCEPT_POWER, $ordre)) {
+          $restant = self::BUDGET_COMMANDE_AUXCLOUD - (microtime(true) - $debut);
+          $power = $this->etatMarcheCourant($appareil, $restant);
+          if ($power === null) {
+            // AC2 : le refus est le comportement VOULU (§ 3.3/D3 de la spec technique) —
+            // un ordre non envoyé vaut mieux qu'un appareil éteint par erreur.
+            throw new smartclimException(__('État de marche inconnu pour cet équipement — réessayez dans quelques instants', __FILE__), smartclimException::TYPE_INTERNE, smartclimAuxCloudApi::CONTEXTE_ETAT_INCONNU);
+          }
+          $ordre[smartclimCapabilities::CONCEPT_POWER] = $power;
+        }
+
+        $restant = self::BUDGET_COMMANDE_AUXCLOUD - (microtime(true) - $debut);
+        if ($restant < self::RESERVE_ECRITURE_AUXCLOUD) {
+          // § 4.1 de la spec technique : refus DATÉ et PROPRE, jamais une requête
+          // tronquée — patron EXACT de smartclimBroadlinkLan::appliquerOrdre(). Correctif
+          // post-review UC03 (point 2) : CONTEXTE_MESSAGE_DEJA_CURATE (marqueur LOCAL
+          // « ne pas retraduire »), PAS CONTEXTE_ETAT_INCONNU — ce refus n'a AUCUN
+          // rapport avec l'état de marche, réutiliser ce contexte-là mentirait sur son
+          // sens à un futur lecteur.
+          throw new smartclimException(__('Budget de temps insuffisant pour joindre le cloud historique — réessayez', __FILE__), smartclimException::TYPE_RESEAU, self::CONTEXTE_MESSAGE_DEJA_CURATE);
+        }
+        $applique = smartclimAuxCloudApi::appliquerOrdre($appareil, $ordre, $restant);
+        break;
+      } catch (smartclimException $e) {
+        $restant = self::BUDGET_COMMANDE_AUXCLOUD - (microtime(true) - $debut);
+        if (
+          !$rejoueAppairage
+          && $e->getType() === smartclimException::TYPE_PROTOCOLE
+          && $e->getContexte() === smartclimAuxCloudApi::CONTEXTE_APPAIRAGE_REFUSE
+          && $restant >= smartclimAuxCloudApi::BUDGET_REJEU_ORDRE
+        ) {
+          $rejoueAppairage = true;
+          log::add('smartclim', 'info', 'AUX Cloud legacy : rejeu après ré-obtention des jetons d\'appairage (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '")');
+          cache::delete(self::CLE_CACHE_APPAREIL_AUXCLOUD . $this->getId());
+          // appareilAuxCloud() lève déjà une exception CURATÉE : elle sort donc DIRECTEMENT
+          // de ce catch sans passer par la traduction ci-dessous.
+          $appareil = $this->appareilAuxCloud($restant);
+          continue;
+        }
+        log::add('smartclim', 'error', 'Commande AUX Cloud legacy échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+        // Correctif post-review UC03 (point 2) : DEUX contextes distincts partagent ce
+        // garde-fou « ne pas retraduire » — CONTEXTE_ETAT_INCONNU garde son sens RÉEL
+        // (§ 3.3/D3, état de marche inconnu) ET son message est déjà curaté ; le refus
+        // de budget (§ 4.1) porte, LUI, CONTEXTE_MESSAGE_DEJA_CURATE, PAS
+        // CONTEXTE_ETAT_INCONNU (qui mentirait sur son sens).
+        if ($e->getContexte() === smartclimAuxCloudApi::CONTEXTE_ETAT_INCONNU || $e->getContexte() === self::CONTEXTE_MESSAGE_DEJA_CURATE) {
+          throw new smartclimException($e->getMessage(), $e->getType(), $e->getContexte());
+        }
+        throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+      } catch (Throwable $t) {
+        // catch(Throwable) EN DERNIER bloc (même motif qu'executerCommandeAction()) :
+        // une Error PHP 8 traverserait sinon catch(smartclimException).
+        log::add('smartclim', 'error', 'Commande AUX Cloud legacy échouée (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
+      }
+    }
+
+    $this->enregistrerOrdre($applique);
+    // ÉTAT OPTIMISTE (AC3) : la valeur poussée est celle RÉELLEMENT envoyée (après
+    // quantification), jamais celle demandée.
+    $this->appliquerEtat($applique + array('source' => smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY), true);
+
+    return $applique;
+  }
+
+  /**
+   * Point d'entrée de la 5ᵉ CLI (§ 5.3/8 de la spec technique) — JUMEAU
+   * d'envoyerCommandeActionLan() : revalide le `logicalId`, refuse CMD_RAFRAICHIR
+   * (lecture, pas un ordre), passe par la MÊME ordreDeCommandeAction() que le chemin
+   * cloud/LAN interactif — garantit que la surface de commandes legacy est identique
+   * (AC8 de la spec fonctionnelle : un scénario écrit pour un autre transport
+   * fonctionne à l'identique sur ce transport).
+   *
+   * @param string $_logicalId
+   * @param array $_options
+   * @return array Ordre RÉELLEMENT appliqué.
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function envoyerCommandeActionAuxCloud($_logicalId, array $_options = array()) {
+    $definitions = $this->definitionsCommandesAction();
+    if (!isset($definitions[$_logicalId])) {
+      throw new smartclimException(__('Commande inconnue pour cet équipement', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    if ($_logicalId === self::CMD_RAFRAICHIR) {
+      // Littéral EXISTANT (envoyerCommandeActionLan()) : « Rafraîchir » existe bel et
+      // bien dans definitionsCommandesAction(), « Commande inconnue » serait FAUX ici.
+      throw new smartclimException(__('La commande « Rafraîchir » ne s\'envoie pas à l\'appareil', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $ordre = $this->ordreDeCommandeAction($_logicalId, $_options);
+    return $this->envoyerOrdreAuxCloud($ordre);
+  }
+
+  /**
+   * Bouton « Rafraîchir » d'un équipement piloté par le cloud historique (UC03 du
+   * domaine post-mvp/03-cloud-aux-legacy, § 5.3 de sa spec technique) — chemin
+   * INTERACTIF : LÈVE un échec (jamais silencieux), contrairement à
+   * rafraichirAuxCloud() (cycle, ne lève jamais). Ne pousse PAS `online` (le cloud
+   * historique ne l'apprend qu'au SCAN, via l'état groupé PAR FAMILLE — § 3.2 d'UC02) :
+   * c'est une LECTURE D'ÉTAT SEULE des paramètres.
+   *
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function rafraichirAuxCloudEquipement() {
+    // appareilAuxCloud() lève déjà une exception CURATÉE (§ 3.7) : appelée HORS du
+    // try/catch ci-dessous, même motif qu'envoyerOrdreAuxCloud().
+    $appareil = $this->appareilAuxCloud(self::BUDGET_ETAT_AUXCLOUD);
+    try {
+      // Correctif post-review UC03 (point 1) : REJEU D'APPAIRAGE — un jeton présent en
+      // cache mais rejeté par le backend échouerait sinon À L'IDENTIQUE pendant toute
+      // la TTL de la 7ᵉ mémoire (30 min), sans aucun rattrapage sur ce chemin
+      // INTERACTIF.
+      $valeurs = $this->lireParametresAvecRejeuAppairage($appareil, self::BUDGET_ETAT_AUXCLOUD);
+    } catch (smartclimException $e) {
+      log::add('smartclim', 'error', 'Rafraîchissement AUX Cloud legacy échoué (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '", type ' . $e->getType() . ') : ' . self::neutraliserPourLog($e->getMessage()));
+      throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Rafraîchissement AUX Cloud legacy échoué (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      throw new smartclimException(__('Erreur interne lors de l\'envoi de la commande — consultez les logs du plugin', __FILE__), smartclimException::TYPE_INTERNE);
+    }
+    $appareil['valeurs'] = $valeurs;
+    $this->appliquerEtat(smartclimAuxCloudApi::etatAppareil($appareil));
+  }
+
+  /**
+   * Diagnostic BRUT du transport AUX Cloud legacy (UC03, § 5.3/8 de la spec
+   * technique) — surface de la 5ᵉ CLI (`--etat`), MÊME PATRON que diagnosticTransport()
+   * / sonderIntentAuxHome() : une méthode publique plutôt que l'ouverture de 5
+   * accesseurs privés. ⚠️ Rend la lecture BRUTE : jamais la mémoire d'ordres ni le
+   * marqueur de déduplication, sans quoi l'instrument confirmerait ce qu'on vient
+   * d'envoyer au lieu de ce que l'appareil a réellement fait.
+   *
+   * ⚠️ Correctif post-review UC03 (point 1) : appel DIRECT à
+   * smartclimAuxCloudApi::lireParametres(), DÉLIBÉRÉMENT SANS
+   * lireParametresAvecRejeuAppairage() — c'est un INSTRUMENT DE MESURE, il doit rendre
+   * le comportement BRUT du backend ; un rejeu automatique masquerait précisément le
+   * refus d'appairage qu'on cherche à observer.
+   *
+   * @return array{valeurs:array, etat:array}
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function diagnosticAuxCloud() {
+    $appareil = $this->appareilAuxCloud(self::BUDGET_ETAT_AUXCLOUD);
+    try {
+      $valeurs = smartclimAuxCloudApi::lireParametres($appareil, self::BUDGET_ETAT_AUXCLOUD);
+    } catch (smartclimException $e) {
+      throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+    }
+    return array(
+      'valeurs' => $valeurs,
+      'etat' => smartclimAuxCloudApi::etatAppareil($appareil + array('valeurs' => $valeurs)),
+    );
+  }
+
+  /**
+   * Sonde d'UN paramètre BRUT (UC03, § 5.3/8 de la spec technique) — surface de la 5ᵉ
+   * CLI (`--parametre`). Forme de `$_cle` validée DEUX FOIS (script + ici, dans
+   * smartclimAuxCloudApi::sonderParametre()) : défense en profondeur.
+   *
+   * ⚠️ Correctif post-review UC03 (point 1) : DÉLIBÉRÉMENT SANS rejeu d'appairage,
+   * même motif que diagnosticAuxCloud() — un instrument de mesure doit rendre le
+   * comportement BRUT du backend, pas le masquer derrière une ré-obtention automatique.
+   *
+   * @param string $_cle
+   * @param int $_valeur
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function sonderParametreAuxCloud($_cle, $_valeur) {
+    $appareil = $this->appareilAuxCloud(self::BUDGET_ETAT_AUXCLOUD);
+    try {
+      smartclimAuxCloudApi::sonderParametre($appareil, $_cle, $_valeur, self::BUDGET_ETAT_AUXCLOUD);
+    } catch (smartclimException $e) {
+      throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+    }
+  }
+
+  /**
+   * Surface de la 5ᵉ CLI (`--special`, § 1.7/8/9 R2 de la spec technique) : émet le
+   * SECOND `get` conditionné (`params: ["mode"]`), NON émis sur le chemin périodique —
+   * seul moyen de trancher FACTUELLEMENT si le backend complète `envtemp` sur certains
+   * modèles (point à valider en recette n° 3 de la spec technique).
+   *
+   * ⚠️ Correctif post-review UC03 (point 1) : DÉLIBÉRÉMENT SANS rejeu d'appairage,
+   * même motif que diagnosticAuxCloud()/sonderParametreAuxCloud() — instrument de
+   * mesure, comportement BRUT du backend.
+   *
+   * @return array<string, mixed> nom brut => valeur brute.
+   * @throws smartclimException Message DÉJÀ CURATÉ en français.
+   */
+  public function sonderSpecialAuxCloud() {
+    $appareil = $this->appareilAuxCloud(self::BUDGET_ETAT_AUXCLOUD);
+    try {
+      return smartclimAuxCloudApi::lireParametreSpecial($appareil, self::BUDGET_ETAT_AUXCLOUD);
+    } catch (smartclimException $e) {
+      throw new smartclimException(self::messageErreurAuxCloud($e->getType(), $e->getContexte()), $e->getType());
+    }
   }
 
   /**

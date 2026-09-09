@@ -62,8 +62,18 @@
 | `device/control/v2/querystate` | état en ligne/hors ligne (lot) |
 | `device/control/v2/sdkcontrol?license=<LICENSE>` | **lecture ET écriture** des paramètres |
 
-**Enveloppe** : succès = `status == 0` pour les routes `appsync`/`account` ; pour les routes
-`device/control/*`, succès = `event.payload.status == 0` **et** `event.header.name == "Response"` ✅.
+**Enveloppe** : succès = `status == 0` pour les routes `appsync`/`account`.
+
+⚠️⚠️ **Correction du 2026-09-09 (UC03) — la phrase qui suivait était FAUSSE** : elle affirmait que pour les
+routes `device/control/*`, succès = `event.payload.status == 0` **et** `event.header.name == "Response"`.
+**`sdkcontrol` n'a AUCUN `status`, à aucun niveau.** Sa sentinelle est `event.header.name === "Response"`
+(sinon `"ErrorResponse"`, message sous `event.payload.message`), plus un `event.payload.data` qui est une
+**chaîne JSON à re-parser**. `querystate`, lui, porte bien son statut sous `event.payload.status` — les
+deux routes du même préfixe ne partagent donc **pas** la même sentinelle.
+
+**Règle qui en découle, et qui vaut au-delà de ce transport** : la sentinelle de statut appartient à
+**chaque appelant**, jamais à la fonction de requête. Une route ajoutée sans la sienne transforme une
+erreur backend en **succès silencieux**.
 
 ## 2. Authentification
 
@@ -134,6 +144,18 @@ Champs d'appareil exploités ✅ :
 (`{"device":{"id":terminalid,"key":aeskey,"devSession","aeskey","did","pid","mac"}}` en base64) ✅
 (`maeek/aux_cloud.py::_act_device_params`). C'est un passage obligé, non évident.
 
+✅ **Point FERMÉ le 2026-09-09 (UC03)** — il était marqué « à valider à l'implémentation » dans la spec
+fonctionnelle d'UC03. Format confirmé par **concordance stricte de deux références**
+(`maeek/aux_cloud.py`, `GijsZwegers/legacyClient.ts`), côté Python avec `separators=(",",":")` — donc un
+`json_encode` PHP nu convient. **`smartclimAuxCloudApi::cookieMappe()`, livrée dès l'UC02, est déjà
+conforme** : le point s'est fermé par vérification, sans écrire une ligne. Ne pas le « corriger ».
+
+⚠️ **Écart NON tranché, et c'est le premier suspect en recette** : les deux références divergent sur la
+**casse** du champ `devicetypeflag` de `devicePairedInfo` — `maeek` écrit `devicetypeFlag` (F majuscule),
+`GijsZwegers` `devicetypeflag`. La **minuscule** est implémentée (choix d'UC02, cohérent avec son Écart 2 ;
+changer un champ déjà livré sans preuve serait une invention). Si `sdkcontrol` rend systématiquement
+`ErrorResponse` sur du matériel réel, **commencer par là**.
+
 **Types de produits connus** ✅ (`productId`) :
 
 - climatiseur générique : `000000000000000000000000c0620000`, `0000000000000000000000002a4e0000`
@@ -154,8 +176,18 @@ Les deux passent par **`device/control/v2/sdkcontrol`** avec `payload.act` = `"g
 - **Lecture** : `params: []` (liste vide) → l'appareil renvoie **son jeu de paramètres par défaut**.
   C'est le mécanisme de **détection de capacités** le plus fiable de ce transport : les clés absentes
   correspondent à des fonctions non supportées.
-- Certains paramètres exigent une requête séparée : `mode` (nécessaire pour obtenir `envtemp` sur certains
-  modèles) est déclaré « paramètre spécial » et interrogé à part ✅ (`AC_SPECIAL_PARAMS`).
+- Certains paramètres exigent une requête séparée : `mode` est déclaré « paramètre spécial » et interrogé à
+  part ✅ (`AC_SPECIAL_PARAMS`), **conditionné au `productId`** dans la référence, son résultat étant
+  simplement fusionné au dictionnaire.
+  ⚠️⚠️ **Correction du 2026-09-09 (UC03)** : cette ligne affirmait que `mode` est « nécessaire pour obtenir
+  `envtemp` sur certains modèles ». **Ce lien n'est établi par AUCUNE source lue** — c'était une inférence,
+  pas un fait, et elle avait traversé jusque dans la spec fonctionnelle d'UC03. Le paramètre s'appelle
+  littéralement `mode` (**≠ `ac_mode`**) et son rôle réel est inconnu.
+  **Décision UC03** : ce second `get` n'est **pas** émis sur le chemin périodique — il doublerait le trafic
+  d'un cycle O(N), et le conditionner au `productId` contredirait la doctrine anti-whitelist du
+  `brief.md` § 10. Il n'est accessible que par `commande-auxcloud.php --special`, pour être tranché
+  **factuellement**. S'il s'avère livrer `envtemp`, le conditionner à l'**absence de `envtemp`** — critère
+  positif et disponible dans la couche —, **jamais** au `productId`.
 - Convention singulière : pour un `get` d'**un seul** paramètre, il faut envoyer
   `vals = [[{"val": 0, "idx": 1}]]` ⚠️.
 - **Écriture** : `params = ["temp"]`, `vals = [[{"idx":1,"val":240}]]`.
@@ -248,6 +280,20 @@ wss://app-relay-<region>/appsync/apprelay/relayconnect
 ## 8. À confirmer
 
 - [ ] Sens exact de `ac_vdir`/`ac_hdir` (0 vs 1 vs 7).
+      ⚠️ **Toujours ouvert après l'UC03, et il le restera sans matériel** : la contradiction entre `maeek`
+      (`1` = oscille) et `fparrav` (`0` = oscille, commentaire `// 0 = oscilar, 1 = fijo`) est **confirmée
+      verbatim**, les deux sont en production, aucune ne peut être déclarée fausse par lecture. Le
+      mécanisme d'ajustement **est livré** (`codesOscillation()` par transport + case à cocher
+      `auxcloud_swing_inverse` par équipement), mais **l'exposition reste désactivée**
+      (`fonctionsOscillation()['confirme'] = false`, marqueur **global aux 3 transports**).
+- [x] ~~Format du jeton d'appairage (`cookie` à recomposer).~~ **FERMÉ le 2026-09-09** par concordance de
+      deux références ; `cookieMappe()` était déjà conforme — cf. § 3.
+- [ ] **Casse de `devicetypeflag`** dans `devicePairedInfo` — `maeek` majuscule, `GijsZwegers` minuscule.
+      La minuscule est implémentée. **Premier suspect si tout `sdkcontrol` rend `ErrorResponse`** (§ 3).
+- [ ] **Rôle réel du paramètre spécial `mode`** — le lien avec `envtemp` était une inférence, pas un fait
+      (§ 4). Tranchable par `commande-auxcloud.php --special`.
+- [ ] **Acceptation d'un `temp` impair** (`245` = 24,5 °C) : si le backend refuse les demi-degrés,
+      `PAS_ECRITURE_AUX_CLOUD_LEGACY` passe de `0.5` à `1.0` — **un littéral**.
 - [x] ~~Format de l'horodatage servant de graine MD5 (flottant Python) reproductible en PHP.~~
       **FERMÉ le 2026-09-08** : le format est **libre**, l'invariant est l'identité octet à octet entre
       l'en-tête et la graine — cf. § 2.

@@ -138,7 +138,10 @@
         "Ignoré — pompe à chaleur (hors périmètre du plugin)": "Ignored — heat pump (outside the plugin's scope)",
         "Ignoré — appareil non reconnu comme climatiseur": "Ignored — device not recognized as an air conditioner",
         "Ignoré — budget de temps épuisé": "Ignored — time budget exhausted",
-        "Cet équipement est relié au cloud historique (AC Freedom), qui ne peut pas encore être piloté par ce plugin — patientez pour une prochaine mise à jour": "This device is linked to the legacy cloud (AC Freedom), which cannot yet be controlled by this plugin — please wait for a future update"
+        "Budget de temps insuffisant pour joindre le cloud historique — réessayez": "Not enough time budget left to reach the legacy cloud — try again",
+        "Cet équipement est relié au cloud historique (AC Freedom) — configurez ce compte (e-mail, mot de passe, région) pour le piloter": "This device is linked to the legacy cloud (AC Freedom) — configure that account (e-mail, password, region) to control it",
+        "Cet équipement n'est pas relié à un appareil du cloud historique — relancez un scan": "This device is not linked to a legacy cloud device — run a scan again",
+        "État de marche inconnu pour cet équipement — réessayez dans quelques instants": "Unknown power state for this device — try again in a moment"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -332,7 +335,11 @@
         "Climatiseurs détectés sur le réseau local": "Air conditioners detected on the local network",
         "Renseignez l'adresse locale si la diffusion réseau n'atteint pas l'appareil (VLAN, réseau segmenté)": "Enter the local address if network broadcast does not reach the device (VLAN, segmented network)",
         "Réseau local": "Local network",
-        "Type d'appareil": "Device type"
+        "Type d'appareil": "Device type",
+        "Cloud historique": "Legacy cloud",
+        "Oscillations inversées": "Reversed swing",
+        "Sens inversé pour ce transport": "Reversed direction for this transport",
+        "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Check this if the swing commands produce the opposite effect of the one announced"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

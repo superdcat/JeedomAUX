@@ -71,10 +71,9 @@ class smartclimCapabilities {
   const TRANSPORT_BROADLINK_LAN = 'BROADLINK_LAN';
 
   // Identifiant du transport cloud historique (UC02 du domaine
-  // post-mvp/03-cloud-aux-legacy, § 6.3 de sa spec technique). ⚠️ AUCUNE entrée dans
-  // tables() ci-dessous : la numérotation legacy des modes/vitesses est l'UC03 de ce
-  // domaine (§ 3.3/R9 de la spec technique) — cette constante ne sert, pour l'instant,
-  // qu'à libelleTransport() et aux clés de rapprochement de smartclim::.
+  // post-mvp/03-cloud-aux-legacy, § 6.3 de sa spec technique). Depuis l'UC03 du même
+  // domaine (§ 5.1 de sa spec technique), tables() porte enfin son entrée — TROISIÈME
+  // numérotation du plugin, différente d'AUX Home et du LAN.
   const TRANSPORT_AUX_CLOUD_LEGACY = 'AUX_CLOUD_LEGACY';
 
   const CONCEPT_ONLINE = 'online';
@@ -151,6 +150,15 @@ class smartclimCapabilities {
   const FACTEUR_TEMP_BROADLINK_LAN = 1;
   const PAS_ECRITURE_BROADLINK_LAN = 0.5;
 
+  // Échelle de température en ÉCRITURE du transport AUX Cloud legacy (UC03 du domaine
+  // post-mvp/03-cloud-aux-legacy, § 1.4/5.1 de sa spec technique) : `temp`/`envtemp` sont
+  // des entiers en DIXIÈMES de degré (240 = 24,0 °C), d'où le facteur ×10 — DISTINCT du
+  // facteur ×1 des deux autres transports. Pas d'écriture 0,5 °C, NON CONFIRMÉ en
+  // recette (§ 9, point 4 de la spec technique) : si le backend refuse un `temp` impair,
+  // ces deux littéraux suffisent à corriger vers 1.0.
+  const FACTEUR_TEMP_AUX_CLOUD_LEGACY = 10;
+  const PAS_ECRITURE_AUX_CLOUD_LEGACY = 0.5;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -219,6 +227,37 @@ class smartclimCapabilities {
           self::VITESSE_MEDIUM => array('intent' => 2, 'fil' => 2, 'intent_confirme' => false),
           self::VITESSE_MEDIUM_HIGH => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
           self::VITESSE_HIGH => array('intent' => 1, 'fil' => 1, 'intent_confirme' => false),
+          self::VITESSE_TURBO => array('intent' => 4, 'fil' => 4, 'intent_confirme' => false),
+        ),
+      ),
+      // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 1.4/5.1 de sa spec technique) :
+      // TROISIÈME numérotation du plugin, différente d'AUX Home ET du LAN — vérifiée sur
+      // 3 sources concordantes (const.py, constants.ts, analyse interne § 5). Le legacy
+      // LIT et ÉCRIT la MÊME clé (`ac_mode`/`ac_mark`), d'où 'intent' === 'fil' partout.
+      // Pas de colonne 'libelle' : le libellé français est déjà porté par l'entrée
+      // AUX_HOME ci-dessus (même concept/valeur générique = même libellé, cf. libelle()).
+      // 'intent_confirme' => false : jamais mesuré sur matériel (transport livré non
+      // recetté, § 0 de la spec technique).
+      self::TRANSPORT_AUX_CLOUD_LEGACY => array(
+        self::CONCEPT_MODE => array(
+          self::MODE_COOL => array('intent' => 0, 'fil' => 0, 'intent_confirme' => false),
+          self::MODE_HEAT => array('intent' => 1, 'fil' => 1, 'intent_confirme' => false),
+          self::MODE_DRY => array('intent' => 2, 'fil' => 2, 'intent_confirme' => false),
+          self::MODE_FAN => array('intent' => 3, 'fil' => 3, 'intent_confirme' => false),
+          self::MODE_AUTO => array('intent' => 4, 'fil' => 4, 'intent_confirme' => false),
+        ),
+        // ⚠️ MEDIUM_LOW et MEDIUM_HIGH -> null/null : FAIT DE PROTOCOLE (aucun code
+        // `ac_mark` correspondant), pas une non-confirmation — cf. § 5.1 de la spec
+        // technique. Ordre de déclaration IDENTIQUE aux autres transports (AUTO,
+        // SILENT, LOW, MEDIUM_LOW, MEDIUM, MEDIUM_HIGH, HIGH, TURBO).
+        self::CONCEPT_FAN_SPEED => array(
+          self::VITESSE_AUTO => array('intent' => 0, 'fil' => 0, 'intent_confirme' => false),
+          self::VITESSE_SILENT => array('intent' => 5, 'fil' => 5, 'intent_confirme' => false),
+          self::VITESSE_LOW => array('intent' => 1, 'fil' => 1, 'intent_confirme' => false),
+          self::VITESSE_MEDIUM_LOW => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
+          self::VITESSE_MEDIUM => array('intent' => 2, 'fil' => 2, 'intent_confirme' => false),
+          self::VITESSE_MEDIUM_HIGH => array('intent' => null, 'fil' => null, 'intent_confirme' => false),
+          self::VITESSE_HIGH => array('intent' => 3, 'fil' => 3, 'intent_confirme' => false),
           self::VITESSE_TURBO => array('intent' => 4, 'fil' => 4, 'intent_confirme' => false),
         ),
       ),
@@ -840,6 +879,47 @@ class smartclimCapabilities {
         'pas_ecriture' => self::PAS_ECRITURE_BROADLINK_LAN,
       );
     }
+    // UC03 du domaine post-mvp/03-cloud-aux-legacy (§ 5.1 de sa spec technique).
+    if ($_transport === self::TRANSPORT_AUX_CLOUD_LEGACY) {
+      return array(
+        'facteur' => self::FACTEUR_TEMP_AUX_CLOUD_LEGACY,
+        'pas_ecriture' => self::PAS_ECRITURE_AUX_CLOUD_LEGACY,
+      );
+    }
     return array();
+  }
+
+  /**
+   * Codes propriétaires ('actif'/'fixe') d'un concept d'oscillation, avec SURCHARGE
+   * possible par transport (UC03 du domaine post-mvp/03-cloud-aux-legacy, § 3.5/5.1 de
+   * sa spec technique) — mécanisme d'AJUSTEMENT SANS MODIFICATION DE CODE exigé par AC6
+   * de la spec fonctionnelle : si le sens de l'oscillation s'avère inversé sur un
+   * modèle, seule une ligne de cette table change, jamais un second littéral ailleurs.
+   *
+   * ADDITIF : fonctionOscillation()['code_actif']/['code_fixe'] restent la source pour
+   * les 3 appelants EXISTANTS (transport-agnostiques à ce jour, cf. docblock de
+   * fonctionsOscillation()) — cet accesseur ne les remplace pas, il leur ajoute une
+   * dimension transport pour un futur appelant.
+   *
+   * Surcharge livrée : AUX_CLOUD_LEGACY => {actif: 1, fixe: 0} (convention `maeek`, § 1.5
+   * de la spec technique — l'AUTRE référence documente l'inverse, contradiction NON
+   * tranchée, cf. son propre docblock).
+   *
+   * @param string $_concept
+   * @param string $_transport
+   * @return array{actif:int,fixe:int}|array Vide si le concept est inconnu.
+   */
+  public static function codesOscillation($_concept, $_transport) {
+    $fonction = self::fonctionOscillation($_concept);
+    if (empty($fonction) || !isset($fonction['code_actif'], $fonction['code_fixe'])) {
+      return array();
+    }
+    $surcharges = array(
+      self::TRANSPORT_AUX_CLOUD_LEGACY => array('actif' => 1, 'fixe' => 0),
+    );
+    if (isset($surcharges[$_transport])) {
+      return $surcharges[$_transport];
+    }
+    return array('actif' => $fonction['code_actif'], 'fixe' => $fonction['code_fixe']);
   }
 }

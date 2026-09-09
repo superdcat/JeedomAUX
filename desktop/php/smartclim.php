@@ -339,6 +339,15 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 									</select>
 								</div>
 							</div>
+							<legend><i class="fas fa-cloud"></i> {{Cloud historique}}</legend>
+							<div class="form-group">
+								<label class="col-sm-4 control-label">{{Oscillations inversées}}
+									<sup><i class="fas fa-question-circle tooltips" title="{{À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé}}"></i></sup>
+								</label>
+								<div class="col-sm-6">
+									<label class="checkbox-inline"><input type="checkbox" class="eqLogicAttr" data-l1key="configuration" data-l2key="auxcloud_swing_inverse">{{Sens inversé pour ce transport}}</label>
+								</div>
+							</div>
 						</div>
 
 						<!-- Partie droite de l'onglet "Équipement" -->

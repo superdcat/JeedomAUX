@@ -201,11 +201,53 @@ class smartclimTransport {
   }
 
   /**
+   * Disponibilité du cloud HISTORIQUE (AC Freedom) pour cet équipement (UC03 du domaine
+   * post-mvp/03-cloud-aux-legacy, § 3.6/D6 de sa spec technique) — pendant EXACT de
+   * cloudDisponible() ci-dessus, deux termes dont un par équipement : le compte legacy
+   * doit être configuré (global au plugin) ET cet équipement précis doit être relié à
+   * un appareil du cloud historique (`auxcloud_endpoint_id`, par équipement).
+   *
+   * @param smartclim $_eqLogic
+   * @return bool
+   */
+  public static function cloudLegacyDisponible(smartclim $_eqLogic) {
+    if (!smartclim::compteAuxCloudConfigure()) {
+      return false;
+    }
+    $identifiant = $_eqLogic->getConfiguration(smartclim::CLE_CONF_AUXCLOUD_ENDPOINT_ID);
+    return is_string($identifiant) && $identifiant !== '';
+  }
+
+  /**
+   * true si le cycle CLOUD HISTORIQUE (smartclim::rafraichirAuxCloud()) doit lire l'état
+   * de cet équipement (UC03 du domaine post-mvp/03-cloud-aux-legacy, § 3.6/D6 de sa
+   * spec technique) — SIMPLE ÉGALITÉ à transportRetenu(), contrairement à
+   * lectureCloudAutorisee() ci-dessus (qui autorise AUX Home même quand l'ordre part en
+   * LAN, parce que son cycle est UNE requête pour tout le parc). ⚠️ Délibérément PLUS
+   * STRICTE : le cycle legacy est O(N) — un équipement vu par AUX Home ET par le cloud
+   * historique n'entre JAMAIS dans le cycle legacy (« jamais deux transports pour une
+   * même opération », AC3 de l'UC02 du domaine post-mvp/02).
+   *
+   * @param smartclim $_eqLogic
+   * @return bool
+   */
+  public static function lectureLegacyAutorisee(smartclim $_eqLogic) {
+    return self::transportRetenu($_eqLogic) === smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY;
+  }
+
+  /**
    * Transport RETENU pour cet équipement — ne renvoie JAMAIS de chaîne vide (§ 5.1 de la
-   * spec technique). En AUTO : priorité LAN si joignable, sinon cloud si disponible,
-   * sinon LAN (dernier repli, PAS une erreur dédiée) — c'est ce dernier repli qui rend
-   * AC3 vrai sans écrire une seule ligne de message : un équipement sans identifiant
-   * cloud se comporte comme LOCAL.
+   * spec technique, ÉTENDUE par l'UC03 du domaine post-mvp/03-cloud-aux-legacy, § 3.6/D6
+   * de sa spec technique). En MODE_CLOUD : AUX Home si disponible, SINON le cloud
+   * historique si disponible, SINON AUX Home (repli INCHANGÉ — le message « compte non
+   * configuré » reste préservé). En AUTO : LAN joignable -> AUX Home -> cloud historique
+   * -> LAN (dernier repli, PAS une erreur dédiée) — c'est ce dernier repli qui rend AC3
+   * (du domaine post-mvp/02) vrai sans écrire une seule ligne de message : un
+   * équipement sans AUCUN identifiant cloud se comporte comme LOCAL.
+   *
+   * ⚠️ Non-régression GARANTIE PAR CONSTRUCTION (§ 3.6 de la spec technique UC03) : sur
+   * un parc sans compte legacy, cloudLegacyDisponible() est faux PARTOUT, les deux
+   * branches AJOUTÉES sont donc MORTES et le comportement reste STRICTEMENT identique.
    *
    * @param smartclim $_eqLogic
    * @return string Une des constantes smartclimCapabilities::TRANSPORT_*.
@@ -216,6 +258,12 @@ class smartclimTransport {
       return smartclimCapabilities::TRANSPORT_BROADLINK_LAN;
     }
     if ($mode === self::MODE_CLOUD) {
+      if (self::cloudDisponible($_eqLogic)) {
+        return smartclimCapabilities::TRANSPORT_AUX_HOME;
+      }
+      if (self::cloudLegacyDisponible($_eqLogic)) {
+        return smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY;
+      }
       return smartclimCapabilities::TRANSPORT_AUX_HOME;
     }
     // MODE_AUTO.
@@ -224,6 +272,9 @@ class smartclimTransport {
     }
     if (self::cloudDisponible($_eqLogic)) {
       return smartclimCapabilities::TRANSPORT_AUX_HOME;
+    }
+    if (self::cloudLegacyDisponible($_eqLogic)) {
+      return smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY;
     }
     return smartclimCapabilities::TRANSPORT_BROADLINK_LAN;
   }

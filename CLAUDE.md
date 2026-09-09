@@ -167,21 +167,31 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
     post-MVP 03 : `{cookie, dev_session, cree_le}`, **par équipement** et **chiffrée** (`utils::encrypt`),
     contrairement aux deux précédentes — le `cookie` est un base64 portant une **clé AES d'appairage**.
     Clé par `getId()`, **jamais** par MAC ni par `endpointId`, même leçon que `echecs_transport`.
-    ⚠️ **Écrite sans aucun lecteur pour l'instant**, et elle sera le plus souvent **expirée** à son premier
-    usage réel : l'usage est « scan le matin, commande le soir ». Contrat imposé à l'UC03, écrit au § 4.1
-    de sa spec technique : traiter son absence comme le **cas nominal** et re-obtenir les jetons par un
-    `dev/query` ciblé sur `auxcloud_family_id`. ⚠️ Ne pas la rapprocher de `session_auxcloud` : une session
-    se régénère seule par `login()`, ces jetons non.
+    ⚠️ Elle a **enfin un lecteur depuis l'UC03 du même domaine** (`appareilAuxCloud()`), et elle est le
+    plus souvent **expirée** à son premier usage réel : l'usage est « scan le matin, commande le soir ».
+    Contrat honoré : son absence est le **cas nominal**, et les jetons sont re-obtenus par un `dev/query`
+    ciblé sur `auxcloud_family_id`. ⚠️ Ne pas la rapprocher de `session_auxcloud` : une session se
+    régénère seule par `login()`, ces jetons non — **d'où sa purge sur preuve de refus** (UC03) : sa TTL
+    est **absolue et n'est jamais raccourcie par un échec**, donc sans purge explicite un jeton rejeté par
+    le backend ferait échouer lecture et commande **à l'identique pendant 30 min**. Le rejeu d'appairage
+    qui la purge vit dans `smartclim`, **jamais dans le transport** (il lui faut `auxcloud_family_id` et
+    `getId()`), et **ni `etatMarcheCourant()` ni les trois sondes ne le portent** : la première est déjà
+    dans le rejeu de son appelant (double purge sinon), les secondes sont des instruments de mesure et
+    doivent rendre le comportement **brut** du backend.
   ⚠️ L'**état optimiste** poussé après succès est celui **réellement envoyé** (après quantification), pas
   celui demandé par l'utilisateur.
 
   Depuis l'UC07, elle porte enfin le **cadencement** : `cron()` — **seul hook cron implémenté**, appelé
   chaque minute par le core, `cron5()`…`cronDaily()` restant **commentées donc inexistantes** — ouvre par
   la garde d'échéance `cycleEchu()` (cache `smartclim::dernier_cycle`, marge de 30 s) puis appelle
-  `rafraichirAuxHome()` ; ⚠️ **depuis l'UC01 du domaine post-MVP 02 elle porte DEUX cycles**, chacun avec
-  sa **propre** garde d'échéance et son **propre** `try/catch (Throwable)` — jamais de `return` dans le
-  premier bloc, qui court-circuiterait le second (le cycle cloud n'étant presque jamais échu à un tick
-  donné, le cycle LAN ne tournerait **jamais**) : **un seul** `listerAppareils()`, puis distribution via
+  `rafraichirAuxHome()` ; ⚠️ **elle porte TROIS cycles** — le LAN depuis l'UC01 du domaine post-MVP 02,
+  le **cloud legacy** depuis l'UC03 du domaine post-MVP 03 (`rafraichirAuxCloud()`,
+  `INTERVALLE_CYCLE_AUXCLOUD` = **900 s fixes**, marqueur `smartclim::dernier_cycle_auxcloud` **séparé**
+  de celui du LAN, budget 20 s à arrêt dur, **groupé par `auxcloud_family_id`** donc O(familles) et non
+  O(N)) —, chacun avec sa **propre** garde d'échéance et son **propre** `try/catch (Throwable)` — jamais
+  de `return` dans un bloc, qui court-circuiterait les suivants (le cycle cloud n'étant presque jamais
+  échu à un tick donné, les cycles LAN et legacy ne tourneraient **jamais**) : **un seul**
+  `listerAppareils()`, puis distribution via
   `equipementsParIdentifiant()` et `appliquerEtat()`, et `basculerHorsLigne()` sur les équipements dont
   l'appareil n'a pas été renvoyé. La commande d'action `refresh` (`CMD_RAFRAICHIR`, libellé
   « Rafraîchir ») déclenche le **même cycle complet** via `rafraichirMaintenant()`.
@@ -302,9 +312,14 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   accesseurs de lecture (`valeursLisibles()`, `versTransport()`, `depuisTransport()`, `libelle()`,
   `libelleConcept()`, `libelleTransport()`, `conceptsConnus()`).
   ⚠️ Depuis l'UC02 du domaine post-MVP 03 elle porte `TRANSPORT_AUX_CLOUD_LEGACY` et son libellé
-  (« AUX Cloud (AC Freedom) », **nom de marque sans `__()`**), mais **AUCUNE entrée dans `tables()`** :
-  la numérotation legacy (`ac_mode` : 0 COOL, 1 HEAT, 2 DRY, 3 FAN, 4 AUTO — **une troisième**, différente
-  d'AUX Home *et* du LAN) naîtra à l'UC03, avec le pilotage qui la consomme.
+  (« AUX Cloud (AC Freedom) », **nom de marque sans `__()`**), et **depuis l'UC03 du même domaine son
+  entrée dans `tables()`** : la numérotation legacy (`ac_mode` : 0 COOL, 1 HEAT, 2 DRY, 3 FAN, 4 AUTO —
+  **une troisième**, différente d'AUX Home *et* du LAN ; `ac_mark` : 0 AUTO, 1 LOW, 2 MEDIUM, 3 HIGH,
+  4 TURBO, 5 MUTE), avec le pilotage qui la consomme. ⚠️ `MEDIUM_LOW` et `MEDIUM_HIGH` y portent
+  `'intent' => null` **et** `'fil' => null` — aucun code `ac_mark` ne leur correspond : c'est un **fait de
+  protocole**, pas une non-confirmation. Depuis la même UC, elle porte aussi `codesOscillation($_concept,
+  $_transport)`, accesseur **additif** qui introduit la dimension transport **dans** la table plutôt qu'un
+  second littéral ailleurs.
   ⚠️ **La colonne `'fil' => null` exclut une valeur au niveau du TRANSPORT** : une valeur sans
   correspondance de **lecture** vérifiée n'apparaît jamais dans l'interface plutôt que d'y figurer
   approximativement. ⚠️ Ce n'est plus le **seul** mécanisme d'exclusion depuis le 2026-08-26 : le second
@@ -558,6 +573,21 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ajouter de chaîne UI ni de surface web à un outil d'infrastructure.
   ⚠️ À lancer sous `www-data` (`sudo -u www-data php …`) : le pong est écrit par le processus Apache dans
   le cache, et la CLI le relit. Vaut aussi pour les trois CLI existantes.
+- **`core/php/commande-auxcloud.php`** — **existe** depuis l'UC03 du domaine post-MVP 03. **5ᵉ et dernière
+  CLI** du plugin, même moule que les quatre autres (garde `php_sapi_name() === 'cli'` **avant tout
+  `require_once`**, aucun POST, aucune écriture en base ni sur disque, sorties FR **sans `__()`**).
+  Cinq usages : `--lister`, `--etat`, `--commande=<logicalId> [--valeur=]`, `--parametre=<clé> --valeur=<n>`
+  et `--special` (le seul moyen de trancher factuellement l'utilité du second `get`).
+  ⚠️ **C'est un AIGUILLAGE, sans aucune logique métier** — comme `commande-lan.php` : il ne construit
+  **jamais** de map de concepts à la main, il passe par `ordreDeCommandeAction()`. C'est cela, et rien
+  d'autre, qui garantit que la surface de commandes legacy est identique à celle du cloud et du LAN.
+  ⚠️ **Il existe parce que ce transport est livré NON RECETTÉ** (aucun compte AC Freedom) : il est le seul
+  instrument capable de fermer, par un rapport communautaire, la casse de `devicetypeflag`, le sens des
+  oscillations, l'utilité du second `get` et l'acceptation d'un `temp` impair. Même raison d'être que
+  `sonde-intent-auxhome.php`.
+  ⚠️ `--parametre` accepte une **clé brute** : sa forme est validée **deux fois** (dans le script pour un
+  message utilisable, dans `smartclimAuxCloudApi::sonderParametre()` comme barrière) — défense en
+  profondeur, ne supprimer ni l'une ni l'autre comme « redondante ».
 - **`core/class/smartclimTransport.class.php`** — **existe** depuis l'UC01 du domaine post-MVP 02. Couche
   de **décision de transport**, et rien d'autre : même statut que `smartclimCapabilities` et
   `smartclimFrame` — aucune E/S, aucun socket, aucun cURL, aucune écriture de cache, aucun `config::save`,
@@ -565,6 +595,17 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `transport_mode`), leurs libellés, `normaliserMode()`, les prédicats `lanJoignable()` /
   `cloudDisponible()`, l'arbitre `transportRetenu()` et les deux filtres `lectureCloudAutorisee()` /
   `sondeLanAutorisee()`.
+  Depuis l'UC03 du domaine post-MVP 03 s'y ajoutent `cloudLegacyDisponible()` (pendant exact de
+  `cloudDisponible()` : compte legacy configuré **et** `auxcloud_endpoint_id` par équipement) et
+  `lectureLegacyAutorisee()`, plus **deux branches** dans `transportRetenu()` — en `MODE_CLOUD` le legacy
+  passe **après** AUX Home, en `MODE_AUTO` l'ordre est LAN → AUX Home → legacy → LAN.
+  ⚠️ **Non-régression par construction** : sur un parc sans compte legacy ces deux branches sont
+  **mortes**, le comportement est strictement identique.
+  ⚠️ **`lectureLegacyAutorisee()` est PLUS STRICTE que `lectureCloudAutorisee()`, délibérément** : le cycle
+  AUX Home est **une** requête pour tout le parc (exclure un équipement n'économise rien), le cycle legacy
+  est **O(N)**. Un équipement vu par les deux clouds n'entre donc **jamais** dans le cycle legacy.
+  ⚠️ `repliCloudActif()` et la temporisation restent adossées à `cloudDisponible()` (**AUX Home**) : un
+  équipement legacy n'a **pas** de disjoncteur — dette assumée, cohérente avec D-MVP08-05.
   Depuis l'UC02 du même domaine, elle porte aussi la **politique de repli** — et rien que la politique,
   le stockage restant dans `smartclim` : `SEUIL_ECHECS_LAN` (**3**), `DELAI_BASE_CLOUD` (30 s),
   `DELAI_MAX_CLOUD` (300 s), le prédicat `repliCloudActif()` et la fonction pure
@@ -604,10 +645,28 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   crypto (SHA1/MD5/AES-128-CBC), le classement d'erreurs et `journaliserErreurLegacy()`.
   **Depuis l'UC02 du même domaine, elle porte aussi la découverte** : `listerAppareils()` (familles →
   appareils propres **et** partagés → un `sdkcontrol get params:[]` par appareil), `capacitesAppareil()`,
-  `etatAppareil()` (`{online, source}` **seuls**), `parametresAuxCloud()`, `estClimatiseur()` et la
+  `etatAppareil()`, `parametresAuxCloud()`, `estClimatiseur()` et la
   **3ᵉ frontière d'assainissement** du plugin, `nettoyerTexteExterne()` — **strictement symétrique** de ses
-  deux jumelles (cf. `smartclimAuxHomeApi`). Toujours aucune lecture/écriture d'état (UC03), aucun
-  `eqLogic`, aucune commande.
+  deux jumelles (cf. `smartclimAuxHomeApi`). Aucun `eqLogic`, aucune commande.
+  **Depuis l'UC03 du même domaine, elle porte enfin la lecture ET l'écriture d'état** : `lireParametres()`,
+  `appliquerOrdre()`, `decoderParametres()`, `jetonsAppareil()`, `sonderParametre()`, et le **point unique**
+  `requeteSdkControl()` dont `requeteParametres()` est devenue un appelant. Le `temp`/`envtemp` legacy est
+  en **dixièmes de degré** (×10), décodé sous une **garde de plausibilité** (50..500) qui rend une valeur
+  fausse **structurellement inatteignable** : hors bornes, la clé est **absente** — jamais « 2,4 » ni
+  « 240 ».
+  ⚠️⚠️ **`sdkcontrol` n'a AUCUN `status`, à aucun niveau** — sa sentinelle est
+  `event.header.name === 'Response'`, plus un `event.payload.data` qui est une **chaîne JSON à re-parser**.
+  Troisième illustration de la règle « la sentinelle appartient à chaque appelant » : recopier celle d'une
+  autre route transforme une erreur backend en **succès silencieux**.
+  ⚠️ Sur `ErrorResponse`, journaliser `journaliserErreurLegacy('sdkcontrol', $donnees['event']['payload'])`
+  — **le sous-tableau, jamais `$donnees`** : la fonction lit `message`/`msg` au **premier niveau**, la
+  passer entière perdrait le message **en silence**. Et un `ErrorResponse` ne se classe **pas** en
+  `TYPE_AUTH` : cela armerait un re-login inutile.
+  ⚠️ **Le format du jeton d'appairage est FERMÉ** (`cookieMappe()`, livrée à l'UC02) : `base64` d'un JSON
+  compact `{"device":{id, key, devSession, aeskey, did, pid, mac}}`, concordance stricte de deux
+  références. Ne pas le « corriger ». ⚠️ Reste un **écart non tranché** entre les deux sources sur la casse
+  de `devicetypeflag` dans `devicePairedInfo` — la minuscule est implémentée, et c'est le **premier
+  suspect** si tout `sdkcontrol` rend `ErrorResponse` en recette.
   ⚠️⚠️ **Les routes de découverte n'ont NI corps chiffré NI en-têtes `timestamp`/`token`** — seule
   `/account/login` les porte. Recopier l'enveloppe de `login()` ferait échouer **toute** la découverte.
   C'est le symétrique exact du piège `status == 0` ci-dessous : les invariants de ce transport ne sont pas
@@ -1216,7 +1275,7 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   ⚠️ **`core/php/.htaccess` whiteliste UN SEUL fichier** depuis l'UC02 du domaine post-MVP 05 —
   `jeeSmartclim.php`, via un bloc `<Files>` sur le modèle de `plugin_info/.htaccess` : c'est le rappel HTTP
   du démon, il **doit** être joignable, sinon le démon s'arrête au démarrage sur un 403. Le `Deny from all`
-  continue de protéger `smartclim.inc.php` et les **4 CLI** — n'y ajouter aucun autre fichier sans vérifier
+  continue de protéger `smartclim.inc.php` et les **5 CLI** — n'y ajouter aucun autre fichier sans vérifier
   ce qu'il rendrait public, et ne jamais élargir le bloc à une **extension** (ce serait ouvrir tout le
   dossier).
   ⚠️ **`plugin_info/.htaccess` whiteliste des extensions** (`allow from all` sur les images) pour servir

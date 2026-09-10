@@ -35,8 +35,16 @@
 #   (e) shutdown() : os.path.exists() avant os.remove(), et test de presence
 #       de my_jeedom_socket dans globals() ;
 #   (f) messages de journal en francais.
-# Seul ordre metier gere a ce stade : "ping" -> "pong" (socle du pont,
-# aucun protocole climatiseur reel).
+# Second ordre metier ajoute par l'UC03 du domaine post-mvp/05-temps-reel-et-demon :
+# "auxcloud_relais" -> configure/reconfigure la session WebSocket temps reel du cloud
+# historique AUX Cloud legacy (relais_auxcloud.RelaisAuxCloud), sans AUCUNE connaissance
+# du protocole HVAC (le demon relaie des octets, il ne les decode jamais - cf. l'en-tete
+# de relais_auxcloud.py). Import SOUS GARDE (try/except) : si relais_auxcloud.py est
+# absent ou casse, le pont ping/pong continue de fonctionner normalement (meme doctrine
+# que l'import de "websocket" a l'interieur de ce module, qui degrade sans casser).
+# Un signal "pont::demarre" est emis au demarrage (une seule fois) : cote PHP,
+# smartclim::invaliderSyncRelais() invalide le marqueur d'echeance de la synchro pour
+# qu'elle reparte des le prochain tick de cron, sans attendre 600 s apres un redemarrage.
 # ---------------------------------------------------------------------------
 
 import logging
@@ -51,6 +59,12 @@ import re
 import argparse
 
 from jeedom.jeedom import jeedom_socket, jeedom_utils, jeedom_com, JEEDOM_SOCKET_MESSAGE
+
+try:
+    from relais_auxcloud import RelaisAuxCloud
+except ImportError as erreur_import:
+    RelaisAuxCloud = None
+    logging.error("Module relais_auxcloud indisponible, relais AUX Cloud legacy desactive : %s", erreur_import)
 
 # Meme forme que smartclimDemon::enregistrerPong() (core/class/smartclimDemon.class.php)
 # cote PHP : les deux barrieres doivent rester identiques. fullmatch() (et non match()
@@ -77,6 +91,11 @@ def read_socket():
                     return
                 logging.info("Ping recu (jeton %s), envoi du pong", jeton)
                 my_jeedom_com.add_changes('pont::pong', jeton)
+            elif commande == 'auxcloud_relais':
+                if _relais is None:
+                    logging.warning("Configuration du relais AUX Cloud legacy recue mais le module est indisponible, ignoree")
+                    return
+                _relais.configurer(message.get('relais'))
             else:
                 logging.warning("Commande inconnue recue sur le socket")
         except Exception as e:
@@ -100,6 +119,11 @@ def handler(signum=None, frame=None):
 
 def shutdown():
     logging.debug("Arret du demon")
+    if '_relais' in globals() and _relais is not None:
+        try:
+            _relais.arreter()
+        except Exception as e:
+            logging.warning('Erreur lors de l\'arret du relais AUX Cloud legacy: %s', e)
     logging.debug("Suppression du fichier PID %s", _pidfile)
     if os.path.exists(_pidfile):
         try:
@@ -166,6 +190,14 @@ try:
         logging.error('Probleme de communication reseau. Verifiez la configuration reseau de Jeedom.')
         shutdown()
     my_jeedom_socket = jeedom_socket(port=_socket_port, address=_socket_host)
+    # UC03 du domaine post-mvp/05-temps-reel-et-demon : _relais reste None si le module
+    # (ou sa dependance websocket-client) est indisponible - le pont ping/pong continue
+    # de fonctionner normalement dans ce cas (AC7).
+    _relais = RelaisAuxCloud(my_jeedom_com) if RelaisAuxCloud is not None else None
+    # Signal de demarrage (cote PHP : smartclim::invaliderSyncRelais(), branche
+    # 'pont.demarre' de jeeSmartclim.php) - permet a la synchro de repartir des le
+    # prochain tick de cron plutot que d'attendre jusqu'a 600 s apres un redemarrage.
+    my_jeedom_com.add_changes('pont::demarre', True)
     listen()
 except Exception as e:
     logging.error('Erreur fatale: %s', e)

@@ -141,7 +141,11 @@
         "Budget de temps insuffisant pour joindre le cloud historique — réessayez": "Not enough time budget left to reach the legacy cloud — try again",
         "Cet équipement est relié au cloud historique (AC Freedom) — configurez ce compte (e-mail, mot de passe, région) pour le piloter": "This device is linked to the legacy cloud (AC Freedom) — configure that account (e-mail, password, region) to control it",
         "Cet équipement n'est pas relié à un appareil du cloud historique — relancez un scan": "This device is not linked to a legacy cloud device — run a scan again",
-        "État de marche inconnu pour cet équipement — réessayez dans quelques instants": "Unknown power state for this device — try again in a moment"
+        "État de marche inconnu pour cet équipement — réessayez dans quelques instants": "Unknown power state for this device — try again in a moment",
+        "Connexion au relais perdue": "Relay connection lost",
+        "Reconnexion au relais en cours": "Reconnecting to relay",
+        "Temps réel actif": "Real-time active",
+        "Temps réel en attente de confirmation": "Real-time awaiting confirmation"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -339,7 +343,8 @@
         "Cloud historique": "Legacy cloud",
         "Oscillations inversées": "Reversed swing",
         "Sens inversé pour ce transport": "Reversed direction for this transport",
-        "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Check this if the swing commands produce the opposite effect of the one announced"
+        "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Check this if the swing commands produce the opposite effect of the one announced",
+        "Temps réel": "Real-time"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

@@ -63,6 +63,18 @@ class smartclimDemon {
 
   const CLE_CACHE_PONG = 'smartclim::pont_pong';
   const DUREE_MEMOIRE_PONG = 300;
+
+  // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.2 de sa spec technique) :
+  // battement du relais WebSocket AUX Cloud legacy — mémoire GLOBALE au compte (une
+  // seule session WS pour tout le parc legacy), NON chiffrée (aucun secret : un code
+  // d'état, deux listes d'identifiants d'endpoint et une empreinte). FRAICHEUR_RELAIS
+  // (180 s) borne la fenêtre pendant laquelle un battement est considéré à jour par
+  // smartclim::pushAuxCloudActif() — STRICTEMENT < DUREE_MEMOIRE_RELAIS (300 s), pour
+  // qu'un battement "frais" au sens fonctionnel soit toujours lisible en cache.
+  const CLE_CACHE_RELAIS = 'smartclim::relais_auxcloud';
+  const DUREE_MEMOIRE_RELAIS = 300;
+  const FRAICHEUR_RELAIS = 180;
+
   const TIMEOUT_SOCKET = 2;
   const ATTENTE_DEMARRAGE = 5;
   // Borne l'attente de la MORT du processus après SIGTERM, dans arreter() — distincte
@@ -339,8 +351,13 @@ class smartclimDemon {
       }
 
       stream_set_timeout($fp, self::TIMEOUT_SOCKET);
-      $ordreSansCle = $_message;
-      log::add('smartclim', 'debug', 'Envoi au démon : ' . json_encode($ordreSansCle));
+      // ⚠️⚠️ Correctif de sécurité (UC03 du domaine post-mvp/05-temps-reel-et-demon,
+      // § 6.1 de sa spec technique) : NE JAMAIS journaliser $_message en entier, même
+      // sans l'apikey — dès que le paquet relais (session.loginsession, devSession par
+      // appareil) transite par cette méthode, cela écrirait ces secrets en clair dans
+      // log/smartclim. Seuls 'cmd' et le NOMBRE D'OCTETS sont journalisés.
+      $cmd = isset($_message['cmd']) && is_scalar($_message['cmd']) ? (string) $_message['cmd'] : '?';
+      log::add('smartclim', 'debug', 'Envoi au démon : cmd=' . $cmd . ' (' . strlen($json) . ' octets)');
       fwrite($fp, $json . "\n");
       fclose($fp);
       return true;
@@ -387,5 +404,108 @@ class smartclimDemon {
 
   public static function oublierPong() {
     cache::delete(self::CLE_CACHE_PONG);
+  }
+
+  /**
+   * Transmet le paquet de synchronisation du relais AUX Cloud legacy au démon (UC03 du
+   * domaine post-mvp/05-temps-reel-et-demon, § 5.2 de sa spec technique) — simple
+   * délégation à envoyer(), même contrat (NE LÈVE JAMAIS, jamais de secret journalisé
+   * grâce au correctif ci-dessus).
+   *
+   * @param array $_relais {url, entetes, session, appareils, empreinte} ou {appareils: []}.
+   * @return bool
+   */
+  public static function envoyerRelais(array $_relais) {
+    return self::envoyer(array('cmd' => 'auxcloud_relais', 'relais' => $_relais));
+  }
+
+  /**
+   * Appelée UNIQUEMENT par core/php/jeeSmartclim.php (branche 'auxcloud.relais') : valide
+   * la FORME du battement AVANT toute écriture en cache (§ 4.1 de la spec technique) —
+   * 'etat' dans une liste blanche FERMÉE, listes d'endpoints validées et BORNÉES à 200,
+   * horodatage SERVEUR (jamais celui du démon). Non chiffrée (aucun secret).
+   *
+   * @param mixed $_battement
+   */
+  public static function enregistrerBattement($_battement) {
+    if (!is_array($_battement)) {
+      log::add('smartclim', 'warning', 'Pont : battement du relais AUX Cloud legacy reçu de forme invalide, ignoré');
+      return;
+    }
+    $etat = isset($_battement['etat']) && is_string($_battement['etat']) ? $_battement['etat'] : '';
+    if (!in_array($etat, array('connecte', 'reconnexion', 'refus'), true)) {
+      log::add('smartclim', 'warning', 'Pont : battement du relais AUX Cloud legacy reçu avec un état inconnu, ignoré');
+      return;
+    }
+    $empreinte = isset($_battement['empreinte']) && is_string($_battement['empreinte']) && preg_match('/\A[0-9a-f]{0,64}\z/', $_battement['empreinte']) === 1
+      ? $_battement['empreinte']
+      : '';
+
+    $valide = array(
+      'etat' => $etat,
+      'abonnes' => self::listeEndpointsValidee(isset($_battement['abonnes']) ? $_battement['abonnes'] : null),
+      'confirmes' => self::listeEndpointsValidee(isset($_battement['confirmes']) ? $_battement['confirmes'] : null),
+      'empreinte' => $empreinte,
+      // ⚠️ Horodatage SERVEUR, jamais celui du démon (§ 4.1 de la spec technique) : le
+      // démon ne dicte jamais une donnée temporelle de confiance.
+      'ts' => time(),
+    );
+    $json = json_encode($valide);
+    if ($json === false) {
+      return;
+    }
+    cache::set(self::CLE_CACHE_RELAIS, $json, self::DUREE_MEMOIRE_RELAIS);
+  }
+
+  /**
+   * Filtre une liste d'identifiants d'endpoint reçue du démon : chaînes de forme
+   * conforme UNIQUEMENT, bornée à 200 entrées (§ 4.1 de la spec technique).
+   *
+   * @param mixed $_valeur
+   * @return string[]
+   */
+  private static function listeEndpointsValidee($_valeur) {
+    if (!is_array($_valeur)) {
+      return array();
+    }
+    $sortie = array();
+    foreach ($_valeur as $item) {
+      if (count($sortie) >= 200) {
+        break;
+      }
+      if (is_string($item) && preg_match('/\A[A-Za-z0-9_-]{1,64}\z/', $item) === 1) {
+        $sortie[] = $item;
+      }
+    }
+    return $sortie;
+  }
+
+  /**
+   * Lit le battement du relais AUX Cloud legacy en cache — VALIDE LA FORME et renvoie
+   * `null` plutôt qu'un contenu forgé (même patron que smartclim::incidentMemorise()).
+   *
+   * @return array{etat:string,abonnes:string[],confirmes:string[],empreinte:string,ts:int}|null
+   */
+  public static function battementRelais() {
+    $brut = cache::byKey(self::CLE_CACHE_RELAIS)->getValue(null);
+    if (!is_string($brut) || $brut === '') {
+      return null;
+    }
+    $battement = json_decode($brut, true);
+    if (
+      !is_array($battement)
+      || !isset($battement['etat'], $battement['ts'])
+      || !in_array($battement['etat'], array('connecte', 'reconnexion', 'refus'), true)
+      || !is_numeric($battement['ts'])
+    ) {
+      return null;
+    }
+    return array(
+      'etat' => $battement['etat'],
+      'abonnes' => isset($battement['abonnes']) && is_array($battement['abonnes']) ? $battement['abonnes'] : array(),
+      'confirmes' => isset($battement['confirmes']) && is_array($battement['confirmes']) ? $battement['confirmes'] : array(),
+      'empreinte' => isset($battement['empreinte']) && is_string($battement['empreinte']) ? $battement['empreinte'] : '',
+      'ts' => (int) $battement['ts'],
+    );
   }
 }

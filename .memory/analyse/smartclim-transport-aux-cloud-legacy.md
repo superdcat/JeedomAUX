@@ -250,22 +250,89 @@ paramétrable (`smartclim-modele-abstrait-capacites.md` § 3).
 
 ## 6. Temps réel : WebSocket relay
 
-✅ (`maeek/aux_cloud_ws.py`) :
+> **Section réécrite le 2026-09-09** à l'UC03 du domaine post-mvp/05, qui l'a implémentée. Deux apports :
+> une **sonde directe du relais EU**, et la lecture de **`maeek/demo_ws.py`** — le fichier qui porte les
+> échantillons réels, là où `aux_cloud_ws.py` ne montre que la moitié du dialogue.
 
 ```text
-wss://app-relay-<region>/appsync/apprelay/relayconnect
+wss://app-relay-deu-f0e9ebbb.smarthomecs.de/appsync/apprelay/relayconnect     (EU)
+wss://app-relay-usa-fd7cc04c.smarthomecs.com/appsync/apprelay/relayconnect    (USA)
+wss://app-relay-chn-31a93883.ibroadlink.com/appsync/apprelay/relayconnect     (CHN)
 ```
 
-- En-têtes = ceux de l'API + `CompanyId` + `Origin`.
-- Message d'ouverture : `{"msgtype":"init","data":{"relayrule":"share"},"scope":{"loginsession","userid"},"messageid":"<epoch>000"}` → réponse `msgtype: "initk"`, `status: 0`.
-- **Keep-alive** : `{"msgtype":"ping"}` **toutes les 10 s** → réponse `pingk`.
-- Tout `status != 0` sur `initk`/`pingk` → fermer et reconnecter (boucle de 10 s).
-- Les autres messages sont les **événements d'état poussés**. ❓ Leur schéma exact n'est pas décodé dans la
-  référence (elle se contente de les diffuser à des écouteurs).
+⚠️ **Aucun hôte relais connu pour RUS** — ce n'est pas un oubli : aucune des deux références n'en publie.
+
+### 6.1 Handshake — mesuré le 2026-09-09
+
+La sonde a émis **exactement** `Host`, `Upgrade`, `Connection`, `Sec-WebSocket-Key`,
+`Sec-WebSocket-Version`, `Origin` — **aucun en-tête applicatif**, aucun `loginsession`. Réponse :
+`101 Switching Protocols`, puis
+`{"msgtype":"initk","status":-66001,"msg":"initialize request parameters invaild","scope":{…}}`, puis une
+close 1000 émise par le serveur.
+
+**Établi** : l'upgrade n'exige aucun en-tête applicatif ; l'authentification est **in-band** (`init.scope`),
+que le backend **relit et renvoie en écho** ; le libellé du refus désigne les *paramètres de l'init*.
+**Non établi** : `-66001` est générique — qu'un `scope` valide **seul** suffise n'est pas prouvé (aucun
+compte). D'où le choix de SmartClim de retirer `loginsession`/`userid` des en-têtes tout en gardant le
+mimétisme non sensible, **et de laisser les deux lignes en commentaire** pour un rétablissement en une
+ligne. `ssl_verify_result=0` mesuré sur EU et USA : **TLS vérifié ne coûte rien ici**, contrairement au
+broker MQTT AUX Home.
+
+### 6.2 Séquence — ⚠️ le `sub` était MANQUANT de cette analyse
+
+| # | Message |
+|---|---|
+| 1 | `{"msgtype":"init","data":{"relayrule":"share"},"scope":{loginsession, userid},"messageid":"<epoch>000"}` |
+| 2 | ← `initk`, `status: 0` (ou négatif) |
+| 3 | **`{"msgtype":"sub","topic":"devpush","data":{"devList":[{endpointId, devSession, pid, gatewayId:""}]}}`** |
+| 4 | `{"msgtype":"ping"}` **toutes les 10 s** → `pingk` porteur d'un `status` |
+| 5 | ← `push` / `devpush` (§ 6.3) |
+
+⚠️⚠️ **L'étape 3 est dirimante et absente de la version précédente de cette section.** Sans elle, la
+session s'établit, le relais la **confirme**, et **aucun événement n'arrive jamais** : le symptôme d'une
+étape de protocole manquante est ici un **succès stérile**, pas une erreur. Elle ne figure pas dans
+`aux_cloud_ws.py` (le client) mais dans `demo_ws.py` (l'exemple d'usage).
+
+⚠️ **`pid` = `productId`** — exposé par `appareilAuxCloud()` sous le nom `type_produit`, concordance
+vérifiée avec `cookieMappe()` (`'pid' => $_brut['productId']`). Le nom diffère, la donnée est la même.
+
+⚠️ **Aucun `subk` n'est documenté et la référence n'en traite aucun** : un `sub` refusé est **silencieux**.
+Corollaire : la journalisation doit dire explicitement « abonnement envoyé pour N appareil(s) » puis nommer
+chaque `msgtype` reçu, sinon le refus est indétectable.
+
+⚠️ **La référence ne réémet PAS le `sub` après une reconnexion** (elle ne rejoue que l'`init`) — SmartClim
+**diverge délibérément** et le réémet après chaque `initk` réussi, sans quoi une reconnexion laisserait une
+session vivante et muette.
+
+### 6.3 Événement poussé — ❓ FERMÉ, échantillon réel
+
+```json
+{"msgtype":"push","topic":"devpush","messageid":…,"scope":{},
+ "data":{"endpointId":"…","data":"<base64>",
+         "payload":{"change":{"cause":{"msgtype":48}},"data":"<hex>"}}}
+```
+
+Les deux champs portent le **même JSON**, et ce sont **exactement les clés de `parametresAuxCloud()`** :
+`{"ac_mode":0,"ac_mark":1,"temp":250,"pwr":0,"childlock":0,"scrdisp":0,"ac_vdir":0,"ac_hdir":0,…}`.
+Le décodage se fait donc par le **`decoderParametres()` déjà livré** — aucun décodeur neuf, ni en PHP ni
+en Python.
+
+⚠️ **Piège du champ base64** : il décode en `{…}` **suivi de `"` et `\n`** (l'échantillon finit par
+`…fSIK`), donc `json_decode` échoue tel quel. Le champ **hex** de `payload.data` est propre → le prendre
+en priorité, le base64 en repli tolérant.
+
+⚠️ **Absents du push observé** : **`envtemp`** et tout statut en ligne/hors ligne. Conséquence directe :
+espacer la scrutation quand le push marche espace aussi la fraîcheur de l'**ambiante** et de `online` — la
+joignabilité reste l'affaire du `querystate` du cycle, et le push ne pose **jamais** `online`.
+
+⚠️ **Le `sub` rejoue le dernier état connu** (« *fetch the history of the device* ») : on ne peut donc pas
+distinguer un événement vif d'un rejeu d'historique. C'est ce rejeu qui rend observable un abonnement
+réussi — et c'est une **source unique**, à confirmer en recette.
 
 > C'est **le seul push confirmé de tout l'écosystème** accessible depuis un compte utilisateur. C'est donc
 > **la justification n°1 d'un démon** — mais pour un transport qui n'est pas celui du MVP. Cf.
-> `smartclim-daemon-choix.md`.
+> `smartclim-daemon-choix.md`. **Implémenté à l'UC03 du domaine post-mvp/05**, avec
+> `websocket-client 1.6.1` (plafond imposé par `os.min: 10`), et **livré non recetté**.
 
 ## 7. Limites & robustesse
 
@@ -297,7 +364,22 @@ wss://app-relay-<region>/appsync/apprelay/relayconnect
 - [x] ~~Format de l'horodatage servant de graine MD5 (flottant Python) reproductible en PHP.~~
       **FERMÉ le 2026-09-08** : le format est **libre**, l'invariant est l'identité octet à octet entre
       l'en-tête et la graine — cf. § 2.
-- [ ] Schéma des messages poussés par le WebSocket relay.
+- [x] ~~Schéma des messages poussés par le WebSocket relay.~~ **FERMÉ le 2026-09-09** par un **échantillon
+      réel** trouvé dans `maeek/demo_ws.py` — cf. § 6.3. Au passage, l'étape **`sub`**, qui manquait
+      totalement à cette analyse, a été ajoutée au § 6.2 : sans elle, aucun événement n'arrive **jamais**.
+- [ ] **Le `sub` produit-il réellement un rejeu d'état immédiat ?** Source unique (un commentaire de
+      `demo_ws.py`). C'est ce sur quoi repose la reconnaissance « push confirmé » qui autorise SmartClim à
+      espacer sa scrutation : si le relais ne rejoue pas, aucun équipement n'est jamais confirmé et
+      l'espacement ne s'active pas — dégradation **sûre** (on reste à 900 s), mais l'AC6 de l'UC03 devient
+      invérifiable. **Premier point de recette communautaire du domaine 05.**
+- [ ] **Les en-têtes `loginsession`/`userid` sont-ils nécessaires au `sub` ?** Retirés du handshake par
+      SmartClim (§ 6.1) sur preuve que l'`init` est traité sans eux — mais un refus du **`sub`** faute de
+      ces en-têtes serait, lui, **silencieux**. Laissés en commentaire dans `enTetesRelais()` : leur
+      rétablissement est le **premier essai** si un contributeur voit `initk status == 0` sans jamais
+      recevoir de push.
+- [ ] **Collision de session avec l'application constructeur** : inconnue. Le relais est un canal de
+      diffusion (`relayrule: "share"`), pas une session exclusive comme le LAN Broadlink — rien n'indique
+      une éviction, rien ne la réfute.
 - [x] ~~Validité des certificats TLS des hôtes `smarthomecs.*` (les références désactivent la
       vérification).~~ **FERMÉ le 2026-09-08, favorablement** : les 4 hôtes présentent des certificats
       valides (`ssl_verify_result=0`), la vérification ne coûte rien — cf. § 1.

@@ -269,6 +269,24 @@ class smartclim extends eqLogic {
   const RESERVE_ECRITURE_AUXCLOUD = 6;
   const AGE_MAX_POWER_AUXCLOUD = self::INTERVALLE_CYCLE_AUXCLOUD + 60;
 
+  // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.4 de sa spec technique) :
+  // cadencement de la SYNCHRONISATION de l'abonnement au relais WebSocket AUX Cloud
+  // legacy (marqueur SÉPARÉ des trois cycles ci-dessus, DÉCOUPLÉ de refresh_interval,
+  // même doctrine que CLE_CACHE_DERNIER_CYCLE_LAN). BUDGET_SYNC_RELAIS borne le temps
+  // GLOBAL de cette synchro (session + un appareilAuxCloud() par équipement ciblé) —
+  // en régime établi (session/jetons déjà en cache) elle coûte ZÉRO requête réseau.
+  const CLE_CACHE_DERNIER_SYNC_RELAIS = 'smartclim::dernier_sync_relais';
+  const INTERVALLE_SYNC_RELAIS = 600;
+  const BUDGET_SYNC_RELAIS = 10;
+
+  // Cadence du FILET de sécurité quand le push est actif (§ 3 de la spec technique) :
+  // ×4 par rapport à INTERVALLE_CYCLE_AUXCLOUD (900 s) — un équipement dont le push est
+  // confirmé actif n'est relu par la scrutation legacy que toutes les 3600 s, le push
+  // devenant la source principale de fraîcheur (AC6). Marqueur SÉPARÉ des marqueurs de
+  // cycle ci-dessus.
+  const CLE_CACHE_DERNIER_FILET_AUXCLOUD = 'smartclim::dernier_filet_auxcloud';
+  const INTERVALLE_FILET_AUXCLOUD = 3600;
+
   /*     * ***********************Methode static*************************** */
 
   /**
@@ -1827,6 +1845,17 @@ class smartclim extends eqLogic {
       }
       $resultat['appareils'] = count($cibles);
 
+      // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.4 de sa spec technique) :
+      // le battement est lu UNE SEULE FOIS ici (mémoire GLOBALE au compte — une seule
+      // session WS pour tout le parc legacy), jamais par équipement dans la boucle.
+      // $filetEchu marque au passage le filet (900 s * 4 = 3600 s), INDÉPENDAMMENT de
+      // l'échéance du cycle lui-même (déjà posée par marquerCycleAuxCloud() ci-dessus).
+      $filetEchu = self::filetAuxCloudEchu();
+      if ($filetEchu) {
+        self::marquerFiletAuxCloud();
+      }
+      $battement = smartclimDemon::battementRelais();
+
       // Groupement PAR FAMILLE (§ 3.4 de la spec technique) : deux boucles imbriquées,
       // le budget GLOBAL restant est réévalué avant chaque famille ET avant chaque
       // équipement — un appareil lent d'une famille ne peut donc pas consommer le
@@ -1847,6 +1876,15 @@ class smartclim extends eqLogic {
           $restant = self::BUDGET_CYCLE_AUXCLOUD - (microtime(true) - $debut);
           if ($restant <= 0) {
             break;
+          }
+          // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.4/3 de sa spec
+          // technique, AC6) : le filet n'est pas échu ET le push est confirmé actif
+          // POUR CET équipement -> la scrutation legacy espace son intervalle effectif
+          // à INTERVALLE_FILET_AUXCLOUD, le push devenant la source principale de
+          // fraîcheur. Zéro requête réseau pour cet équipement sur ce tick.
+          if (!$filetEchu && $eqLogic->pushAuxCloudActif($battement)) {
+            log::add('smartclim', 'debug', 'Cycle de rafraîchissement AUX Cloud legacy : équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" ignoré (push temps réel actif)');
+            continue;
           }
           try {
             $appareil = $eqLogic->appareilAuxCloud(max(3, $restant));
@@ -3330,6 +3368,19 @@ class smartclim extends eqLogic {
     } catch (Throwable $t) {
       log::add('smartclim', 'error', 'Cycle de rafraîchissement AUX Cloud legacy : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
     }
+
+    // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 4.2/5.4 de sa spec technique) :
+    // 4e bloc, sa PROPRE garde d'échéance (synchroniserPushAuxCloud() ne fait rien
+    // avant syncRelaisEchu()) et son PROPRE try/catch(Throwable) — ⚠️ jamais de `return`
+    // dans les TROIS blocs ci-dessus, qui court-circuiterait celui-ci (même piège déjà
+    // payé sur le cycle LAN puis le cycle AUX Cloud legacy). synchroniserPushAuxCloud()
+    // ne lève elle-même jamais : ce try/catch est une défense en profondeur, cohérente
+    // avec les trois blocs précédents.
+    try {
+      self::synchroniserPushAuxCloud();
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Synchro relais AUX Cloud legacy : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+    }
   }
 
   /*
@@ -3472,6 +3523,267 @@ class smartclim extends eqLogic {
    */
   private static function marquerCycleAuxCloud() {
     cache::set(self::CLE_CACHE_DERNIER_CYCLE_AUXCLOUD, (string) time(), self::DUREE_MEMOIRE_CYCLE);
+  }
+
+  /**
+   * Garde d'échéance de la SYNCHRONISATION de l'abonnement au relais WebSocket AUX Cloud
+   * legacy (UC03 du domaine post-mvp/05-temps-reel-et-demon, § 5.4 de sa spec
+   * technique) — jumelle EXACTE de cycleAuxCloudEchu()/cycleLanEchu().
+   *
+   * @return bool
+   */
+  private static function syncRelaisEchu() {
+    $dernier = cache::byKey(self::CLE_CACHE_DERNIER_SYNC_RELAIS)->getValue(null);
+    if (!is_numeric($dernier)) {
+      return true;
+    }
+    $ecoule = time() - (int) $dernier;
+    if ($ecoule < 0) {
+      return true;
+    }
+    return $ecoule >= (self::INTERVALLE_SYNC_RELAIS - self::MARGE_ECHEANCE_CYCLE);
+  }
+
+  /**
+   * Pose le marqueur de dernière synchro relais (même patron que marquerCycleAuxCloud()).
+   */
+  private static function marquerSyncRelais() {
+    cache::set(self::CLE_CACHE_DERNIER_SYNC_RELAIS, (string) time(), self::DUREE_MEMOIRE_CYCLE);
+  }
+
+  /**
+   * Garde d'échéance du FILET de sécurité (UC03 du domaine post-mvp/05-temps-reel-et-
+   * demon, § 3/5.4 de sa spec technique) — même patron que les jumelles ci-dessus, MAIS
+   * cadence INTERVALLE_FILET_AUXCLOUD (3600 s, ×4 par rapport au cycle de scrutation
+   * legacy lui-même).
+   *
+   * @return bool
+   */
+  private static function filetAuxCloudEchu() {
+    $dernier = cache::byKey(self::CLE_CACHE_DERNIER_FILET_AUXCLOUD)->getValue(null);
+    if (!is_numeric($dernier)) {
+      return true;
+    }
+    $ecoule = time() - (int) $dernier;
+    if ($ecoule < 0) {
+      return true;
+    }
+    return $ecoule >= (self::INTERVALLE_FILET_AUXCLOUD - self::MARGE_ECHEANCE_CYCLE);
+  }
+
+  /**
+   * Pose le marqueur de dernier filet AUX Cloud legacy (même patron que marquerSyncRelais()).
+   */
+  private static function marquerFiletAuxCloud() {
+    cache::set(self::CLE_CACHE_DERNIER_FILET_AUXCLOUD, (string) time(), self::DUREE_MEMOIRE_CYCLE);
+  }
+
+  /**
+   * Synchronise l'abonnement au relais WebSocket AUX Cloud legacy (UC03 du domaine
+   * post-mvp/05-temps-reel-et-demon, § 5.4 de sa spec technique) — 4e bloc de cron().
+   * Gardes DANS CET ORDRE : compteAuxCloudConfigure() -> urlRelais() non vide -> démon
+   * 'ok' -> marqueur d'échéance (posé APRÈS les gardes, AVANT tout appel réseau, même
+   * doctrine que marquerCycle()/marquerCycleLan()). Cible = MÊME filtre que
+   * rafraichirAuxCloud() (lectureLegacyAutorisee()). Cible vide => paquet VIDE envoyé
+   * (le démon ferme la session côté relais), SANS login. NE LÈVE JAMAIS.
+   *
+   * @param bool $_force Ignore l'échéance — réservé à l'usage CLI --relais-sync.
+   * @return array{lance:bool, appareils:int}
+   */
+  public static function synchroniserPushAuxCloud($_force = false) {
+    $resultat = array('lance' => false, 'appareils' => 0);
+    try {
+      // Zéro requête réseau, et AUCUN marqueur posé si le compte n'est pas configuré ou
+      // si la région n'a aucun relais connu (RUS) — même règle que rafraichirAuxCloud().
+      if (!self::compteAuxCloudConfigure()) {
+        return $resultat;
+      }
+      if (smartclimAuxCloudApi::urlRelais() === '') {
+        return $resultat;
+      }
+      $etatDemon = smartclimDemon::etat();
+      if (!isset($etatDemon['state']) || $etatDemon['state'] !== 'ok') {
+        return $resultat;
+      }
+      if (!$_force && !self::syncRelaisEchu()) {
+        return $resultat;
+      }
+
+      // Marqueur posé AVANT tout appel réseau (même règle que marquerCycle()/
+      // marquerCycleLan()/marquerCycleAuxCloud()).
+      self::marquerSyncRelais();
+
+      $cibles = array();
+      foreach (eqLogic::byType('smartclim', true) as $eqLogic) {
+        if ($eqLogic instanceof smartclim && smartclimTransport::lectureLegacyAutorisee($eqLogic)) {
+          $cibles[] = $eqLogic;
+        }
+      }
+      $resultat['appareils'] = count($cibles);
+
+      if (empty($cibles)) {
+        // Cible vide = paquet VIDE : le démon ferme la session relais s'il en tenait
+        // une (§ 5.1 de la spec technique). Aucun login déclenché pour autant.
+        smartclimDemon::envoyerRelais(array('appareils' => array()));
+        return $resultat;
+      }
+
+      $debut = microtime(true);
+      $session = smartclimAuxCloudApi::session();
+      $appareilsRelais = array();
+      foreach ($cibles as $eqLogic) {
+        $restant = self::BUDGET_SYNC_RELAIS - (microtime(true) - $debut);
+        if ($restant <= 0) {
+          log::add('smartclim', 'warning', 'Synchro relais AUX Cloud legacy : budget de temps épuisé, équipements restants ignorés');
+          break;
+        }
+        try {
+          $appareil = $eqLogic->appareilAuxCloud(max(3, $restant));
+          $appareilsRelais[] = array(
+            // ⚠️ § 1.3 de la spec technique : sub.pid = productId = 'type_produit' —
+            // une erreur ici rend l'abonnement MUET, sans aucun signal.
+            'endpointId' => $appareil['identifiant'],
+            'devSession' => $appareil['dev_session'],
+            'pid' => $appareil['type_produit'],
+          );
+        } catch (Throwable $t) {
+          log::add('smartclim', 'warning', 'Synchro relais AUX Cloud legacy : équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" ignoré : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        }
+      }
+
+      if (empty($appareilsRelais)) {
+        return $resultat;
+      }
+
+      $paquet = array(
+        'url' => smartclimAuxCloudApi::urlRelais(),
+        'entetes' => smartclimAuxCloudApi::enTetesRelais($session),
+        'session' => array(
+          'loginsession' => isset($session['loginsession']) ? $session['loginsession'] : '',
+          'userid' => isset($session['userid']) ? $session['userid'] : '',
+        ),
+        'appareils' => $appareilsRelais,
+      );
+      // Empreinte du CONTENU du paquet (§ 5.1 de la spec technique) : le démon s'en
+      // sert pour éviter de casser une session stable toutes les 10 min sur un paquet
+      // identique.
+      $paquet['empreinte'] = sha1((string) json_encode($paquet));
+
+      smartclimDemon::envoyerRelais($paquet);
+      $resultat['lance'] = true;
+      return $resultat;
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Synchro relais AUX Cloud legacy : erreur interne inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return $resultat;
+    }
+  }
+
+  /**
+   * Route un ou plusieurs événements poussés par le relais vers l'équipement concerné
+   * (UC03 du domaine post-mvp/05-temps-reel-et-demon, § 5.4/4.2 de sa spec technique) —
+   * appelée UNIQUEMENT par core/php/jeeSmartclim.php (branche 'auxcloud.push').
+   * try/catch(Throwable) PAR PUSH : un push en échec n'empêche pas les suivants.
+   *
+   * ⚠️ AC5 est tenu ici, et nulle part ailleurs : appliquerEtat($etat) appelée SANS
+   * $_optimiste => filtrerEtatSelonOrdres() s'applique, exactement comme pour le cron
+   * legacy — un push relayant encore l'état antérieur à une commande récente n'écrase
+   * pas la valeur commandée pendant la période de grâce.
+   *
+   * @param array $_pushs endpointId => enveloppe (cf. smartclimAuxCloudApi::valeursDepuisPush()).
+   * @return int Nombre de pushs effectivement appliqués (au moins un concept modifié).
+   */
+  public static function appliquerPushAuxCloud(array $_pushs) {
+    $index = self::indexerEquipements();
+    $applique = 0;
+    foreach ($_pushs as $endpointId => $enveloppe) {
+      if (!is_string($endpointId) || !is_array($enveloppe)) {
+        continue;
+      }
+      // Barrière PHP du § 4.1 de la spec technique : valide la forme de l'endpointId AVANT tout
+      // usage (y compris la recherche dans l'index). Volontairement redondante avec REGEX_ENDPOINT
+      // côté démon (relais_auxcloud.py) — défense en profondeur, à ne supprimer ni l'une ni l'autre.
+      if (!is_string($endpointId) || strpos($endpointId, '::') !== false || preg_match('/\A[A-Za-z0-9_-]{1,64}\z/', $endpointId) !== 1) {
+        continue;
+      }
+      $eqLogic = isset($index['parEndpointAuxCloud'][$endpointId]) ? $index['parEndpointAuxCloud'][$endpointId] : null;
+      if (!($eqLogic instanceof smartclim)) {
+        // Log SANS l'identifiant complet (§ 4.1 de la spec technique) : un endpointId
+        // inconnu du parc n'est pas une donnée sensible, mais autant rester prudent.
+        log::add('smartclim', 'debug', 'Push relais AUX Cloud legacy ignoré : endpointId inconnu du parc');
+        continue;
+      }
+      if ($eqLogic->getIsEnable() == 0 || !smartclimTransport::lectureLegacyAutorisee($eqLogic)) {
+        continue;
+      }
+      try {
+        $valeurs = smartclimAuxCloudApi::valeursDepuisPush($enveloppe);
+        if (empty($valeurs)) {
+          continue;
+        }
+        $appareil = array(
+          'valeurs' => $valeurs,
+          'swing_inverse' => (bool) $eqLogic->getConfiguration(self::CLE_CONF_AUXCLOUD_SWING_INVERSE),
+        );
+        // ⚠️ Le push ne pose JAMAIS 'online' (§ 5.3 de la spec technique) : etatAppareil()
+        // n'est appelée ici QU'AVEC 'valeurs', jamais 'enLigne_connue'.
+        $etat = smartclimAuxCloudApi::etatAppareil($appareil);
+        if ($eqLogic->appliquerEtat($etat)) {
+          $applique++;
+        }
+      } catch (Throwable $t) {
+        log::add('smartclim', 'warning', 'Push relais AUX Cloud legacy : équipement "' . self::neutraliserPourLog($eqLogic->getHumanName()) . '" en échec : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      }
+    }
+    return $applique;
+  }
+
+  /**
+   * Invalide le marqueur de synchro relais (UC03 de ce domaine, § 5.4 de sa spec
+   * technique) — appelée UNIQUEMENT par core/php/jeeSmartclim.php (branche
+   * 'pont.demarre') et par preRemove(). AUCUN réseau : c'est tout l'effet du signal de
+   * démarrage du démon (une resynchro au prochain tick de cron plutôt que d'attendre
+   * jusqu'à INTERVALLE_SYNC_RELAIS après un redémarrage).
+   */
+  public static function invaliderSyncRelais() {
+    cache::delete(self::CLE_CACHE_DERNIER_SYNC_RELAIS);
+  }
+
+  /**
+   * Surface UNIQUE de la CLI --relais (patron diagnosticTransport()) : état et âge du
+   * battement, abonnés, confirmés, et PAR équipement legacy : endpoint, push actif,
+   * cadence effective (UC03 de ce domaine, § 5.4 de sa spec technique). AUCUNE émission
+   * réseau — c'est un rapport de lecture d'état INTERNE (cache), pas une sonde.
+   *
+   * @return array{battement:?array, equipements:array}
+   */
+  public static function diagnosticRelaisAuxCloud() {
+    $battement = smartclimDemon::battementRelais();
+    $ageBattement = ($battement !== null) ? max(0, time() - $battement['ts']) : null;
+
+    $equipements = array();
+    foreach (eqLogic::byType('smartclim', true) as $eqLogic) {
+      if (!($eqLogic instanceof smartclim) || !smartclimTransport::lectureLegacyAutorisee($eqLogic)) {
+        continue;
+      }
+      $endpointId = $eqLogic->getConfiguration(self::CLE_CONF_AUXCLOUD_ENDPOINT_ID);
+      $pushActif = $eqLogic->pushAuxCloudActif($battement);
+      $equipements[] = array(
+        'nom' => self::neutraliserPourLog($eqLogic->getHumanName()),
+        'endpointId' => is_string($endpointId) ? $endpointId : '',
+        'pushActif' => $pushActif,
+        'cadence' => $pushActif ? self::INTERVALLE_FILET_AUXCLOUD : self::INTERVALLE_CYCLE_AUXCLOUD,
+      );
+    }
+
+    return array(
+      'battement' => ($battement !== null) ? array(
+        'etat' => $battement['etat'],
+        'age' => $ageBattement,
+        'abonnes' => count($battement['abonnes']),
+        'confirmes' => count($battement['confirmes']),
+      ) : null,
+      'equipements' => $equipements,
+    );
   }
 
   /**
@@ -4428,6 +4740,12 @@ class smartclim extends eqLogic {
       ? sprintf(__('repli cloud actif — %d échec(s) LAN consécutif(s)', __FILE__), $this->echecsLanConsecutifs())
       : '';
 
+    // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.4/7 de sa spec technique) :
+    // clé ADDITIVE 'tempsReel', calculée UNE fois et reportée dans les 7 branches de
+    // retour ci-dessous (MÊME piège jQuery .text(undefined) que 'lan'/'repli') — chaîne
+    // VIDE si le transport legacy ne s'applique pas / battement absent, JAMAIS null.
+    $tempsReel = $this->libelleTempsReelAuxCloud();
+
     // 'derniereDonnee' = la valeur DÉJÀ FORMATÉE de la commande last_update (aucune
     // migration, § 4.2 de la spec technique) ; 'fraicheur' = l'âge calculé sur SA DATE
     // (getValueDate(), format machine), jamais un re-parsing de la chaîne affichée
@@ -4479,6 +4797,7 @@ class smartclim extends eqLogic {
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
         'repli' => $repli,
+        'tempsReel' => $tempsReel,
       );
     }
 
@@ -4500,6 +4819,7 @@ class smartclim extends eqLogic {
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
         'repli' => $repli,
+        'tempsReel' => $tempsReel,
       );
     }
 
@@ -4518,6 +4838,7 @@ class smartclim extends eqLogic {
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
         'repli' => $repli,
+        'tempsReel' => $tempsReel,
       );
     }
 
@@ -4540,6 +4861,7 @@ class smartclim extends eqLogic {
           'lanAdresse' => $lanAdresse,
           'modeTransport' => $modeTransport,
           'repli' => $repli,
+          'tempsReel' => $tempsReel,
         );
       }
       return array(
@@ -4554,6 +4876,7 @@ class smartclim extends eqLogic {
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
         'repli' => $repli,
+        'tempsReel' => $tempsReel,
       );
     }
 
@@ -4570,6 +4893,7 @@ class smartclim extends eqLogic {
         'lanAdresse' => $lanAdresse,
         'modeTransport' => $modeTransport,
         'repli' => $repli,
+        'tempsReel' => $tempsReel,
       );
     }
 
@@ -4587,6 +4911,7 @@ class smartclim extends eqLogic {
       'lanAdresse' => $lanAdresse,
       'modeTransport' => $modeTransport,
       'repli' => $repli,
+      'tempsReel' => $tempsReel,
     );
   }
 
@@ -6104,6 +6429,76 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Prédicat PUR (UC03 du domaine post-mvp/05-temps-reel-et-demon, § 5.4 de sa spec
+   * technique) : le push temps réel est-il CONFIRMÉ actif pour CET équipement ? Reçoit
+   * le battement en PARAMÈTRE (jamais une relecture de cache ici — l'appelant l'a déjà
+   * lu UNE FOIS, cf. rafraichirAuxCloud()). Vrai si et seulement si : le battement existe
+   * et n'est pas trop vieux (FRAICHEUR_RELAIS), son état vaut 'connecte', ET
+   * l'endpointId de cet équipement figure dans la liste des endpoints CONFIRMÉS (§ 1.3 :
+   * la preuve qu'un `sub` a effectivement produit un push pour LUI, pas seulement pour
+   * le compte).
+   *
+   * @param array|null $_battement Renvoyé par smartclimDemon::battementRelais().
+   * @return bool
+   */
+  public function pushAuxCloudActif(array $_battement = null) {
+    if ($_battement === null) {
+      return false;
+    }
+    if (!isset($_battement['ts']) || !is_numeric($_battement['ts'])) {
+      return false;
+    }
+    $age = time() - (int) $_battement['ts'];
+    if ($age < 0 || $age >= smartclimDemon::FRAICHEUR_RELAIS) {
+      return false;
+    }
+    if (!isset($_battement['etat']) || $_battement['etat'] !== 'connecte') {
+      return false;
+    }
+    $endpointId = $this->getConfiguration(self::CLE_CONF_AUXCLOUD_ENDPOINT_ID);
+    if (!is_string($endpointId) || $endpointId === '') {
+      return false;
+    }
+    $confirmes = isset($_battement['confirmes']) && is_array($_battement['confirmes']) ? $_battement['confirmes'] : array();
+    return in_array($endpointId, $confirmes, true);
+  }
+
+  /**
+   * Libellé d'état du temps réel AUX Cloud legacy pour CET équipement, prêt à
+   * l'affichage (UC03 de ce domaine, § 5.4/7 de sa spec technique) — consommé par
+   * etatConnexionAffichable(). Chaîne VIDE si le transport legacy ne s'applique pas à cet
+   * équipement ou si le battement est absent/périmé (rien à afficher, même convention
+   * que 'lan'/'repli').
+   *
+   * @return string
+   */
+  private function libelleTempsReelAuxCloud() {
+    if (!smartclimTransport::lectureLegacyAutorisee($this)) {
+      return '';
+    }
+    $battement = smartclimDemon::battementRelais();
+    if ($battement === null) {
+      return '';
+    }
+    $age = time() - $battement['ts'];
+    if ($age < 0 || $age >= smartclimDemon::FRAICHEUR_RELAIS) {
+      return '';
+    }
+    if ($battement['etat'] === 'refus') {
+      return __('Connexion au relais perdue', __FILE__);
+    }
+    if ($battement['etat'] === 'reconnexion') {
+      return __('Reconnexion au relais en cours', __FILE__);
+    }
+    // 'connecte' : distingue « abonnement confirmé pour CET endpoint » de « session
+    // établie mais aucun push reçu pour lui pour l'instant » (§ 1.3 de la spec
+    // technique).
+    return $this->pushAuxCloudActif($battement)
+      ? __('Temps réel actif', __FILE__)
+      : __('Temps réel en attente de confirmation', __FILE__);
+  }
+
+  /**
    * Diagnostic LECTURE SEULE du mécanisme de repli (UC02 du domaine
    * post-mvp/02-strategies-de-transport, § 9 de sa spec technique) — instrument de
    * CONSTAT de core/php/commande-lan.php --transport, AUCUN paquet réseau émis : c'est
@@ -6636,6 +7031,12 @@ class smartclim extends eqLogic {
   // sans conséquence fonctionnelle, mais évite un déchet inutile).
   public function preRemove() {
     cache::delete(self::CLE_CACHE_ORDRES . $this->getId());
+    // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.4 de sa spec technique) : un
+    // équipement supprimé resterait sinon abonné côté démon jusqu'au prochain tick de
+    // synchro (<= INTERVALLE_SYNC_RELAIS). Le chemin « endpointId inconnu du parc =>
+    // ignoré » d'appliquerPushAuxCloud() couvre déjà la SÛRETÉ ; cet appel ferme la
+    // FENÊTRE, pour le coût d'un cache::delete().
+    self::invaliderSyncRelais();
   }
 
   // Fonction exécutée automatiquement après la suppression de l'équipement

@@ -164,18 +164,30 @@ class smartclimAuxCloudApi {
       'EU' => array(
         'hote' => 'https://app-service-deu-f0e9ebbb.smarthomecs.de',
         'libelle' => __('Europe', __FILE__),
+        // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 1.1 de sa spec technique) :
+        // hôte du relais WebSocket temps réel, mesuré le 2026-09-09. « Ajouter une
+        // région = ajouter une entrée » reste vrai : les DEUX colonnes s'ajoutent
+        // ensemble.
+        'relais' => 'wss://app-relay-deu-f0e9ebbb.smarthomecs.de/appsync/apprelay/relayconnect',
       ),
       'USA' => array(
         'hote' => 'https://app-service-usa-fd7cc04c.smarthomecs.com',
         'libelle' => __('États-Unis', __FILE__),
+        'relais' => 'wss://app-relay-usa-fd7cc04c.smarthomecs.com/appsync/apprelay/relayconnect',
       ),
       'CHN' => array(
         'hote' => 'https://app-service-chn-31a93883.ibroadlink.com',
         'libelle' => __('Chine', __FILE__),
+        'relais' => 'wss://app-relay-chn-31a93883.ibroadlink.com/appsync/apprelay/relayconnect',
       ),
       'RUS' => array(
         'hote' => 'https://app-service-rus-b8bbc3be.smarthomecs.com',
         'libelle' => __('Russie', __FILE__),
+        // ⚠️ Aucun hôte relais CONNU pour cette région (§ 1.1 de la spec technique) :
+        // NI maeek/ha-aux-cloud NI le client TypeScript recoupé n'en publient un. '' est
+        // le signal, PARTOUT dans le plugin, d'un relais absent — jamais une valeur
+        // devinée.
+        'relais' => '',
       ),
     );
   }
@@ -207,6 +219,25 @@ class smartclimAuxCloudApi {
   public static function regionConnue($_code) {
     $regions = self::regions();
     return is_string($_code) && isset($regions[$_code]);
+  }
+
+  /**
+   * URL du relais WebSocket temps réel de la région AUX Cloud legacy CONFIGURÉE (UC03 du
+   * domaine post-mvp/05-temps-reel-et-demon, § 5.3 de sa spec technique) — ENTIÈREMENT
+   * issue de la table serveur ci-dessus (même doctrine anti-SSRF que hoteRegion()) :
+   * aucune entrée utilisateur n'atteint jamais le démon par ce biais. `''` si la région
+   * est inconnue OU si elle n'a aucun hôte relais connu (RUS, § 1.1 de la spec
+   * technique) — c'est le signal, partout dans le plugin, d'un relais absent.
+   *
+   * @return string
+   */
+  public static function urlRelais() {
+    $regions = self::regions();
+    $code = smartclim::regionAuxCloud();
+    if (!isset($regions[$code]['relais']) || !is_string($regions[$code]['relais'])) {
+      return '';
+    }
+    return $regions[$code]['relais'];
   }
 
   /**
@@ -2024,6 +2055,99 @@ class smartclimAuxCloudApi {
       $etat = array_merge($etat, self::decoderParametres($_appareil['valeurs'], !empty($_appareil['swing_inverse'])));
     }
     return $etat;
+  }
+
+  /**
+   * Les 10 en-têtes retenus pour le handshake du relais WebSocket temps réel (UC03 du
+   * domaine post-mvp/05-temps-reel-et-demon, § 1.5 de sa spec technique) — MÊMES noms de
+   * champ que requete() ci-dessus, MOINS "timestamp"/"token" (propres au login), PLUS
+   * "CompanyId"/"Origin" (propres au WebSocket). ENTIÈREMENT issus des constantes
+   * serveur de cette classe : aucune entrée utilisateur n'atteint jamais le démon par ce
+   * biais.
+   *
+   * ⚠️ `loginsession`/`userid` sont VOLONTAIREMENT ABSENTS (arbitrage du 2026-09-09,
+   * § 1.5 de la spec technique) : l'authentification du relais est IN-BAND
+   * (`init.scope`), mesurée suffisante pour atteindre le parsing de l'`init`. Laissés ICI
+   * EN COMMENTAIRE, avec leur symptôme, pour un rétablissement en UNE LIGNE si la
+   * recette communautaire montre un `sub` refusé en silence malgré un `initk status
+   * == 0` :
+   *   // 'loginsession: ' . $_session['loginsession'],
+   *   // 'userid: ' . $_session['userid'],
+   *
+   * @param array $_session {loginsession, userid} — CONSERVÉ en paramètre pour ce
+   *   rétablissement, non utilisé aujourd'hui, et JAMAIS journalisé.
+   * @return string[]
+   */
+  public static function enTetesRelais(array $_session) {
+    return array(
+      'Content-Type: application/x-java-serialized-object',
+      'licenseId: ' . self::LICENSE_ID,
+      'lid: ' . self::LICENSE_ID,
+      'language: en',
+      'appVersion: ' . self::SPOOF_APP_VERSION,
+      'User-Agent: ' . self::SPOOF_USER_AGENT,
+      'system: ' . self::SPOOF_SYSTEM,
+      'appPlatform: ' . self::SPOOF_APP_PLATFORM,
+      'CompanyId: ' . self::COMPANY_ID,
+      'Origin: ' . self::hoteRegion(smartclim::regionAuxCloud()),
+    );
+  }
+
+  /**
+   * Extrait la charge JSON d'un événement `push` du relais et la réduit à une map
+   * `nom => scalaire` FILTRÉE (UC03 du domaine post-mvp/05-temps-reel-et-demon, § 4.1/5.3
+   * de sa spec technique) — hex de `payload.data` PRIORITAIRE (propre, § 1.4), base64 de
+   * `data` en REPLI TOLÉRANT (trim des guillemets/espaces finaux avant décodage JSON,
+   * l'échantillon réel se terminant par `…"\n`). NE LÈVE JAMAIS : toute forme inattendue
+   * renvoie un tableau vide, jamais une exception qui casserait le rappel HTTP.
+   *
+   * @param array $_enveloppe {payload?:{data?:string}, data?:string} — cf. § 1.4 :
+   *   c'est le sous-objet `data` du message `push`, PAS le message entier.
+   * @return array<string, mixed>
+   */
+  public static function valeursDepuisPush(array $_enveloppe) {
+    $charge = '';
+    if (isset($_enveloppe['payload']['data']) && is_string($_enveloppe['payload']['data']) && $_enveloppe['payload']['data'] !== '') {
+      $charge = self::chargeHexDecodee($_enveloppe['payload']['data']);
+    }
+    if ($charge === '' && isset($_enveloppe['data']) && is_string($_enveloppe['data']) && $_enveloppe['data'] !== '') {
+      $decode = base64_decode(trim($_enveloppe['data']), true);
+      if (is_string($decode)) {
+        // Repli TOLÉRANT (§ 1.4 de la spec technique) : le décodé observé se termine par
+        // un guillemet et un saut de ligne parasites — retirés avant json_decode().
+        $charge = trim($decode, " \t\n\r\0\x0B\"");
+      }
+    }
+    if ($charge === '') {
+      return array();
+    }
+    $donnees = json_decode($charge, true);
+    if (!is_array($donnees) || count($donnees) > 64) {
+      return array();
+    }
+    $valeurs = array();
+    foreach ($donnees as $nom => $valeur) {
+      if (!is_string($nom) || preg_match('/\A[a-z_][a-z0-9_]{0,31}\z/', $nom) !== 1 || !is_scalar($valeur)) {
+        continue;
+      }
+      $valeurs[$nom] = $valeur;
+    }
+    return $valeurs;
+  }
+
+  /**
+   * Décode une chaîne hexadécimale STRICTE (paire, alphabet [0-9A-Fa-f]) en octets. `''`
+   * sur toute forme non conforme — jamais un decode partiel.
+   *
+   * @param string $_hex
+   * @return string
+   */
+  private static function chargeHexDecodee($_hex) {
+    if (preg_match('/\A[0-9A-Fa-f]+\z/', $_hex) !== 1 || (strlen($_hex) % 2) !== 0) {
+      return '';
+    }
+    $binaire = hex2bin($_hex);
+    return is_string($binaire) ? $binaire : '';
   }
 
   /**

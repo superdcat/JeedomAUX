@@ -565,12 +565,26 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ≠ 200 comme fatal, donc une clé fausse se voit **au démarrage** au lieu de dégénérer en pont muet.
   ⚠️ Pas de `session_write_close()` ici, contrairement à `core/ajax/smartclim.ajax.php` : ce point d'entrée
   n'inclut pas `authentification`, aucune session n'est ouverte.
+  ⚠️⚠️ **Depuis l'UC03 du domaine post-MVP 05, il porte QUATRE branches, et ce sont des `if`
+  INDÉPENDANTS — jamais `elseif`** (`pont.pong`, `auxcloud.push`, `auxcloud.relais`, `pont.demarre`). Le
+  thread de battement et le thread de push du démon écrivent tous deux dans `add_changes()`, fusionnés par
+  `merge_dict()` avant le POST du cycle de 0,5 s : **un même corps peut légitimement porter plusieurs clés
+  de premier niveau**, et un `elseif` en perdrait une **sans aucune trace**. Le style naturel de
+  continuation est ici précisément le piège.
+  ⚠️ Il reste **sans aucun appel réseau et sans écriture de configuration** : il valide, écrit un cache ou
+  applique un état, et rend la main.
 - **`core/php/pont-demon.php`** — **existe** depuis l'UC02 du domaine post-MVP 05. **4ᵉ CLI** du plugin
   (même moule que les trois autres : garde `php_sapi_name() === 'cli'` **avant tout `require_once`**, aucun
   POST, aucune écriture en base, sorties FR **sans `__()`**). `--etat` affiche l'état sans rien émettre ;
   `--ping [--attente=<s>]` fait l'**aller-retour complet du pont** et sort en code 0/1. C'est
   l'instrument qui démontre le pont dans les deux sens — retenu contre un bouton de page pour ne pas
   ajouter de chaîne UI ni de surface web à un outil d'infrastructure.
+  Depuis l'UC03 du même domaine s'y ajoutent **deux usages pour le relais temps réel** : `--relais`
+  (rapport d'état interne — battement, abonnés, confirmés, cadence effective par équipement — **sans
+  aucune émission**, patron de `--transport` de `commande-lan.php`) et `--relais-sync` (**force la
+  synchro**, donc **émet** : login et éventuels `dev/query`). ⚠️ Les deux passent par
+  `smartclim::diagnosticRelaisAuxCloud()`, qui n'expose que des **comptes**, jamais les listes
+  d'identifiants d'endpoint ni l'empreinte de session.
   ⚠️ À lancer sous `www-data` (`sudo -u www-data php …`) : le pong est écrit par le processus Apache dans
   le cache, et la CLI le relit. Vaut aussi pour les trois CLI existantes.
 - **`core/php/commande-auxcloud.php`** — **existe** depuis l'UC03 du domaine post-MVP 03. **5ᵉ et dernière
@@ -852,13 +866,17 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
 - **`plugin_info/install.php`** — `smartclim_install/update/remove()` ; `pre_install.php` →
   `smartclim_pre_update()`.
 - **`plugin_info/packages.json`** — dépendances système/pip du démon (voir Démon & dépendances). Depuis
-  l'UC02 du domaine post-MVP 05, il déclare **un seul paquet** : `requests`, version **`2.31.0`** — un
-  plancher contraint par `os.min: 10`, **pas** un choix esthétique (cf. Démon & dépendances).
+  l'UC03 du domaine post-MVP 05, il déclare **deux paquets** : `requests` **`2.31.0`** (UC02) et
+  `websocket-client` **`1.6.1`** (UC03) — dans les **deux** cas un plancher contraint par `os.min: 10`
+  (Debian 10 = Python 3.7 ; `websocket-client` 1.6.2 et au-delà exigent 3.8), **pas** un choix esthétique
+  (cf. Démon & dépendances). ⚠️ Chaque paquet ajouté re-déclenche un cycle d'installation **sur tout le
+  parc** : ne pas en ajouter à la légère, ni « moderniser » une version sans relire ce point.
 - **`plugin_info/helperConfiguration.php` / `.py`** — assistant de renommage du squelette. **Déjà joué**
   (`template` → `smartclim`) : ces fichiers ne servent plus, ils sont conservés comme outillage hérité du
   template d'origine.
 - **`resources/smartclimd/`** — **restauré à l'UC02 du domaine post-MVP 05** (il avait été supprimé au
-  renommage, le MVP n'ayant pas de démon). Contient `smartclimd.py` (point d'entrée) et la lib
+  renommage, le MVP n'ayant pas de démon). Contient `smartclimd.py` (point d'entrée), **`relais_auxcloud.py`
+  depuis l'UC03 du même domaine** (cf. ci-dessous) et la lib
   `jeedom/` (`jeedom_com`, `jeedom_socket`, `jeedom_utils`). Restauré depuis `git checkout ceed01b --
   resources/` — commit initial du dépôt, dont il a été vérifié **octet à octet** qu'il est identique à
   `jeedom/plugin-template@master` : la question « ce dépôt ou l'amont ? » est donc **sans enjeu**.
@@ -872,6 +890,22 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Les `.py` sont en 4 espaces / LF, et se vérifient sur l'INDEX git** (`git show ":<f>"`), pas sur le
   blob source : ce clone est en `core.autocrlf=true`, donc un `git checkout` écrit du CRLF sur disque. Sur
   disque `LF-pur` comme `CRLF` sont acceptables (aucune règle projet pour `.py`) ; **`MIXTE` est interdit**.
+- **`resources/smartclimd/relais_auxcloud.py`** — **existe** depuis l'UC03 du domaine post-MVP 05. Classe
+  `RelaisAuxCloud` : **seul point du plugin qui ouvre une session WebSocket**, vers le relais temps réel du
+  cloud legacy (`apprelay/relayconnect`). Séquence `init` → `initk` → **`sub`** → `ping`/`pingk` (10 s,
+  timeout 30 s), backoff **10 → 300 s**, battement toutes les 60 s, transfert des événements par
+  `add_changes('auxcloud::push::<endpointId>', …)`.
+  ⚠️ **Elle ne parle PAS HVAC** : elle valide une forme et transmet du brut. Le décodage se fait en PHP par
+  le `decoderParametres()` **déjà livré** — un décodeur Python serait une divergence garantie.
+  ⚠️⚠️ **Le message `sub` est OBLIGATOIRE et son oubli est SILENCIEUX** : sans lui la session s'établit, le
+  relais la **confirme**, et aucun événement n'arrive jamais. Aucun `subk` n'est documenté, donc un `sub`
+  refusé l'est aussi — d'où l'obligation de journaliser explicitement l'abonnement puis chaque `msgtype`
+  reçu. Détail et échantillons : `.memory/analyse/smartclim-transport-aux-cloud-legacy.md` § 6.
+  ⚠️ **`import websocket` est sous `try/except ImportError`** : dépendance non installée ⇒ relais désactivé,
+  **un seul** `logging.error`, et le démon continue de servir le pont — c'est ce qui tient l'invariant
+  « le démon est latéral ». Même leçon que l'`import pyudev` non déclaré du gabarit officiel.
+  ⚠️ **Jamais de `sslopt`/`CERT_NONE`, jamais `enableTrace(True)`**, et les exceptions se journalisent par
+  `type(erreur).__name__` — **jamais `str(erreur)`**, qui peut porter la liste d'en-têtes.
 
 ## Modèle de données du plugin
 
@@ -1083,8 +1117,17 @@ et le LAN Broadlink (UDP + AES-CBC) est en PHP.
 du socle MVP (`cron()`, `cycleEchu()`, `rafraichirAuxHome()`, `executerCommandeAction()`,
 `envoyerOrdreLan()`) ni aucune des quatre briques n'appelle `smartclimDemon`. Le pilotage par scrutation
 reste **pleinement opérant** démon arrêté, en erreur, ou dépendances non installées. Le démon **accélère**,
-il ne **conditionne** jamais. Le jour où un protocole réel arrivera (UC03 : WebSocket du cloud legacy), ce
-sera en **ajoutant un appelant**, jamais en insérant le démon sur le chemin de la scrutation.
+il ne **conditionne** jamais.
+
+**Ce protocole réel est arrivé à l'UC03 de ce domaine** (relais WebSocket du cloud legacy), et il l'a fait
+comme prévu : en **ajoutant un appelant** — un **4ᵉ bloc** dans `cron()` —, jamais en insérant le démon sur
+le chemin de la scrutation.
+⚠️ **Une seule nuance, à énoncer exactement** : `rafraichirAuxCloud()` **lit** désormais le cache de
+battement (`smartclimDemon::battementRelais()`) pour décider d'espacer un équipement. Ce n'est pas un appel
+bloquant ni socket, et la dégradation est **sûre par construction** : démon mort ⇒ battement `null` ⇒
+`pushAuxCloudActif()` faux ⇒ le cycle redevient identique au comportement d'avant l'UC. Ne pas écrire
+« aucun appel à `smartclimDemon` » dans un commentaire de cette fonction : c'est faux à la lettre, et ce
+projet recopie ses invariants d'une UC à l'autre.
 
 Raisons du choix Python (jamais Node) : le squelette Jeedom (`resources/smartclimd/` + pont
 `jeedom_socket`/`jeedom_com`) est en Python, `packages.json` ne gère officiellement que `pip3`, et tout le

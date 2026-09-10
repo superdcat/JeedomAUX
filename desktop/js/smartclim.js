@@ -114,6 +114,7 @@ function afficherEtatConnexion(_eqLogic) {
     $("#span_etatConnexionLanAdresse").text("")
     $("#span_etatConnexionModeTransport").text("")
     $("#span_etatConnexionRepli").text("")
+    $("#span_etatConnexionTempsReel").text("")
     return
   }
   var classeNiveau = isset(smartclimClassesNiveau[etat.niveau]) ? smartclimClassesNiveau[etat.niveau] : "label-default"
@@ -138,6 +139,10 @@ function afficherEtatConnexion(_eqLogic) {
   // côté serveur (smartclim::etatConnexionAffichable()), affichée entre parenthèses
   // comme etat.fraicheur.
   $("#span_etatConnexionRepli").text(etat.repli ? "(" + etat.repli + ")" : "")
+  // UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.4/7 de sa spec technique) :
+  // MÊME repli chaîne vide obligatoire — etat.tempsReel est déjà une phrase FR traduite
+  // côté serveur (smartclim::etatConnexionAffichable()).
+  $("#span_etatConnexionTempsReel").text(etat.tempsReel ? etat.tempsReel : "")
 }
 
 /* Profil de capacités détecté (UC04). Tout le rendu de texte est SERVEUR

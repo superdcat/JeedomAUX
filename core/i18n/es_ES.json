@@ -141,7 +141,11 @@
         "Budget de temps insuffisant pour joindre le cloud historique — réessayez": "Tiempo insuficiente para contactar con la nube histórica — inténtelo de nuevo",
         "Cet équipement est relié au cloud historique (AC Freedom) — configurez ce compte (e-mail, mot de passe, région) pour le piloter": "Este equipo está vinculado a la nube histórica (AC Freedom) — configure esa cuenta (correo electrónico, contraseña, región) para controlarlo",
         "Cet équipement n'est pas relié à un appareil du cloud historique — relancez un scan": "Este equipo no está vinculado a ningún dispositivo de la nube histórica — vuelva a ejecutar un escaneo",
-        "État de marche inconnu pour cet équipement — réessayez dans quelques instants": "Estado de encendido desconocido para este equipo — inténtelo de nuevo en unos instantes"
+        "État de marche inconnu pour cet équipement — réessayez dans quelques instants": "Estado de encendido desconocido para este equipo — inténtelo de nuevo en unos instantes",
+        "Connexion au relais perdue": "Conexión al relé perdida",
+        "Reconnexion au relais en cours": "Reconexión al relé en curso",
+        "Temps réel actif": "Tiempo real activo",
+        "Temps réel en attente de confirmation": "Tiempo real a la espera de confirmación"
     },
     "plugins/smartclim/core/class/smartclimAuxHomeApi.class.php": {
         "Albanie": "Albania",
@@ -339,7 +343,8 @@
         "Cloud historique": "Nube histórica",
         "Oscillations inversées": "Oscilación invertida",
         "Sens inversé pour ce transport": "Sentido invertido para este transporte",
-        "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Marque esta opción si los comandos de oscilación producen el efecto contrario al anunciado"
+        "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Marque esta opción si los comandos de oscilación producen el efecto contrario al anunciado",
+        "Temps réel": "Tiempo real"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Acceso no autorizado"

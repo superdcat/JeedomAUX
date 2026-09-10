@@ -25,9 +25,16 @@
 *   cd /var/www/html/plugins/smartclim
 *   sudo -u www-data php core/php/pont-demon.php --etat
 *   sudo -u www-data php core/php/pont-demon.php --ping [--attente=<secondes>]
+*   sudo -u www-data php core/php/pont-demon.php --relais
+*   sudo -u www-data php core/php/pont-demon.php --relais-sync
 *
-*   --etat  : affiche l'etat du demon (aucune emission reseau).
-*   --ping  : envoie un ping au demon et attend le pong (defaut 5 s).
+*   --etat        : affiche l'etat du demon (aucune emission reseau).
+*   --ping        : envoie un ping au demon et attend le pong (defaut 5 s).
+*   --relais      : rapport de l'etat du relais WebSocket AUX Cloud legacy (UC03 du
+*                   domaine post-mvp/05-temps-reel-et-demon) - AUCUNE emission reseau,
+*                   lecture seule du battement et de l'index des equipements legacy.
+*   --relais-sync : force une resynchronisation IMMEDIATE de l'abonnement au relais
+*                   (ignore l'echeance normale de 600 s) - EMET un message au demon.
 */
 
 if (php_sapi_name() !== 'cli') {
@@ -39,6 +46,8 @@ require_once __DIR__ . '/../class/smartclim.class.php';
 
 $modeEtat = false;
 $modePing = false;
+$modeRelais = false;
+$modeRelaisSync = false;
 $attente = 5;
 
 foreach (array_slice($argv, 1) as $argument) {
@@ -46,6 +55,10 @@ foreach (array_slice($argv, 1) as $argument) {
     $modeEtat = true;
   } elseif ($argument === '--ping') {
     $modePing = true;
+  } elseif ($argument === '--relais') {
+    $modeRelais = true;
+  } elseif ($argument === '--relais-sync') {
+    $modeRelaisSync = true;
   } elseif (strpos($argument, '--attente=') === 0) {
     $attente = (float) substr($argument, strlen('--attente='));
   } else {
@@ -53,8 +66,8 @@ foreach (array_slice($argv, 1) as $argument) {
   }
 }
 
-if (!$modeEtat && !$modePing) {
-  die("Usage :\n  php core/php/pont-demon.php --etat\n  php core/php/pont-demon.php --ping [--attente=<secondes>]\n");
+if (!$modeEtat && !$modePing && !$modeRelais && !$modeRelaisSync) {
+  die("Usage :\n  php core/php/pont-demon.php --etat\n  php core/php/pont-demon.php --ping [--attente=<secondes>]\n  php core/php/pont-demon.php --relais\n  php core/php/pont-demon.php --relais-sync\n");
 }
 
 if ($modeEtat) {
@@ -69,6 +82,37 @@ if ($modeEtat) {
   $pidFichier = smartclimDemon::fichierPid();
   $pid = is_file($pidFichier) ? trim((string) @file_get_contents($pidFichier)) : '';
   echo '  pid         : ' . ($pid !== '' ? $pid : '(aucun)') . "\n";
+  exit(0);
+}
+
+// UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 5.4 de sa spec technique) :
+// rapport LECTURE SEULE (aucune emission reseau) - patron diagnosticTransport().
+if ($modeRelais) {
+  $diagnostic = smartclim::diagnosticRelaisAuxCloud();
+  echo "Relais WebSocket AUX Cloud legacy :\n";
+  if ($diagnostic['battement'] === null) {
+    echo "  battement   : (aucun)\n";
+  } else {
+    echo '  etat        : ' . $diagnostic['battement']['etat'] . "\n";
+    echo '  age         : ' . $diagnostic['battement']['age'] . " s\n";
+    echo '  abonnes     : ' . $diagnostic['battement']['abonnes'] . "\n";
+    echo '  confirmes   : ' . $diagnostic['battement']['confirmes'] . "\n";
+  }
+  echo "Equipements legacy :\n";
+  if (empty($diagnostic['equipements'])) {
+    echo "  (aucun)\n";
+  }
+  foreach ($diagnostic['equipements'] as $ligne) {
+    echo '  - ' . $ligne['nom'] . ' (endpointId=' . $ligne['endpointId'] . ') : push_actif='
+      . ($ligne['pushActif'] ? 'oui' : 'non') . ' cadence=' . $ligne['cadence'] . "s\n";
+  }
+  exit(0);
+}
+
+// --relais-sync : EMET un message au demon (force la resynchro, ignore l'echeance).
+if ($modeRelaisSync) {
+  $resultat = smartclim::synchroniserPushAuxCloud(true);
+  echo 'Synchro relais : lance=' . ($resultat['lance'] ? 'oui' : 'non') . ' appareils=' . $resultat['appareils'] . "\n";
   exit(0);
 }
 

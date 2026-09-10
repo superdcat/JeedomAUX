@@ -46,3 +46,24 @@ if (is_array($corps) && isset($corps['pont']['pong'])) {
   smartclimDemon::enregistrerPong($corps['pont']['pong']);
   log::add('smartclim', 'info', 'Pont : pong reçu du démon');
 }
+
+/*
+* UC03 du domaine post-mvp/05-temps-reel-et-demon (§ 4.2 de sa spec technique) :
+* TROIS branches if INDÉPENDANTES ci-dessous — JAMAIS elseif. Le thread de battement
+* (60 s) et le thread de push du démon écrivent tous deux dans self._changes, fusionnés
+* par merge_dict() avant le POST du cycle de 0,5 s (resources/smartclimd/jeedom/
+* jeedom.py) : un même corps HTTP peut donc légitimement porter à la fois
+* auxcloud.relais ET auxcloud.push.<endpointId>. Un elseif en perdrait un SANS AUCUNE
+* TRACE, violation ponctuelle de l'AC2.
+*/
+if (is_array($corps) && isset($corps['auxcloud']['push']) && is_array($corps['auxcloud']['push'])) {
+  smartclim::appliquerPushAuxCloud($corps['auxcloud']['push']);
+}
+
+if (is_array($corps) && isset($corps['auxcloud']['relais'])) {
+  smartclimDemon::enregistrerBattement($corps['auxcloud']['relais']);
+}
+
+if (is_array($corps) && isset($corps['pont']['demarre'])) {
+  smartclim::invaliderSyncRelais();
+}

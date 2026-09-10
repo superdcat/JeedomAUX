@@ -386,6 +386,10 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 									<label class="col-sm-4 control-label">{{Réseau local}}</label>
 									<div class="col-sm-8"><span id="span_etatConnexionLan"></span> <small class="text-muted" id="span_etatConnexionLanAdresse"></small></div>
 								</div>
+								<div class="form-group">
+									<label class="col-sm-4 control-label">{{Temps réel}}</label>
+									<div class="col-sm-8"><span id="span_etatConnexionTempsReel"></span></div>
+								</div>
 							</div>
 
 							<legend><i class="fas fa-list"></i> {{Profil de capacités détecté}}</legend>

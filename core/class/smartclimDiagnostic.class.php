@@ -417,11 +417,17 @@ class smartclimDiagnostic {
    * occurrences de la même valeur portent le même jeton, donc les recoupements d'un
    * rapport restent lisibles sans que le rapport désigne le matériel.
    *
+   * ⚠️ Passée `private` → `public` pour l'UC04 du domaine post-mvp/05-temps-reel-et-demon
+   * (§ 7 de sa spec technique) : core/php/pont-demon.php --auxlink réutilise CE
+   * mécanisme pour masquer MAC/device_id de la sonde AUXLink plutôt que d'écrire un
+   * 3ᵉ mécanisme de jetons stables dans le plugin (leçon « masquage par clé
+   * insuffisant » — un point d'implémentation unique).
+   *
    * @param string $_valeur
    * @param array $_correspondances
    * @return string
    */
-  private static function jeton($_valeur, array &$_correspondances) {
+  public static function jeton($_valeur, array &$_correspondances) {
     $brute = (string) $_valeur;
     if (!isset($_correspondances[$brute])) {
       $_correspondances[$brute] = 'masque:' . substr(sha1($brute), 0, 6);

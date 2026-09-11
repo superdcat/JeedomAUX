@@ -79,7 +79,7 @@ entre le fil (LAN / `status.control`) et l'API JSON du cloud legacy. Voir
 | Login legacy `app-service-*` OK **et** appareil dans `getfamilylist` + `dev/query` | oui | **G2** → transport `AUX_CLOUD_LEGACY` |
 | Broadcast Broadlink UDP 80 / 15001 / 2415 → réponse cmd `0xe9`/`0xee` | oui | **G1/G2** → `BROADLINK_LAN` disponible |
 | Auth Broadlink `0x65` sur IP connue → timeout | oui | LAN Broadlink **indisponible** (pas une erreur) |
-| Découverte UDP 12414 (magic `a5a5…`) → réponse sur 2415 | **[À CONFIRMER sur le matériel]** | **G3** → `AUXLINK_LAN` potentiellement disponible |
+| Découverte UDP 12414 (magic `a5a5…`) → réponse sur 2415 | **[SONDE LIVRÉE, verdict en attente — cf. § 8]** | **G3** → `AUXLINK_LAN` potentiellement disponible |
 
 Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.memory/brief.md` § 4) :
 `BROADLINK_LAN` / `AUXLINK_LAN` > `AUX_HOME` > `AUX_CLOUD_LEGACY`.
@@ -90,9 +90,10 @@ Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.m
    et celui dont le contrat est le mieux documenté (implémentation de référence MIT complète, cf.
    `smartclim-transport-aux-home.md`).
 2. **Post-MVP prioritaire = `BROADLINK_LAN`** (grand parc G1/G2 installé, pilotage sans Internet).
-3. **Post-MVP à fort potentiel = `AUXLINK_LAN`** : seule piste connue pour donner du **pilotage local** à
-   l'appareil de validation. À traiter comme un **spike** (sonde read-only avant tout code de production),
-   car non confirmé sur ce matériel.
+3. **`AUXLINK_LAN`** : seule piste connue pour donner du **pilotage local** à l'appareil de validation.
+   **Sonde de découverte read-only livrée** (UC04 du domaine post-mvp/05-temps-reel-et-demon) — voir § 8
+   pour le protocole d'observation et son verdict. Le code de session/pilotage n'est écrit **que** si le
+   verdict est positif (`06-transport-auxlink-local.md`).
 4. **`AUX_CLOUD_LEGACY`** : indispensable à la promesse multimarque/multigénération, mais aucun appareil de
    test disponible → développement contre les implémentations de référence + recette communautaire.
 
@@ -104,7 +105,9 @@ Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.m
 | `zwegersit.nl/projecten/airco-homey/` | article (NL) | démarche + contrat AUX Home vérifié à la capture réseau | article | ✅ source factuelle, à citer |
 | `maeek/ha-aux-cloud` | Python | **AUX Cloud legacy** complet + WebSocket relay | **MIT** | ✅ portage autorisé |
 | `fparrav/homebridge-aux-cloud` | TypeScript | **Broadlink LAN** + legacy + stratégies LAN/Cloud/Hybride | **MIT** | ✅ portage autorisé |
-| `latentharbor/ha-aux-a-plus` | Python | **AUX A+ / AUXLink** LAN TCP 12416 + MQTT push | **MIT** | ✅ portage autorisé |
+| `latentharbor/ha-aux-a-plus` | Python | **AUX A+ / AUXLink** LAN TCP 12416 + MQTT push ; découverte UDP 12414/2415 (magic `a5a5`, CRC-16 CCITT) | **MIT** | ✅ portage autorisé (CRC porté dans `sonde_auxlink.py`) |
+| `Apollon77/node-ph803w` | Doc (`PROTOCOL.md`) | **LAN Gizwits GAgent** — ports 12414/2415/12416, cadrage `00 00 00 03`, commandes `0x03`/`0x68` (**corroboration indépendante** des ports AUXLink) | (doc, sans code repris) | ✅ source factuelle, aucune ligne recopiée |
+| `gizwits/Gizwits-GAgent` | C | **LAN Gizwits GAgent** — mêmes ports/commandes, code source de référence de la plateforme | (non vérifiée, non copiée) | ✅ source factuelle, aucune ligne recopiée |
 | `makleso6/homebridge-broadlink-heater-cooler`, `makleso6/broadlink-aircon-api` | TS | origine du protocole Broadlink AC | **Apache-2.0** | ✅ compatible (conserver `NOTICE`) |
 | `maxmirazh33/aircore` | Python | Broadlink LAN, multimarque | **MIT** | ✅ |
 | `azadaydinli/ac_freedom` | Python | Broadlink LAN + legacy | **AUCUNE licence** | ❌ **pas de copie de code** — référence factuelle/conceptuelle seulement |
@@ -123,7 +126,10 @@ Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.m
 
 ## 7. À confirmer
 
-- [ ] Le module de l'appareil de validation répond-il au LAN **AUXLink** (UDP 12414 / TCP 12416) ?
+- [ ] ~~Le module de l'appareil de validation répond-il au LAN **AUXLink** (UDP 12414 / TCP 12416) ?~~ →
+      **sonde de découverte livrée** (UC04 du domaine post-mvp/05-temps-reel-et-demon), verdict **en
+      attente de campagne d'observation réelle** — protocole détaillé et résultat à consigner au § 8 dès
+      qu'il est disponible. Ce point ne se referme donc pas au commit de l'UC (cf. § 8).
 - [x] ~~Le backend EU `eu-smthome-api.aux-global.com` a-t-il un pendant MQTT du type
       `smthomem2m.aux-home.com` (le backend CN en a un) ?~~ → **OUI**, tranché par le spike du 2026-09-07
       (UC01 du domaine post-mvp/05) : **`eu-smthome-m2m.aux-global.com`**, ports 8883/443 (TLS) et 1883
@@ -142,3 +148,58 @@ Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.m
 - [ ] Les comptes AC Freedom (G2) et AUX Home (G3) sont-ils distincts ou unifiés ? Les implémentations de
       référence supposent **distincts** et essaient G3 puis G1/G2 en repli
       (`com.zwegersit.auxairco/drivers/airco/driver.ts::onPair`).
+
+## 8. Verdict AUXLink sur l'appareil de validation
+
+> **Statut : ⚠️ EN ATTENTE.** L'UC04 du domaine `post-mvp/05-temps-reel-et-demon` livre la **sonde de
+> découverte** (lecture seule, aucune session, aucun pilotage — cf. AC1) et son instrumentation ; elle ne
+> livre **pas** de verdict, celui-ci exigeant une campagne d'observation réelle sur le LAN de l'appareil de
+> validation. Cette section est **délibérément laissée sans conclusion** — la remplir sans avoir fait
+> tourner la campagne reviendrait à inventer un résultat.
+
+### 8.1 Ce qui est livré
+
+- `resources/smartclimd/sonde_auxlink.py` — classe `SondeAuxlink` : émission bornée (3 amorces à 10 s puis
+  veille à 300 s) des deux variantes de trame de découverte (`a5a5…` AUXLink et `00000003` GAgent), écoute
+  **passive continue** sur UDP 2415 **et** 12414 (donc capable de voir aussi les requêtes/réponses émises
+  par l'application constructeur elle-même), test d'ouverture TCP 12416 (sans jamais rien y écrire).
+- `core/php/pont-demon.php --auxlink-armer [--duree=] [--hote=]` / `--auxlink-desarmer` / `--auxlink
+  [--brut]` — armement, désarmement, lecture du rapport (MAC/`device_id` masqués par défaut).
+- Classement d'une trame **par l'octet de commande/le type**, jamais par l'adresse source (défense en
+  profondeur uniquement) — cf. `core/class/smartclimDemon.class.php` (validation de forme) et
+  `core/class/smartclim.class.php::diagnosticSondeAuxlink()` (verdict).
+
+### 8.2 Protocole d'observation à suivre (three-paliers, § 4 de la spec technique)
+
+1. **Amorce (~30 s)** à l'armement : si l'appareil répond immédiatement, le verdict est positif sans
+   attendre la suite.
+2. **Veille (24 h par défaut, réglable `--duree=`, borné à 7 j)** : émission alternée toutes les 300 s,
+   écoute passive continue, test de port toutes les 900 s.
+3. **Corroboration humaine, OBLIGATOIRE avant tout verdict négatif** : piloter le climatiseur depuis
+   l'application AUX Home avec le téléphone connecté au même Wi-Fi mais **données mobiles coupées**. Si le
+   pilotage fonctionne encore sans Internet, un protocole LAN existe et c'est notre trame qui est fausse —
+   **interdiction de conclure négatif** dans ce cas ; rouvrir avec une capture réseau. Si le pilotage cesse
+   de fonctionner, c'est un **négatif décisif**, indépendant de tout format de trame.
+
+### 8.3 Verdict
+
+**À consigner ici dès que la campagne du § 8.2 aura été menée à son terme** (les trois paliers, dont le
+palier 3, sont tous requis avant toute conclusion négative — cf. § 4 de la spec technique de l'UC04). Deux
+issues possibles, rédigées d'avance (§ 9 de la spec technique) :
+
+- **Positif** : date, compteurs (réponses AUXLink valides, MAC/`device_id` observés, correspondance
+  d'équipement), trame exacte qui a répondu, décision « piste confirmée, UC de transport ouverte »
+  (`06-transport-auxlink-local.md`).
+- **Négatif** : date, durée réelle d'observation, compteurs à zéro, résultat des trois paliers (dont le
+  palier 3), décision « piste abandonnée ; l'appareil de validation reste durablement dépendant d'un cloud
+  pour être piloté ». ⚠️ Le négatif porterait sur **cet appareil**, mesuré par **cet instrument** — pas sur
+  « AUXLink n'existe pas » : le plugin est multimarque, un autre module G3 peut répondre.
+
+### 8.4 Ce que la corroboration des ports change (R1 de la spec technique)
+
+Les **ports** 12414/2415/12416 sont corroborés par une source indépendante du cadrage AUXLink
+(`Apollon77/node-ph803w`, `gizwits/Gizwits-GAgent`) : le module AUX est très probablement un module
+**Gizwits GAgent** générique, et le cadrage `a5a5` — attesté par la seule source `latentharbor` — pourrait
+être une surcouche propriétaire posée par AUX, ou l'observation d'un firmware particulier. **Un négatif
+obtenu sur la seule variante `a5a5` ne prouverait donc rien** : c'est la raison d'être de la seconde
+variante GAgent et de l'écoute passive sur les deux ports, toutes deux livrées par cette sonde.

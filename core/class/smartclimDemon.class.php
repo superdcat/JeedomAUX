@@ -75,6 +75,23 @@ class smartclimDemon {
   const DUREE_MEMOIRE_RELAIS = 300;
   const FRAICHEUR_RELAIS = 180;
 
+  // === SONDE AUXLINK (UC04 post-mvp/05) — début ===
+  // Rapport de la sonde de découverte AUXLink (UC04 du domaine
+  // post-mvp/05-temps-reel-et-demon, § 6.3 de sa spec technique) — mémoire GLOBALE
+  // au plugin (une seule campagne à la fois), NON chiffrée (aucun secret dans ce
+  // cycle : ni session, ni passcode — cf. l'en-tête de sonde_auxlink.py). Durée
+  // DÉLIBÉRÉMENT longue (7 j) par rapport à DUREE_MEMOIRE_RELAIS (300 s) : un
+  // battement ne vaut que frais, un rapport de campagne doit survivre à sa propre
+  // fenêtre pour rester lisible après coup — c'est lui qui porte la preuve du verdict.
+  const CLE_CACHE_SONDE_AUXLINK = 'smartclim::sonde_auxlink';
+  const DUREE_MEMOIRE_SONDE_AUXLINK = 604800; // 7 j
+  const DUREE_OBSERVATION_DEFAUT = 86400; // 24 h
+  const DUREE_OBSERVATION_MIN = 60;
+  const DUREE_OBSERVATION_MAX = 604800;
+  const TRAMES_MAX_SONDE = 20;
+  const FRAICHEUR_SONDE = 180;
+  // === SONDE AUXLINK (UC04 post-mvp/05) — fin ===
+
   const TIMEOUT_SOCKET = 2;
   const ATTENTE_DEMARRAGE = 5;
   // Borne l'attente de la MORT du processus après SIGTERM, dans arreter() — distincte
@@ -508,4 +525,165 @@ class smartclimDemon {
       'ts' => (int) $battement['ts'],
     );
   }
+
+  // === SONDE AUXLINK (UC04 post-mvp/05) — début ===
+
+  /**
+   * Transmet une configuration à la sonde de découverte AUXLink (UC04 du domaine
+   * post-mvp/05-temps-reel-et-demon, § 6.1 de sa spec technique) — simple
+   * délégation à envoyer(), même contrat (NE LÈVE JAMAIS).
+   *
+   * @param array $_sonde {actif, duree, hotes, empreinte} ou {actif: false}.
+   * @return bool
+   */
+  public static function envoyerSondeAuxlink(array $_sonde) {
+    return self::envoyer(array('cmd' => 'auxlink_sonde', 'sonde' => $_sonde));
+  }
+
+  /**
+   * Appelée UNIQUEMENT par core/php/jeeSmartclim.php (branche 'auxlink.sonde') :
+   * valide INTÉGRALEMENT la forme AVANT toute écriture en cache. Horodatage
+   * SERVEUR (time()), jamais celui du démon — même invariant que
+   * enregistrerBattement()/enregistrerPong(). Cache NON chiffré (aucun secret dans
+   * ce cycle).
+   *
+   * @param mixed $_rapport
+   */
+  public static function enregistrerSondeAuxlink($_rapport) {
+    if (!is_array($_rapport)) {
+      log::add('smartclim', 'warning', 'Sonde AUXLink : rapport de forme invalide, ignoré');
+      return;
+    }
+    $empreinte = isset($_rapport['empreinte']) && is_string($_rapport['empreinte']) && preg_match('/\A[0-9a-f]{0,40}\z/', $_rapport['empreinte']) === 1
+      ? $_rapport['empreinte']
+      : '';
+    $expireLe = isset($_rapport['expire_le']) && is_numeric($_rapport['expire_le']) ? (int) $_rapport['expire_le'] : 0;
+    if ($expireLe < 0 || $expireLe > time() + self::DUREE_OBSERVATION_MAX + 3600) {
+      $expireLe = 0;
+    }
+
+    $valide = array(
+      'empreinte' => $empreinte,
+      'expire_le' => $expireLe,
+      'trames' => self::tramesValidees(isset($_rapport['trames']) ? $_rapport['trames'] : null),
+      'ports' => self::portsValides(isset($_rapport['ports']) ? $_rapport['ports'] : null),
+      // ⚠️ Horodatage SERVEUR, jamais celui du démon (même règle qu'ailleurs dans
+      // cette classe) : c'est CE champ qui porte la fraîcheur du rapport.
+      'ts' => time(),
+    );
+    $json = json_encode($valide);
+    if ($json === false) {
+      return;
+    }
+    cache::set(self::CLE_CACHE_SONDE_AUXLINK, $json, self::DUREE_MEMOIRE_SONDE_AUXLINK);
+  }
+
+  /**
+   * Lit le rapport de campagne AUXLink en cache — VALIDE LA FORME et renvoie
+   * `null` plutôt qu'un contenu forgé (même patron que battementRelais() /
+   * smartclim::incidentMemorise()).
+   *
+   * @return array{empreinte:string, expire_le:int, trames:array, ports:array, ts:int}|null
+   */
+  public static function rapportSondeAuxlink() {
+    $brut = cache::byKey(self::CLE_CACHE_SONDE_AUXLINK)->getValue(null);
+    if (!is_string($brut) || $brut === '') {
+      return null;
+    }
+    $rapport = json_decode($brut, true);
+    if (!is_array($rapport) || !isset($rapport['ts']) || !is_numeric($rapport['ts'])) {
+      return null;
+    }
+    return array(
+      'empreinte' => isset($rapport['empreinte']) && is_string($rapport['empreinte']) ? $rapport['empreinte'] : '',
+      'expire_le' => isset($rapport['expire_le']) && is_numeric($rapport['expire_le']) ? (int) $rapport['expire_le'] : 0,
+      'trames' => self::tramesValidees(isset($rapport['trames']) ? $rapport['trames'] : null),
+      'ports' => self::portsValides(isset($rapport['ports']) ? $rapport['ports'] : null),
+      'ts' => (int) $rapport['ts'],
+    );
+  }
+
+  /**
+   * ⚠️ Appelée SOUS CONDITION SEULEMENT par smartclim::armerSondeAuxlink() (M4, §
+   * 6.3 de la spec technique) : une purge inconditionnelle sur une relance de la
+   * même campagne effacerait la preuve déjà accumulée.
+   */
+  public static function oublierSondeAuxlink() {
+    cache::delete(self::CLE_CACHE_SONDE_AUXLINK);
+  }
+
+  /**
+   * Borne la liste de trames à TRAMES_MAX_SONDE, liste blanche FERMÉE de
+   * `famille`/`sens`, regex sur `hex`/`mac`/`device_id`/`ip_source` (§ 7 de la
+   * spec technique) — appliquée aussi bien à la réception du démon qu'à la
+   * relecture du cache (défense en profondeur symétrique).
+   *
+   * @param mixed $_valeur
+   * @return array
+   */
+  private static function tramesValidees($_valeur) {
+    if (!is_array($_valeur)) {
+      return array();
+    }
+    $sortie = array();
+    foreach ($_valeur as $trame) {
+      if (count($sortie) >= self::TRAMES_MAX_SONDE) {
+        break;
+      }
+      if (!is_array($trame)) {
+        continue;
+      }
+      $famille = isset($trame['famille']) && is_string($trame['famille']) ? $trame['famille'] : '';
+      if (!in_array($famille, array('auxlink', 'gagent', 'autre'), true)) {
+        continue;
+      }
+      $sens = isset($trame['sens']) && is_string($trame['sens']) ? $trame['sens'] : '';
+      if (!in_array($sens, array('requete', 'reponse', 'autre'), true)) {
+        $sens = 'autre';
+      }
+      $hex = isset($trame['hex']) && is_string($trame['hex']) && preg_match('/\A[0-9a-f]{0,128}\z/', $trame['hex']) === 1 ? $trame['hex'] : '';
+      $mac = isset($trame['mac']) && is_string($trame['mac']) && preg_match('/\A[0-9a-f]{0,12}\z/', $trame['mac']) === 1 ? $trame['mac'] : '';
+      $deviceId = isset($trame['device_id']) && is_string($trame['device_id']) && preg_match('/\A[A-Za-z0-9_-]{0,64}\z/', $trame['device_id']) === 1 ? $trame['device_id'] : '';
+      $ipSource = isset($trame['ip_source']) && is_string($trame['ip_source']) && preg_match('/\A[0-9]{1,3}(\.[0-9]{1,3}){3}\z/', $trame['ip_source']) === 1 ? $trame['ip_source'] : '';
+      $locale = !empty($trame['locale']);
+      $sortie[] = array(
+        'famille' => $famille,
+        'sens' => $sens,
+        'hex' => $hex,
+        'mac' => $mac,
+        'device_id' => $deviceId,
+        'ip_source' => $ipSource,
+        'locale' => $locale,
+      );
+    }
+    return $sortie;
+  }
+
+  /**
+   * Borne la liste des statuts de test de port TCP 12416, ip => 'ouvert'|'refuse'|'timeout',
+   * bornée à 4 entrées (§ 7 de la spec technique).
+   *
+   * @param mixed $_valeur
+   * @return array<string,string>
+   */
+  private static function portsValides($_valeur) {
+    if (!is_array($_valeur)) {
+      return array();
+    }
+    $sortie = array();
+    foreach ($_valeur as $ip => $statut) {
+      if (count($sortie) >= 4) {
+        break;
+      }
+      if (!is_string($ip) || preg_match('/\A[0-9]{1,3}(\.[0-9]{1,3}){3}\z/', $ip) !== 1) {
+        continue;
+      }
+      if (!is_string($statut) || !in_array($statut, array('ouvert', 'refuse', 'timeout'), true)) {
+        continue;
+      }
+      $sortie[$ip] = $statut;
+    }
+    return $sortie;
+  }
+  // === SONDE AUXLINK (UC04 post-mvp/05) — fin ===
 }

@@ -67,3 +67,14 @@ if (is_array($corps) && isset($corps['auxcloud']['relais'])) {
 if (is_array($corps) && isset($corps['pont']['demarre'])) {
   smartclim::invaliderSyncRelais();
 }
+
+/*
+* === SONDE AUXLINK (UC04 post-mvp/05) — début ===
+* 5e bloc if INDÉPENDANT, comme les quatre précédents — un même corps HTTP peut
+* légitimement porter plusieurs clés de premier niveau (§ 4.2 de la spec technique
+* de l'UC03, doctrine reconduite ici) : un elseif en perdrait une SANS AUCUNE TRACE.
+*/
+if (is_array($corps) && isset($corps['auxlink']['sonde'])) {
+  smartclimDemon::enregistrerSondeAuxlink($corps['auxlink']['sonde']);
+}
+// === SONDE AUXLINK (UC04 post-mvp/05) — fin ===

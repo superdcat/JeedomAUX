@@ -7024,6 +7024,188 @@ class smartclim extends eqLogic {
     return $change;
   }
 
+  // === SONDE AUXLINK (UC04 post-mvp/05) — début ===
+
+  /**
+   * Arme la campagne de la sonde de découverte AUXLink (UC04 du domaine
+   * post-mvp/05-temps-reel-et-demon, § 6.4 de sa spec technique) — appelée
+   * UNIQUEMENT par core/php/pont-demon.php --auxlink-armer. Normalise la durée,
+   * complète les hôtes par hotesSondeAuxlink() si vides, calcule l'empreinte de
+   * campagne puis purge le rapport en cache SOUS CONDITION SEULEMENT (M4 : une
+   * purge inconditionnelle sur une relance de la même campagne effacerait la
+   * preuve déjà accumulée). NE LÈVE JAMAIS (appelée par une CLI).
+   *
+   * @param mixed $_duree
+   * @param array $_hotes
+   * @return array{lance:bool, duree:int, hotes:string[], motif:string}
+   */
+  public static function armerSondeAuxlink($_duree = null, array $_hotes = array()) {
+    try {
+      $duree = is_numeric($_duree) ? (int) $_duree : smartclimDemon::DUREE_OBSERVATION_DEFAUT;
+      $motif = '';
+      if ($duree < smartclimDemon::DUREE_OBSERVATION_MIN || $duree > smartclimDemon::DUREE_OBSERVATION_MAX) {
+        $motif = 'Durée hors bornes, ' . smartclimDemon::DUREE_OBSERVATION_DEFAUT . ' s retenu.';
+        $duree = smartclimDemon::DUREE_OBSERVATION_DEFAUT;
+      }
+      $duree = max(smartclimDemon::DUREE_OBSERVATION_MIN, min(smartclimDemon::DUREE_OBSERVATION_MAX, $duree));
+
+      $hotes = array();
+      foreach ($_hotes as $hote) {
+        $ip = self::normaliserIpV4($hote);
+        if ($ip !== '' && !in_array($ip, $hotes, true) && count($hotes) < 4) {
+          $hotes[] = $ip;
+        }
+      }
+      if (empty($hotes)) {
+        $hotes = self::hotesSondeAuxlink();
+      }
+
+      $empreinte = sha1((string) json_encode(array('duree' => $duree, 'hotes' => $hotes)));
+
+      // M4 : purge CONDITIONNELLE — seulement si la campagne en cache diffère de
+      // celle qu'on s'apprête à (re)lancer.
+      $rapportActuel = smartclimDemon::rapportSondeAuxlink();
+      if ($rapportActuel !== null && $rapportActuel['empreinte'] !== $empreinte) {
+        smartclimDemon::oublierSondeAuxlink();
+      }
+
+      $lance = smartclimDemon::envoyerSondeAuxlink(array(
+        'actif' => true,
+        'duree' => $duree,
+        'hotes' => $hotes,
+        'empreinte' => $empreinte,
+      ));
+
+      return array('lance' => $lance, 'duree' => $duree, 'hotes' => $hotes, 'motif' => $motif);
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Armement de la sonde AUXLink : erreur interne : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return array('lance' => false, 'duree' => 0, 'hotes' => array(), 'motif' => 'Erreur interne.');
+    }
+  }
+
+  /**
+   * Désarme la campagne de la sonde de découverte AUXLink — appelée UNIQUEMENT
+   * par core/php/pont-demon.php --auxlink-desarmer.
+   *
+   * @return bool
+   */
+  public static function desarmerSondeAuxlink() {
+    return smartclimDemon::envoyerSondeAuxlink(array('actif' => false));
+  }
+
+  /**
+   * Diagnostic LECTURE SEULE du rapport de campagne AUXLink (UC04 de ce domaine,
+   * § 6.5 de sa spec technique) — instrument de CONSTAT de
+   * core/php/pont-demon.php --auxlink, AUCUNE émission réseau. Rapproche chaque
+   * MAC observée d'un équipement par macEquipement() ET SA MAC INVERSÉE (règle du
+   * plugin : les implémentations Broadlink de référence lisent des ordres
+   * d'octets opposés).
+   *
+   * @return array{rapport:?array, age:?int, verdict:string, correspondances:array}
+   */
+  public static function diagnosticSondeAuxlink() {
+    $rapport = smartclimDemon::rapportSondeAuxlink();
+    if ($rapport === null) {
+      return array('rapport' => null, 'age' => null, 'verdict' => 'non_arme', 'correspondances' => array());
+    }
+
+    $age = max(0, time() - $rapport['ts']);
+    if ($age > 3 * smartclimDemon::FRAICHEUR_SONDE) {
+      return array('rapport' => $rapport, 'age' => $age, 'verdict' => 'perime', 'correspondances' => array());
+    }
+
+    $trames = $rapport['trames'];
+    $reponsesAuxlink = array_filter($trames, function ($trame) {
+      return $trame['famille'] === 'auxlink' && $trame['sens'] === 'reponse';
+    });
+    $reponsesGagent = array_filter($trames, function ($trame) {
+      return $trame['famille'] === 'gagent' && $trame['sens'] === 'reponse';
+    });
+    $requetesNonLocales = array_filter($trames, function ($trame) {
+      return $trame['sens'] === 'requete' && empty($trame['locale']);
+    });
+    $portOuvert = false;
+    foreach ($rapport['ports'] as $statut) {
+      if ($statut === 'ouvert') {
+        $portOuvert = true;
+        break;
+      }
+    }
+    $fenetreExpiree = time() >= $rapport['expire_le'];
+
+    $correspondances = array();
+    if (!empty($reponsesAuxlink)) {
+      $index = eqLogic::byType('smartclim', true);
+      foreach ($reponsesAuxlink as $trame) {
+        if ($trame['mac'] === '') {
+          continue;
+        }
+        $macInversee = self::macInversee($trame['mac']);
+        $nomTrouve = null;
+        foreach ($index as $eqLogic) {
+          if (!($eqLogic instanceof smartclim)) {
+            continue;
+          }
+          $macEquipement = $eqLogic->macEquipement();
+          if ($macEquipement !== '' && ($macEquipement === $trame['mac'] || $macEquipement === $macInversee)) {
+            $nomTrouve = self::neutraliserPourLog($eqLogic->getHumanName());
+            break;
+          }
+        }
+        $correspondances[] = array(
+          'mac' => $trame['mac'],
+          'device_id' => $trame['device_id'],
+          'equipement' => $nomTrouve,
+        );
+      }
+    }
+
+    if (!empty($reponsesAuxlink)) {
+      $verdict = empty(array_filter($correspondances, function ($c) {
+        return $c['equipement'] !== null;
+      })) ? 'positif' : 'positif_confirme';
+    } elseif (!empty($reponsesGagent)) {
+      $verdict = 'piste_gagent';
+    } elseif (!empty($requetesNonLocales)) {
+      $verdict = 'piste_requete';
+    } elseif ($portOuvert) {
+      $verdict = 'piste_port';
+    } elseif (!$fenetreExpiree) {
+      $verdict = 'en_cours';
+    } else {
+      $verdict = 'negatif_provisoire';
+    }
+
+    return array('rapport' => $rapport, 'age' => $age, 'verdict' => $verdict, 'correspondances' => $correspondances);
+  }
+
+  /**
+   * Hôtes connus à sonder en priorité (unicast, en complément de la diffusion) :
+   * les adresses LAN déjà connues du parc, validées et bornées à 4 (§ 6.4 de la
+   * spec technique).
+   *
+   * @return string[]
+   */
+  private static function hotesSondeAuxlink() {
+    $hotes = array();
+    foreach (eqLogic::byType('smartclim', true) as $eqLogic) {
+      if (count($hotes) >= 4) {
+        break;
+      }
+      if (!($eqLogic instanceof smartclim)) {
+        continue;
+      }
+      $adresse = $eqLogic->adresseLan();
+      $ip = isset($adresse['ip']) ? self::normaliserIpV4($adresse['ip']) : '';
+      if ($ip !== '' && !in_array($ip, $hotes, true)) {
+        $hotes[] = $ip;
+      }
+    }
+    return $hotes;
+  }
+
+  // === SONDE AUXLINK (UC04 post-mvp/05) — fin ===
+
   // Fonction exécutée automatiquement avant la suppression de l'équipement
   //
   // UC06, § 5.3 : hygiène — purge la mémoire des valeurs commandées de cet équipement,

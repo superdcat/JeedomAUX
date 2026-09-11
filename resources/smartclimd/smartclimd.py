@@ -45,6 +45,15 @@
 # Un signal "pont::demarre" est emis au demarrage (une seule fois) : cote PHP,
 # smartclim::invaliderSyncRelais() invalide le marqueur d'echeance de la synchro pour
 # qu'elle reparte des le prochain tick de cron, sans attendre 600 s apres un redemarrage.
+#
+# === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+# Troisieme ordre metier, ajoute par l'UC04 du domaine post-mvp/05-temps-reel-et-demon
+# (spike puis transport local alternatif AUXLink) : "auxlink_sonde" -> configure la
+# sonde de DECOUVERTE en lecture seule (sonde_auxlink.SondeAuxlink), qui n'etablit
+# JAMAIS de session ni n'envoie de commande (cf. l'en-tete de sonde_auxlink.py, AC1).
+# Import SOUS GARDE, meme doctrine que RelaisAuxCloud : module absent ou casse => la
+# sonde est simplement desactivee, le reste du demon continue de fonctionner.
+# === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
 # ---------------------------------------------------------------------------
 
 import logging
@@ -65,6 +74,14 @@ try:
 except ImportError as erreur_import:
     RelaisAuxCloud = None
     logging.error("Module relais_auxcloud indisponible, relais AUX Cloud legacy desactive : %s", erreur_import)
+
+# === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+try:
+    from sonde_auxlink import SondeAuxlink
+except ImportError as erreur_import:
+    SondeAuxlink = None
+    logging.error("Module sonde_auxlink indisponible, sonde AUXLink desactivee : %s", erreur_import)
+# === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
 
 # Meme forme que smartclimDemon::enregistrerPong() (core/class/smartclimDemon.class.php)
 # cote PHP : les deux barrieres doivent rester identiques. fullmatch() (et non match()
@@ -96,6 +113,13 @@ def read_socket():
                     logging.warning("Configuration du relais AUX Cloud legacy recue mais le module est indisponible, ignoree")
                     return
                 _relais.configurer(message.get('relais'))
+            # === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+            elif commande == 'auxlink_sonde':
+                if _sonde is None:
+                    logging.warning("Configuration de la sonde AUXLink recue mais le module est indisponible, ignoree")
+                    return
+                _sonde.configurer(message.get('sonde'))
+            # === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
             else:
                 logging.warning("Commande inconnue recue sur le socket")
         except Exception as e:
@@ -124,6 +148,13 @@ def shutdown():
             _relais.arreter()
         except Exception as e:
             logging.warning('Erreur lors de l\'arret du relais AUX Cloud legacy: %s', e)
+    # === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+    if '_sonde' in globals() and _sonde is not None:
+        try:
+            _sonde.arreter()
+        except Exception as e:
+            logging.warning('Erreur lors de l\'arret de la sonde AUXLink: %s', e)
+    # === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
     logging.debug("Suppression du fichier PID %s", _pidfile)
     if os.path.exists(_pidfile):
         try:
@@ -194,6 +225,11 @@ try:
     # (ou sa dependance websocket-client) est indisponible - le pont ping/pong continue
     # de fonctionner normalement dans ce cas (AC7).
     _relais = RelaisAuxCloud(my_jeedom_com) if RelaisAuxCloud is not None else None
+    # === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+    # _sonde reste None si le module est indisponible - le pont ping/pong et le
+    # relais AUX Cloud legacy continuent de fonctionner normalement dans ce cas.
+    _sonde = SondeAuxlink(my_jeedom_com) if SondeAuxlink is not None else None
+    # === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
     # Signal de demarrage (cote PHP : smartclim::invaliderSyncRelais(), branche
     # 'pont.demarre' de jeeSmartclim.php) - permet a la synchro de repartir des le
     # prochain tick de cron plutot que d'attendre jusqu'a 600 s apres un redemarrage.

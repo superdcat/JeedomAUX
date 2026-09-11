@@ -377,6 +377,11 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   qu'un bout de script : le bouton **« Sonde de diagnostic »** de `desktop/php/smartclim.php`
   (action AJAX `sonderDiagnostic` → `smartclim::sonderDiagnostic()`) et la CLI
   `core/php/diagnostic-auxhome.php`. Les deux doivent rendre **exactement** le même rapport.
+  ⚠️ Depuis l'UC04 du domaine post-MVP 05, **`jeton()` est `public`** : c'est le **point d'implémentation
+  unique** du masquage par jeton stable, réutilisé par `pont-demon.php --auxlink` pour les MAC et
+  `device_id` observés par la sonde. Élargir cette visibilité n'expose rien (la méthode ne fait que
+  dériver un jeton d'une chaîne, et n'est joignable par aucune action AJAX) ; écrire un **3ᵉ** mécanisme
+  de jetons, si — cf. le double masquage clé/valeur ci-dessous, qui n'a de sens qu'avec une seule table.
   Depuis l'UC01 du domaine post-MVP 04 s'y ajoute `texteTrameHvac()` — table octet/hex/binaire avec diff
   avant/après, pour la CLI `core/php/sonde-intent-auxhome.php`. ⚠️ Elle lit ses offsets dans
   `smartclimFrame::champsBinaires()`, **jamais en dur**, et n'applique **aucun masquage** : une trame HVAC
@@ -565,8 +570,9 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ≠ 200 comme fatal, donc une clé fausse se voit **au démarrage** au lieu de dégénérer en pont muet.
   ⚠️ Pas de `session_write_close()` ici, contrairement à `core/ajax/smartclim.ajax.php` : ce point d'entrée
   n'inclut pas `authentification`, aucune session n'est ouverte.
-  ⚠️⚠️ **Depuis l'UC03 du domaine post-MVP 05, il porte QUATRE branches, et ce sont des `if`
-  INDÉPENDANTS — jamais `elseif`** (`pont.pong`, `auxcloud.push`, `auxcloud.relais`, `pont.demarre`). Le
+  ⚠️⚠️ **Depuis l'UC04 du domaine post-MVP 05, il porte CINQ branches, et ce sont des `if`
+  INDÉPENDANTS — jamais `elseif`** (`pont.pong`, `auxcloud.push`, `auxcloud.relais`, `pont.demarre`,
+  `auxlink.sonde`). Le
   thread de battement et le thread de push du démon écrivent tous deux dans `add_changes()`, fusionnés par
   `merge_dict()` avant le POST du cycle de 0,5 s : **un même corps peut légitimement porter plusieurs clés
   de premier niveau**, et un `elseif` en perdrait une **sans aucune trace**. Le style naturel de
@@ -585,6 +591,15 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   synchro**, donc **émet** : login et éventuels `dev/query`). ⚠️ Les deux passent par
   `smartclim::diagnosticRelaisAuxCloud()`, qui n'expose que des **comptes**, jamais les listes
   d'identifiants d'endpoint ni l'empreinte de session.
+  Depuis l'UC04 du même domaine s'y ajoutent **trois usages pour la sonde AUXLink** : `--auxlink`
+  (rapport d'état interne — verdict, âge, compteurs, trames, correspondances — **sans aucune émission**,
+  MAC et `device_id` **masqués par défaut**, `--brut` pour lever le masquage), `--auxlink-armer
+  [--duree=<s>] [--hote=<ip>]` et `--auxlink-desarmer` (les deux **émettent**). ⚠️ `--auxlink-armer`
+  imprime un **avertissement Docker** : sans `network_mode: host`, le démon ne recevra jamais une
+  diffusion du LAN et la campagne ne mesurerait que le pare-feu du conteneur.
+  ⚠️ **Exception à la règle des blocs d'ancrage** de retrait : dans ce fichier, le parsing des options
+  AUXLink est intercalé dans des structures de contrôle **partagées** avec les options préexistantes — un
+  retrait s'y fait par `grep -n auxlink`, pas par suppression de blocs. Détail : spec technique d'UC04 § 10.
   ⚠️ À lancer sous `www-data` (`sudo -u www-data php …`) : le pong est écrit par le processus Apache dans
   le cache, et la CLI le relit. Vaut aussi pour les trois CLI existantes.
 - **`core/php/commande-auxcloud.php`** — **existe** depuis l'UC03 du domaine post-MVP 03. **5ᵉ et dernière
@@ -876,7 +891,8 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   template d'origine.
 - **`resources/smartclimd/`** — **restauré à l'UC02 du domaine post-MVP 05** (il avait été supprimé au
   renommage, le MVP n'ayant pas de démon). Contient `smartclimd.py` (point d'entrée), **`relais_auxcloud.py`
-  depuis l'UC03 du même domaine** (cf. ci-dessous) et la lib
+  depuis l'UC03 du même domaine** (cf. ci-dessous), **`sonde_auxlink.py` depuis l'UC04** (cf. ci-dessous)
+  et la lib
   `jeedom/` (`jeedom_com`, `jeedom_socket`, `jeedom_utils`). Restauré depuis `git checkout ceed01b --
   resources/` — commit initial du dépôt, dont il a été vérifié **octet à octet** qu'il est identique à
   `jeedom/plugin-template@master` : la question « ce dépôt ou l'amont ? » est donc **sans enjeu**.
@@ -906,6 +922,30 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   « le démon est latéral ». Même leçon que l'`import pyudev` non déclaré du gabarit officiel.
   ⚠️ **Jamais de `sslopt`/`CERT_NONE`, jamais `enableTrace(True)`**, et les exceptions se journalisent par
   `type(erreur).__name__` — **jamais `str(erreur)`**, qui peut porter la liste d'en-têtes.
+- **`resources/smartclimd/sonde_auxlink.py`** — **existe** depuis l'UC04 du domaine post-MVP 05. Classe
+  `SondeAuxlink` : **sonde de découverte AUXLink en LECTURE SEULE**, armée **uniquement** par
+  `pont-demon.php --auxlink-armer` (aucune clé de config, aucun bloc de `cron()`, aucun lecteur dans le
+  socle — la latéralité y est donc **plus forte** que pour le relais, qui est lu par
+  `rafraichirAuxCloud()`). Émission bornée de **deux** variantes de découverte (cadrage `a5a5` d'AUX et
+  cadrage **Gizwits GAgent**), écoute passive sur UDP **2415 et 12414**, test d'ouverture de TCP 12416.
+  ⚠️⚠️ **AC1 de son UC : aucun code de session, d'authentification, de chiffrement ni d'écriture AUXLink
+  ne doit entrer dans ce fichier.** Contrôle : `grep -nE "encrypt|passcode|sendall|0x0007|a5a50a000500"`
+  → **zéro occurrence**. Le transport proprement dit est renvoyé à une UC ultérieure, **conditionnée au
+  verdict** : le format du secret d'appairage est inconnu tant qu'aucun appareil n'a répondu.
+  ⚠️⚠️ **Une trame se classe par l'octet de commande ou le type, JAMAIS par l'adresse source** (`auxlink`
+  `0x0003` = réponse contre `0x0002` = requête ; `gagent` `0x68` contre `0x03`). Le filtre d'adresse
+  locale — qui écarte l'écho de notre propre diffusion — n'est que de la **défense en profondeur** : sa
+  détection est incomplète par construction (multi-interfaces, conteneur), et fondée seule elle
+  produirait un verdict **faux**, pas indécis. Seules les **réponses** sont probantes.
+  ⚠️ **Chaque génération obtient des sockets NEUFS** (`_fermer_sockets()` sous le même verrou que
+  l'incrément de génération) : un socket réutilisé serait fermé ~1 s plus tard par le `finally` d'un
+  thread de l'ancienne génération, cassant **silencieusement** l'écoute et l'émission de la campagne
+  courante. Et **aucun appel bloquant sous le verrou** (le calcul des adresses locales fait un
+  `gethostbyname()` sans timeout) — sinon l'arrêt du démon attend le DNS.
+  ⚠️ Le verdict `negatif_provisoire` n'est **jamais** écrit par le programme : la CLI rappelle le palier
+  de corroboration humaine et s'arrête. Un négatif exige d'avoir vérifié que l'application du
+  constructeur **ne pilote plus** l'appareil avec le téléphone privé d'Internet — seul test dont la valeur
+  probante ne dépend d'aucune source tierce.
 
 ## Modèle de données du plugin
 

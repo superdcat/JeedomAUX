@@ -1,7 +1,9 @@
 # UC04 — Spike puis transport local alternatif AUXLink pour les modules récents
 
-> **Domaine** : post-mvp/05-temps-reel-et-demon · **Statut** : à implémenter · **Dépend de** : UC02 de ce
-> domaine
+> **Domaine** : post-mvp/05-temps-reel-et-demon · **Statut** : ⚠️ sonde livrée (AC1/AC5 mécanisme/AC6 trace
+> couverts) — **verdict en attente** de campagne d'observation réelle (AC2/AC3/AC4 conditionnés au
+> verdict, AC5 conclusion écrite, AC6 décision finale) ; cf.
+> `.memory/analyse/smartclim-ecosysteme-aux-broadlink.md` § 8 · **Dépend de** : UC02 de ce domaine
 
 ## Objectif
 
@@ -35,9 +37,11 @@ validation reste durablement dépendant d'un cloud pour être piloté depuis Jee
 
 ## Critères d'acceptation
 
-- [ ] **AC1** — Une phase de sonde de découverte AUXLink est exécutée sur l'appareil de validation sans
+- [x] **AC1** — Une phase de sonde de découverte AUXLink est exécutée sur l'appareil de validation sans
       qu'aucune authentification ni commande n'ait été tentée au préalable (vérifiable par relecture du
       code produit à ce stade : aucune fonction d'écriture ou d'établissement de session n'y figure).
+      Couvert par construction : `resources/smartclimd/sonde_auxlink.py` ne contient ni session ni
+      pilotage (contrôle `grep -nE "encrypt|passcode|sendall|0x0007|a5a50a000500" ...` → 0 occurrence).
 - [ ] **AC2** (chemin positif) — Si l'appareil répond à la découverte AUXLink, une session authentifiée
       s'établit avec succès, et une lecture de l'état de l'appareil (au minimum marche/arrêt et température
       ambiante) est obtenue via ce canal, sans transiter par un cloud.

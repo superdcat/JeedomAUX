@@ -27,6 +27,9 @@
 *   sudo -u www-data php core/php/pont-demon.php --ping [--attente=<secondes>]
 *   sudo -u www-data php core/php/pont-demon.php --relais
 *   sudo -u www-data php core/php/pont-demon.php --relais-sync
+*   sudo -u www-data php core/php/pont-demon.php --auxlink [--brut]
+*   sudo -u www-data php core/php/pont-demon.php --auxlink-armer [--duree=<secondes>] [--hote=<ip>]
+*   sudo -u www-data php core/php/pont-demon.php --auxlink-desarmer
 *
 *   --etat        : affiche l'etat du demon (aucune emission reseau).
 *   --ping        : envoie un ping au demon et attend le pong (defaut 5 s).
@@ -35,6 +38,16 @@
 *                   lecture seule du battement et de l'index des equipements legacy.
 *   --relais-sync : force une resynchronisation IMMEDIATE de l'abonnement au relais
 *                   (ignore l'echeance normale de 600 s) - EMET un message au demon.
+*
+* === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+*   --auxlink         : rapport d'etat interne de la sonde de decouverte AUXLink
+*                       (UC04 du domaine post-mvp/05-temps-reel-et-demon) - AUCUNE
+*                       emission reseau, lecture seule du rapport en cache. MAC et
+*                       device_id MASQUES par defaut (--brut leve le masquage).
+*   --auxlink-armer   : arme la campagne d'observation (defaut 24 h, hotes connus du
+*                       parc si --hote absent) - EMET une diffusion reseau.
+*   --auxlink-desarmer: arrete la campagne en cours.
+* === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
 */
 
 if (php_sapi_name() !== 'cli') {
@@ -49,6 +62,14 @@ $modePing = false;
 $modeRelais = false;
 $modeRelaisSync = false;
 $attente = 5;
+// === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+$modeAuxlink = false;
+$modeAuxlinkArmer = false;
+$modeAuxlinkDesarmer = false;
+$auxlinkBrut = false;
+$auxlinkDuree = null;
+$auxlinkHotes = array();
+// === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
 
 foreach (array_slice($argv, 1) as $argument) {
   if ($argument === '--etat') {
@@ -61,13 +82,25 @@ foreach (array_slice($argv, 1) as $argument) {
     $modeRelaisSync = true;
   } elseif (strpos($argument, '--attente=') === 0) {
     $attente = (float) substr($argument, strlen('--attente='));
+  } elseif ($argument === '--auxlink') {
+    $modeAuxlink = true;
+  } elseif ($argument === '--auxlink-armer') {
+    $modeAuxlinkArmer = true;
+  } elseif ($argument === '--auxlink-desarmer') {
+    $modeAuxlinkDesarmer = true;
+  } elseif ($argument === '--brut') {
+    $auxlinkBrut = true;
+  } elseif (strpos($argument, '--duree=') === 0) {
+    $auxlinkDuree = substr($argument, strlen('--duree='));
+  } elseif (strpos($argument, '--hote=') === 0) {
+    $auxlinkHotes[] = substr($argument, strlen('--hote='));
   } else {
     die('Option inconnue : ' . $argument . "\n");
   }
 }
 
-if (!$modeEtat && !$modePing && !$modeRelais && !$modeRelaisSync) {
-  die("Usage :\n  php core/php/pont-demon.php --etat\n  php core/php/pont-demon.php --ping [--attente=<secondes>]\n  php core/php/pont-demon.php --relais\n  php core/php/pont-demon.php --relais-sync\n");
+if (!$modeEtat && !$modePing && !$modeRelais && !$modeRelaisSync && !$modeAuxlink && !$modeAuxlinkArmer && !$modeAuxlinkDesarmer) {
+  die("Usage :\n  php core/php/pont-demon.php --etat\n  php core/php/pont-demon.php --ping [--attente=<secondes>]\n  php core/php/pont-demon.php --relais\n  php core/php/pont-demon.php --relais-sync\n  php core/php/pont-demon.php --auxlink [--brut]\n  php core/php/pont-demon.php --auxlink-armer [--duree=<secondes>] [--hote=<ip>]\n  php core/php/pont-demon.php --auxlink-desarmer\n");
 }
 
 if ($modeEtat) {
@@ -115,6 +148,105 @@ if ($modeRelaisSync) {
   echo 'Synchro relais : lance=' . ($resultat['lance'] ? 'oui' : 'non') . ' appareils=' . $resultat['appareils'] . "\n";
   exit(0);
 }
+
+// === SONDE AUXLINK (UC04 post-mvp/05) - debut ===
+// Detection (best effort, sans socket) d'un environnement Docker probablement sans
+// "network_mode: host" : sans lui, la sonde AUXLink ne recevra ni n'emettra jamais
+// aucune diffusion, et une fenetre de 24 h ne mesurerait alors que le pare-feu du
+// conteneur (R2 de la spec technique).
+function auxlinkAvertissementDocker() {
+  if (file_exists('/.dockerenv')) {
+    return true;
+  }
+  $procNetDev = @file('/proc/net/dev');
+  if (!is_array($procNetDev)) {
+    return false;
+  }
+  foreach ($procNetDev as $ligne) {
+    if (strpos($ligne, ':') === false) {
+      continue;
+    }
+    $morceaux = explode(':', $ligne);
+    $nom = trim($morceaux[0]);
+    if ($nom !== '' && $nom !== 'lo') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// --auxlink-armer : EMET une diffusion reseau (arme la campagne d'observation).
+if ($modeAuxlinkArmer) {
+  // Barriere CLI (message utilisable) - la barriere metier reste
+  // smartclim::normaliserIpV4() dans armerSondeAuxlink(), meme doctrine que
+  // --intent/--parametre des autres CLI de ce plugin.
+  if ($auxlinkDuree !== null && !is_numeric($auxlinkDuree)) {
+    die("La duree doit etre numerique.\n");
+  }
+  foreach ($auxlinkHotes as $hote) {
+    if (filter_var($hote, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+      echo 'Hote ignore : adresse non valide (' . $hote . ").\n";
+    }
+  }
+  if (auxlinkAvertissementDocker()) {
+    echo "ATTENTION : aucune interface reseau non-loopback detectee (ou conteneur Docker).\n";
+    echo "Sans 'network_mode: host', la sonde AUXLink est structurellement aveugle : elle ne recevra ni n'emettra aucune diffusion, et la fenetre d'observation ne mesurerait que le pare-feu du conteneur.\n";
+  }
+  $resultat = smartclim::armerSondeAuxlink($auxlinkDuree, $auxlinkHotes);
+  echo 'Sonde AUXLink : lance=' . ($resultat['lance'] ? 'oui' : 'non') . ' duree=' . $resultat['duree'] . 's hotes=' . (empty($resultat['hotes']) ? '(aucun)' : implode(',', $resultat['hotes'])) . "\n";
+  if ($resultat['motif'] !== '') {
+    echo '  ' . $resultat['motif'] . "\n";
+  }
+  exit(0);
+}
+
+// --auxlink-desarmer : EMET un message au demon (arrete la campagne en cours).
+if ($modeAuxlinkDesarmer) {
+  $ok = smartclim::desarmerSondeAuxlink();
+  echo 'Sonde AUXLink desarmee : ' . ($ok ? 'oui' : 'non') . "\n";
+  exit(0);
+}
+
+// --auxlink : LECTURE SEULE (aucune emission reseau) - patron diagnosticTransport().
+// MAC et device_id MASQUES par defaut (--brut leve le masquage, cf. smartclimDiagnostic::jeton()).
+if ($modeAuxlink) {
+  $diagnostic = smartclim::diagnosticSondeAuxlink();
+  $correspondancesMasque = array();
+  echo "Sonde de decouverte AUXLink :\n";
+  echo '  verdict     : ' . $diagnostic['verdict'] . "\n";
+  echo '  age rapport : ' . ($diagnostic['age'] === null ? '(aucun)' : $diagnostic['age'] . ' s') . "\n";
+  if ($diagnostic['rapport'] === null) {
+    exit(0);
+  }
+  echo "Correspondances d'equipement :\n";
+  if (empty($diagnostic['correspondances'])) {
+    echo "  (aucune)\n";
+  }
+  foreach ($diagnostic['correspondances'] as $ligne) {
+    $mac = $auxlinkBrut ? $ligne['mac'] : smartclimDiagnostic::jeton($ligne['mac'], $correspondancesMasque);
+    $deviceId = ($ligne['device_id'] !== '') ? ($auxlinkBrut ? $ligne['device_id'] : smartclimDiagnostic::jeton($ligne['device_id'], $correspondancesMasque)) : '-';
+    echo '  - mac=' . $mac . ' device_id=' . $deviceId . ' equipement=' . ($ligne['equipement'] !== null ? $ligne['equipement'] : '(aucun)') . "\n";
+  }
+  echo "Trames observees :\n";
+  if (empty($diagnostic['rapport']['trames'])) {
+    echo "  (aucune)\n";
+  }
+  foreach ($diagnostic['rapport']['trames'] as $trame) {
+    $mac = ($trame['mac'] !== '') ? ($auxlinkBrut ? $trame['mac'] : smartclimDiagnostic::jeton($trame['mac'], $correspondancesMasque)) : '-';
+    $deviceId = ($trame['device_id'] !== '') ? ($auxlinkBrut ? $trame['device_id'] : smartclimDiagnostic::jeton($trame['device_id'], $correspondancesMasque)) : '-';
+    echo '  ' . $trame['famille'] . '/' . $trame['sens'] . ' mac=' . $mac . ' device_id=' . $deviceId . ' locale=' . ($trame['locale'] ? 'oui' : 'non') . "\n";
+  }
+  echo "Ports TCP 12416 testes :\n";
+  if (empty($diagnostic['rapport']['ports'])) {
+    echo "  (aucun)\n";
+  }
+  foreach ($diagnostic['rapport']['ports'] as $ip => $statut) {
+    $ipAffichee = $auxlinkBrut ? $ip : smartclimDiagnostic::jeton($ip, $correspondancesMasque);
+    echo '  ' . $ipAffichee . ' : ' . $statut . "\n";
+  }
+  exit(0);
+}
+// === SONDE AUXLINK (UC04 post-mvp/05) - fin ===
 
 // --ping : purger AVANT d'emettre, pour ne pas confirmer un aller-retour anterieur.
 smartclimDemon::oublierPong();

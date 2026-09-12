@@ -23,12 +23,11 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 		<legend><i class="fas fa-cog"></i> {{Gestion}}</legend>
 		<!-- Boutons de gestion du plugin -->
 		<div class="eqLogicThumbnailContainer">
-			<div class="cursor eqLogicAction logoPrimary" data-action="add">
-				<i class="fas fa-plus-circle"></i>
-				<br>
-				<span>{{Ajouter}}</span>
-			</div>
-			<div class="cursor eqLogicAction logoSecondary" data-action="gotoPluginConf">
+			<!-- PAS de bouton « Ajouter » : un climatiseur ne se crée QUE par découverte
+			     (scan cloud ou diffusion LAN), jamais à la main — un équipement saisi de
+			     zéro n'aurait ni identifiant de transport ni profil de capacités, donc
+			     aucune commande. Cf. « Scanner les climatiseurs » ci-dessous. -->
+			<div class="cursor eqLogicAction logoPrimary" data-action="gotoPluginConf">
 				<i class="fas fa-wrench"></i>
 				<br>
 				<span>{{Configuration}}</span>
@@ -155,7 +154,7 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 		<legend><i class="fas fa-table"></i> {{Mes smartclims}}</legend>
 		<?php
 		if (count($eqLogics) == 0) {
-			echo '<br><div class="text-center" style="font-size:1.2em;font-weight:bold;">{{Aucun équipement Template trouvé, cliquer sur "Ajouter" pour commencer}}</div>';
+			echo '<br><div class="text-center" style="font-size:1.2em;font-weight:bold;">{{Aucun climatiseur trouvé, cliquez sur "Scanner les climatiseurs" pour commencer}}</div>';
 		} else {
 			// Champ de recherche
 			echo '<div class="input-group" style="margin:5px;">';
@@ -272,15 +271,6 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 								</div>
 							</div>
 
-							<legend><i class="fas fa-cogs"></i> {{Paramètres spécifiques}}</legend>
-							<div class="form-group">
-								<label class="col-sm-4 control-label">{{Nom du paramètre n°1}}
-									<sup><i class="fas fa-question-circle tooltips" title="{{Renseignez le paramètre n°1 de l'équipement}}"></i></sup>
-								</label>
-								<div class="col-sm-6">
-									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="param1" placeholder="{{Paramètre n°1}}">
-								</div>
-							</div>
 							<legend><i class="fas fa-thermometer-half"></i> {{Bornes de température personnalisées}}</legend>
 							<div class="form-group">
 								<label class="col-sm-4 control-label">{{Température minimale}}

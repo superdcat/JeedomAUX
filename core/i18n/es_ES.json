@@ -264,7 +264,6 @@
         "AUTO privilégie le réseau local quand l'appareil y répond, sinon le cloud": "AUTO prioriza la red local cuando el dispositivo responde en ella, y si no, la nube",
         "401 - Accès non autorisé": "401 - Acceso no autorizado",
         "Gestion": "Gestión",
-        "Ajouter": "Añadir",
         "Configuration": "Configuración",
         "Scanner les climatiseurs": "Escanear los aires acondicionados",
         "Résultat": "Resultado",
@@ -276,7 +275,6 @@
         "État": "Estado",
         "Climatiseurs introuvables sur le compte": "Aires acondicionados no encontrados en la cuenta",
         "Mes smartclims": "Mis smartclims",
-        "Aucun équipement Template trouvé, cliquer sur \"Ajouter\" pour commencer": "No se ha encontrado ningún equipo Template, haga clic en \"Añadir\" para empezar",
         "Rechercher": "Buscar",
         "Equipement visible": "Equipo visible",
         "Equipement non visible": "Equipo no visible",
@@ -294,10 +292,6 @@
         "Options": "Opciones",
         "Activer": "Activar",
         "Visible": "Visible",
-        "Paramètres spécifiques": "Ajustes específicos",
-        "Nom du paramètre n°1": "Nombre del parámetro n.º 1",
-        "Renseignez le paramètre n°1 de l'équipement": "Introduzca el parámetro n.º 1 del equipo",
-        "Paramètre n°1": "Parámetro n.º 1",
         "Informations": "Información",
         "Description": "Descripción",
         "Ajouter une commande": "Añadir un comando",
@@ -344,7 +338,8 @@
         "Oscillations inversées": "Oscilación invertida",
         "Sens inversé pour ce transport": "Sentido invertido para este transporte",
         "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Marque esta opción si los comandos de oscilación producen el efecto contrario al anunciado",
-        "Temps réel": "Tiempo real"
+        "Temps réel": "Tiempo real",
+        "Aucun climatiseur trouvé, cliquez sur \"Scanner les climatiseurs\" pour commencer": "No se ha encontrado ningún aire acondicionado, haga clic en \"Escanear los aires acondicionados\" para empezar"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Acceso no autorizado"

@@ -264,7 +264,6 @@
         "AUTO privilégie le réseau local quand l'appareil y répond, sinon le cloud": "AUTO uses the local network when the device responds there, otherwise the cloud",
         "401 - Accès non autorisé": "401 - Unauthorized access",
         "Gestion": "Management",
-        "Ajouter": "Add",
         "Configuration": "Configuration",
         "Scanner les climatiseurs": "Scan for air conditioners",
         "Résultat": "Result",
@@ -276,7 +275,6 @@
         "État": "Status",
         "Climatiseurs introuvables sur le compte": "Air conditioners not found on the account",
         "Mes smartclims": "My smartclims",
-        "Aucun équipement Template trouvé, cliquer sur \"Ajouter\" pour commencer": "No Template device found, click \"Add\" to start",
         "Rechercher": "Search",
         "Equipement visible": "Visible device",
         "Equipement non visible": "Hidden device",
@@ -294,10 +292,6 @@
         "Options": "Options",
         "Activer": "Enable",
         "Visible": "Visible",
-        "Paramètres spécifiques": "Specific settings",
-        "Nom du paramètre n°1": "Name of parameter #1",
-        "Renseignez le paramètre n°1 de l'équipement": "Enter parameter #1 of the device",
-        "Paramètre n°1": "Parameter #1",
         "Informations": "Information",
         "Description": "Description",
         "Ajouter une commande": "Add a command",
@@ -344,7 +338,8 @@
         "Oscillations inversées": "Reversed swing",
         "Sens inversé pour ce transport": "Reversed direction for this transport",
         "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Check this if the swing commands produce the opposite effect of the one announced",
-        "Temps réel": "Real-time"
+        "Temps réel": "Real-time",
+        "Aucun climatiseur trouvé, cliquez sur \"Scanner les climatiseurs\" pour commencer": "No air conditioner found, click \"Scan for air conditioners\" to start"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

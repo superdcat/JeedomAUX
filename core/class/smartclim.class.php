@@ -109,6 +109,13 @@ class smartclim extends eqLogic {
   const WIDGET_TUILE = 'smartclim::climatiseur';
   const JETON_TUILE = 'tuile_smartclim';
 
+  // Marqueur d'unicité du masquage des commandes reprises par la tuile. Porté par la
+  // CONFIGURATION DE LA COMMANDE 'power', jamais par celle de l'équipement : un
+  // setConfiguration() sur l'eqLogic imposerait un save() -> postSave() ->
+  // creerCommandesAction() -> poserWidgetTuile(), donc une récursion. cmd::save()
+  // n'appelle pas eqLogic::postSave() : le marqueur y est inerte.
+  const CLE_MASQUAGE_TUILE = 'tuile_masquage_joue';
+
   // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) :
   // suffixes des deux commandes action de chaque fonction de confort — <concept>_on /
   // <concept>_off, dérivés mécaniquement de smartclimCapabilities::conceptsConfortLivres().
@@ -5444,45 +5451,93 @@ class smartclim extends eqLogic {
    * widget choisi à la main), puis masque les commandes reprises par la tuile (D3, § 6
    * de la spec technique UC01 du domaine post-mvp/06-ergonomie-jeedom).
    *
-   * ⚠️ Le masquage n'intervient QUE si le template a été posé À CE PASSAGE : c'est le
-   * template lui-même qui sert de marqueur d'unicité (aucune clé de configuration
-   * nouvelle, cf. § 3 D3 — un marqueur en configuration provoquerait une récursion via
-   * postSave()). Ne lève jamais.
+   * ⚠️ Le masquage est joué UNE SEULE FOIS par équipement, mais PAS seulement au passage
+   * qui pose le template : il l'est aussi quand la tuile est déjà en place sans avoir
+   * jamais masqué (widget sélectionné à la main par l'utilisateur, ou pose antérieure au
+   * correctif de templateLibre()). Son marqueur d'unicité est CLE_MASQUAGE_TUILE, posé
+   * sur la CONFIGURATION DE LA COMMANDE 'power' — cf. cette constante pour la raison pour
+   * laquelle il n'est pas sur l'équipement (récursion par postSave()). Ne lève jamais.
    *
    * @param array<string, cmd> $_existantes Commandes indexées par logicalId (getCmd(null, null)).
-   * @return bool Vrai si le template a été posé À CE PASSAGE.
+   * @return bool Vrai si le TEMPLATE a été posé à ce passage (le masquage, lui, peut avoir
+   *              été joué sans que le template ait bougé).
    */
   private function poserWidgetTuile(array $_existantes) {
     if (!isset($_existantes[smartclimCapabilities::CONCEPT_POWER])) {
       return false;
     }
     $power = $_existantes[smartclimCapabilities::CONCEPT_POWER];
-    if ($power->getType() !== 'info' || $power->getTemplate('dashboard', '') !== '') {
+    if ($power->getType() !== 'info') {
       return false;
     }
-    try {
-      $power->setTemplate('dashboard', self::WIDGET_TUILE);
-      $power->setTemplate('mobile', self::WIDGET_TUILE);
-      $power->save();
-    } catch (Throwable $t) {
-      log::add('smartclim', 'error', 'Pose du widget "climatiseur" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+    $template = (string) $power->getTemplate('dashboard', '');
+    if (!self::templateLibre($template) && $template !== self::WIDGET_TUILE) {
+      // Widget choisi à la main (le nôtre ou celui d'un autre plugin) : on ne touche ni
+      // au template, ni à la visibilité des commandes (AC9).
       return false;
     }
 
-    // masquerCommandesTuile() ne lève jamais (try/catch PAR commande, cf. son propre
-    // docblock) : pas de wrapping supplémentaire ici, même patron que l'appel à
-    // masquerCommandesModes() depuis appliquerCapacites().
-    $this->masquerCommandesTuile($_existantes);
-    return true;
+    $pose = false;
+    if (self::templateLibre($template)) {
+      try {
+        $power->setTemplate('dashboard', self::WIDGET_TUILE);
+        $power->setTemplate('mobile', self::WIDGET_TUILE);
+        $power->save();
+        $pose = true;
+      } catch (Throwable $t) {
+        log::add('smartclim', 'error', 'Pose du widget "climatiseur" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        return false;
+      }
+    }
+
+    // ⚠️ Le masquage n'est PLUS conditionné à la pose de CE passage : il est joué une
+    // fois dès que 'power' porte la tuile, y compris quand l'utilisateur l'a
+    // sélectionnée lui-même dans la liste des widgets — sans quoi il se retrouve avec
+    // la tuile ET les commandes qu'elle reprend, affichées en double. Le marqueur
+    // d'unicité est CLE_MASQUAGE_TUILE, porté par 'power' : le template ne pouvait plus
+    // jouer ce rôle dès lors qu'il peut être déjà posé à l'entrée.
+    if (!$power->getConfiguration(self::CLE_MASQUAGE_TUILE)) {
+      // masquerCommandesTuile() ne lève jamais (try/catch PAR commande, cf. son propre
+      // docblock) : pas de wrapping supplémentaire ici, même patron que l'appel à
+      // masquerCommandesModes() depuis appliquerCapacites().
+      $this->masquerCommandesTuile($_existantes);
+      try {
+        $power->setConfiguration(self::CLE_MASQUAGE_TUILE, 1);
+        $power->save();
+      } catch (Throwable $t) {
+        log::add('smartclim', 'warning', 'Marqueur de masquage de la tuile non enregistré (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . self::neutraliserPourLog($t->getMessage()));
+      }
+    }
+    return $pose;
+  }
+
+  /**
+   * Vrai si AUCUN widget n'est sélectionné sur une commande, c'est-à-dire si le template
+   * est libre et peut recevoir le nôtre (§ 8.2 de la spec technique UC06 du MVP).
+   *
+   * ⚠️ Le critère n'est PAS `=== ''` : le core n'enregistre pas nécessairement la chaîne
+   * vide pour « widget par défaut » (il y stocke une sentinelle, 'default'), et la garde
+   * historique empêchait alors TOUTE pose sur une commande déjà sauvegardée — cas de la
+   * tuile, posée sur 'power' que creerCommandesInfo() vient d'enregistrer, là où les
+   * widgets d'action sont posés sur un objet cmd neuf dont le display est encore vierge.
+   * Le critère retenu est la PRÉSENCE DU SÉPARATEUR '::' : tout widget réellement
+   * sélectionné, de plugin comme du core, s'écrit '<domaine>::<nom>' — toute valeur qui
+   * n'en porte pas est une sentinelle du core, jamais un choix de l'utilisateur.
+   *
+   * @param string $_template Valeur de cmd::getTemplate().
+   * @return bool
+   */
+  private static function templateLibre($_template) {
+    return strpos((string) $_template, '::') === false;
   }
 
   /**
    * Masque (isVisible = 0, JAMAIS de suppression) les commandes reprises par la tuile
    * « climatiseur » (§ 6 « Périmètre exact du masquage » de la spec technique UC01 du
    * domaine post-mvp/06-ergonomie-jeedom). Appelée UNIQUEMENT depuis poserWidgetTuile(),
-   * donc UNIQUEMENT au passage où le template vient d'être posé — un masquage rejoué à
-   * chaque cycle écraserait le choix d'un utilisateur qui aurait réaffiché la commande
-   * (bord assumé, D3).
+   * et UNE SEULE FOIS par équipement (marqueur CLE_MASQUAGE_TUILE sur la commande
+   * 'power') — un masquage rejoué à chaque cycle écraserait le choix d'un utilisateur qui
+   * aurait réaffiché la commande (bord assumé, D3).
    *
    * ⚠️ JAMAIS 'power' (hôte de la tuile), JAMAIS 'refresh' (bouton d'en-tête du core,
    * § 1.7), JAMAIS 'ambient_temp'/'target_temp' (D9, accès aux graphiques historisés), et
@@ -5556,7 +5611,7 @@ class smartclim extends eqLogic {
           } catch (Throwable $t) {
             log::add('smartclim', 'error', 'Réalignement des bornes de "' . $logicalId . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
           }
-        } elseif ($existantes[$logicalId]->getTemplate('dashboard', '') === '') {
+        } elseif (self::templateLibre($existantes[$logicalId]->getTemplate('dashboard', ''))) {
           // Repose le widget si l'utilisateur est explicitement revenu au widget par
           // défaut du core (§ 8.2 de la spec technique) : pose idempotente, jamais
           // d'écrasement d'un template déjà posé (le nôtre ou celui choisi à la main).
@@ -5599,7 +5654,7 @@ class smartclim extends eqLogic {
           $cmd->setConfiguration('maxValue', $bornes['max']);
           $cmd->setConfiguration('step', $bornes['pas']);
           $cmd->setDisplay('parameters', array_merge((array) $cmd->getDisplay('parameters'), array('step' => $bornes['pas'])));
-        } elseif ($cmd->getTemplate('dashboard', '') === '') {
+        } elseif (self::templateLibre($cmd->getTemplate('dashboard', ''))) {
           // Pose idempotente (§ 8.2 de la spec technique) : n'écrase jamais un widget
           // choisi à la main.
           $cmd->setTemplate('dashboard', 'smartclim::etat');

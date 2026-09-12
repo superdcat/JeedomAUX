@@ -575,12 +575,26 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   une erreur.
   Côté `smartclim.class.php`, la même UC ajoute `poserWidgetTuile()` / `masquerCommandesTuile()` et
   l'override `smartclimCmd::toHtml()`.
-  ⚠️ **`masquerCommandesTuile()` ne s'exécute QUE dans la branche où `poserWidgetTuile()` vient de poser
-  le template** : c'est cela, et rien d'autre, qui borne l'écriture à **un seul passage par équipement** —
-  `creerCommandesAction()` étant appelée par `postSave()` **et** par `appliquerEtat()`, donc à chaque
-  cycle de lecture. Le **marqueur d'unicité est le template lui-même** : mémoriser « déjà masqué » en
-  configuration d'équipement provoquerait `save()` → `postSave()` → `creerCommandesAction()` →
-  `poserWidgetTuile()`, donc une **récursion**.
+  ⚠️ **`masquerCommandesTuile()` est joué UNE SEULE FOIS par équipement, et son marqueur d'unicité
+  est `smartclim::CLE_MASQUAGE_TUILE` posé sur la CONFIGURATION DE LA COMMANDE `power`** — il le fallait
+  bien, `creerCommandesAction()` étant appelée par `postSave()` **et** par `appliquerEtat()`, donc à
+  chaque cycle de lecture, et un masquage rejoué écraserait le choix d'un utilisateur ayant réaffiché une
+  commande. ⚠️ **Sur la COMMANDE, jamais sur l'équipement** : un `setConfiguration()` sur l'eqLogic
+  imposerait `save()` → `postSave()` → `creerCommandesAction()` → `poserWidgetTuile()`, donc une
+  **récursion** ; `cmd::save()` n'appelle pas `eqLogic::postSave()`.
+  ⚠️ **Le template ne peut PLUS tenir ce rôle de marqueur** (il le tenait à la livraison d'UC01, corrigé
+  en recette le 2026-09-12) : le masquage doit aussi être joué quand `power` porte **déjà** la tuile sans
+  avoir jamais masqué — utilisateur l'ayant sélectionnée à la main, ou pose antérieure au correctif
+  ci-dessous. Sans cela il obtient la tuile **et** les commandes qu'elle reprend, affichées en double.
+  ⚠️⚠️ **`smartclim::templateLibre()` est LE prédicat « aucun widget choisi », et le critère n'est PAS
+  `=== ''`** : la garde d'origine n'a **jamais** posé la tuile en automatique (symptôme de recette :
+  widget à forcer à la main sur chaque équipement). Motif — `power` est la **seule** commande sur
+  laquelle le plugin pose un widget **après** son `save()` (`creerCommandesInfo()`), là où les widgets
+  d'action sont posés sur un objet `cmd` **neuf** dont le `display` est encore vierge ; le core y
+  enregistre une **sentinelle** (`default`), que `=== ''` lit comme « widget choisi par l'utilisateur ».
+  Le critère retenu est donc la **présence de `::`** : tout widget réellement sélectionné, de plugin
+  comme du core, s'écrit `<domaine>::<nom>`. Les deux poses de `smartclim::etat` passent par le même
+  prédicat, pour ne pas laisser subsister deux notions de « template vide ».
   ⚠️ **`power` et `refresh` ne sont JAMAIS masquées** (la première héberge la tuile, la seconde est le
   bouton d'en-tête du core), **ni `ambient_temp` / `target_temp`** — décision de recette : elles sont
   historisées, et les masquer ferait disparaître l'accès en un clic à leurs graphiques, que la tuile ne
@@ -916,6 +930,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   La tuile lit donc le `#collectDate#` de `power` — et **pas** celui d'`online` ou de `transport`, que
   `basculerHorsLigne()` et `appliquerEtat()` réécrivent même quand l'état de `power` n'a pas été relu.
 - **`desktop/php/smartclim.php`** — page de configuration admin (HTML), protégée par `isConnect('admin')`.
+  ⚠️ **Aucun bouton « Ajouter »** (retiré en recette le 2026-09-12, avec le champ `param1` du squelette) :
+  un climatiseur ne se crée **que** par découverte — scan cloud ou diffusion LAN —, un équipement saisi de
+  zéro n'ayant ni identifiant de transport ni profil de capacités, donc **aucune commande**. Corollaire
+  assumé : un appareil absent des deux clouds **et** injoignable par diffusion (VLAN, réseau segmenté)
+  n'est plus créable du tout — `lan_ip` / `lan_mac` restent un secours pour un équipement **déjà
+  découvert**, pas un moyen de création. Ne pas remettre ce bouton sans rouvrir cet arbitrage.
   Liaison au modèle via `data-l1key`/`data-l2key`. i18n via `{{...}}`. Se termine en incluant le JS du
   plugin puis le JS générique de page plugin **fourni par le core**
   (`include_file('core', 'plugin.template', 'js')` → asset du core, **à ne pas renommer/modifier** : le

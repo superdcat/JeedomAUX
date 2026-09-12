@@ -264,7 +264,6 @@
         "AUTO privilégie le réseau local quand l'appareil y répond, sinon le cloud": "AUTO bevorzugt das lokale Netzwerk, wenn das Gerät dort antwortet, sonst die Cloud",
         "401 - Accès non autorisé": "401 - Nicht autorisierter Zugriff",
         "Gestion": "Verwaltung",
-        "Ajouter": "Hinzufügen",
         "Configuration": "Konfiguration",
         "Scanner les climatiseurs": "Klimaanlagen scannen",
         "Résultat": "Ergebnis",
@@ -276,7 +275,6 @@
         "État": "Status",
         "Climatiseurs introuvables sur le compte": "Auf dem Konto nicht gefundene Klimaanlagen",
         "Mes smartclims": "Meine Smartclims",
-        "Aucun équipement Template trouvé, cliquer sur \"Ajouter\" pour commencer": "Kein Template-Gerät gefunden, klicken Sie auf „Hinzufügen“, um zu beginnen",
         "Rechercher": "Suchen",
         "Equipement visible": "Sichtbares Gerät",
         "Equipement non visible": "Nicht sichtbares Gerät",
@@ -294,10 +292,6 @@
         "Options": "Optionen",
         "Activer": "Aktivieren",
         "Visible": "Sichtbar",
-        "Paramètres spécifiques": "Spezifische Einstellungen",
-        "Nom du paramètre n°1": "Name von Parameter Nr. 1",
-        "Renseignez le paramètre n°1 de l'équipement": "Geben Sie Parameter Nr. 1 des Geräts ein",
-        "Paramètre n°1": "Parameter Nr. 1",
         "Informations": "Informationen",
         "Description": "Beschreibung",
         "Ajouter une commande": "Befehl hinzufügen",
@@ -344,7 +338,8 @@
         "Oscillations inversées": "Umgekehrte Schwenkbewegung",
         "Sens inversé pour ce transport": "Umgekehrte Richtung für diesen Transport",
         "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Aktivieren, wenn die Schwenkbefehle die entgegengesetzte Wirkung der angekündigten erzielen",
-        "Temps réel": "Echtzeit"
+        "Temps réel": "Echtzeit",
+        "Aucun climatiseur trouvé, cliquez sur \"Scanner les climatiseurs\" pour commencer": "Keine Klimaanlage gefunden, klicken Sie auf ‚Klimaanlagen scannen‘, um zu beginnen"
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Nicht autorisierter Zugriff"

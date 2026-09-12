@@ -237,9 +237,21 @@ n'existe dans les trois `core/i18n/*.json`.
   voit, déclenchée par une tâche de fond. Elle est **bornée par construction à un seul passage par
   équipement** (elle vit dans la branche « le template vient d'être posé », et un template ne reste vide
   qu'une fois) et n'ajoute **aucun** `save()` d'équipement.
-  **Écarté d'emblée** : mémoriser « déjà masqué » en configuration d'équipement — le `setConfiguration()`
-  + `save()` déclencherait `postSave()` → `creerCommandesAction()` → `poserWidgetTuile()` → **récursion**,
-  en plus de violer l'invariant. **Le marqueur d'unicité est le template lui-même.**
+  **Écarté d'emblée** : mémoriser « déjà masqué » en configuration d'**équipement** — le
+  `setConfiguration()` + `save()` déclencherait `postSave()` → `creerCommandesAction()` →
+  `poserWidgetTuile()` → **récursion**, en plus de violer l'invariant. **Le marqueur d'unicité est le
+  template lui-même.**
+
+  > ⚠️ **CORRIGÉ EN RECETTE LE 2026-09-12 — ce raisonnement était juste sur la récursion et faux sur la
+  > conclusion.** Le marqueur est désormais `smartclim::CLE_MASQUAGE_TUILE`, posé sur la configuration de
+  > la **commande** `power` : `cmd::save()` n'appelle pas `eqLogic::postSave()`, il n'y a donc aucune
+  > récursion — l'emplacement « configuration d'équipement » n'était pas le *seul* disponible, il était
+  > seulement le seul examiné. Deux faits de recette l'ont imposé : (1) la garde `getTemplate() === ''`
+  > n'a **jamais** posé la tuile en automatique (le core enregistre une sentinelle `default` sur une
+  > commande déjà sauvegardée — cf. `smartclim::templateLibre()`), si bien que l'utilisateur devait
+  > sélectionner le widget à la main sur chaque équipement ; (2) dans ce cas le template est **déjà** posé
+  > à l'entrée de `poserWidgetTuile()`, donc il ne peut plus signifier « masquage pas encore joué », et
+  > l'utilisateur se retrouvait avec la tuile **et** les commandes qu'elle reprend.
   **Écarté aussi** : tout mettre dans `postSave()` seul — cela ressusciterait la panne silencieuse que
   `CLAUDE.md` documente deux fois (UC05 et UC06 : un scan qui ne change rien n'émet aucun `save()`, donc
   aucun `postSave()`, donc rien n'apparaîtrait sur un parc stable).
@@ -546,9 +558,10 @@ l'élargissement de visibilité plutôt qu'une redéclaration), et les **noms de
 - **Hypothèse i18n des templates non mesurée** (§ 2.2) : `.memory/analyse/jeedom-widgets-commandes.md`
   § 1 reste marqué « à vérifier » jusqu'au test empirique décrit. La décision D4 n'en dépend pas.
 - **Bord de re-masquage** (D3) : un retour volontaire au widget par défaut du core sur `power` fait
-  re-poser la tuile et re-masquer les commandes au cycle suivant. Accepté avec l'utilisateur le
-  2026-09-12 ; un correctif propre exigerait un marqueur d'unicité autre que le template, or le seul
-  emplacement disponible (configuration d'équipement) provoque une récursion.
+  re-poser la tuile au cycle suivant. Accepté avec l'utilisateur le 2026-09-12. ⚠️ **Le re-masquage,
+  lui, n'a plus lieu** depuis le correctif du même jour (cf. § D3) : `CLE_MASQUAGE_TUILE` sur la commande
+  `power` borne le masquage à un seul passage pour la vie de l'équipement, quel que soit le nombre de
+  poses de template. Les commandes réaffichées à la main le restent.
 - **`version` et `eqLogic.id` de la charge ne sont lus par aucun des deux templates** (`minor` de review,
   **documenté et conservé**) : ils anticipent l'UC03 de ce domaine (page-panneau multi-climatiseurs), qui
   aura besoin de distinguer les tuiles entre elles. Le commentaire de `chargeTuile()` le dit

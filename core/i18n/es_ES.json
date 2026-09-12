@@ -358,5 +358,9 @@
         "États-Unis": "Estados Unidos",
         "Chine": "China",
         "Russie": "Rusia"
+    },
+    "plugins/smartclim/core/class/smartclimWidget.class.php": {
+        "Diminuer la consigne": "Disminuir la consigna",
+        "Augmenter la consigne": "Aumentar la consigna"
     }
 }

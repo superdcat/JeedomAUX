@@ -560,6 +560,41 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `state == 'ok'`, et `state` dérive du fichier PID — or `systemd-tmpfiles-clean` purge `/tmp` des fichiers
   non touchés depuis **10 jours**. Sans ce repli, un démon vivant depuis plus longtemps devient un
   **orphelin** que rien ne sait plus arrêter.
+- **`core/class/smartclimWidget.class.php`** — **existe** depuis l'UC01 du domaine post-MVP 06. Assemble
+  la **charge utile de la tuile** `smartclim::climatiseur` (ids, libellés **déjà traduits**, valeurs
+  courantes, bornes de consigne) et porte la table d'icônes FontAwesome par mode. Même statut que
+  `smartclimDiagnostic` : **mise en forme pure** — aucune E/S, aucun `config::`, aucun `cache::`, aucun
+  réseau, aucun `save()`, aucun offset de protocole.
+  ⚠️ **`valeurInfo()` teste `getType() === 'info'` AVANT tout `execCmd()`, et c'est une garde
+  fonctionnelle, pas une élégance** : un `execCmd()` sur une commande **action** actionne le matériel — il
+  allumerait le climatiseur au simple affichage d'un dashboard.
+  ⚠️ **Modes et vitesses sont dérivés des commandes d'action RÉELLEMENT créées**, jamais d'un catalogue
+  recopié : c'est ce qui fait que la tuile n'affiche que les capacités du profil **par construction**, sans
+  second filtre à maintenir. Et les icônes vivent **ici**, jamais dans `smartclimCapabilities` (aucune
+  notion de présentation dans la table de capacités) ; un code inconnu ne donne **pas d'icône**, jamais
+  une erreur.
+  Côté `smartclim.class.php`, la même UC ajoute `poserWidgetTuile()` / `masquerCommandesTuile()` et
+  l'override `smartclimCmd::toHtml()`.
+  ⚠️ **`masquerCommandesTuile()` ne s'exécute QUE dans la branche où `poserWidgetTuile()` vient de poser
+  le template** : c'est cela, et rien d'autre, qui borne l'écriture à **un seul passage par équipement** —
+  `creerCommandesAction()` étant appelée par `postSave()` **et** par `appliquerEtat()`, donc à chaque
+  cycle de lecture. Le **marqueur d'unicité est le template lui-même** : mémoriser « déjà masqué » en
+  configuration d'équipement provoquerait `save()` → `postSave()` → `creerCommandesAction()` →
+  `poserWidgetTuile()`, donc une **récursion**.
+  ⚠️ **`power` et `refresh` ne sont JAMAIS masquées** (la première héberge la tuile, la seconde est le
+  bouton d'en-tête du core), **ni `ambient_temp` / `target_temp`** — décision de recette : elles sont
+  historisées, et les masquer ferait disparaître l'accès en un clic à leurs graphiques, que la tuile ne
+  peut pas restituer (le clic `.history` se résout sur le `data-cmd_id` du conteneur, donc sur `power`).
+  ⚠️ **`smartclimCmd::toHtml()` est un OVERRIDE d'une méthode publique du core, pas un point d'extension** :
+  il n'est légitimé que par `cmd::cast()`, qui instancie toute commande d'un équipement `smartclim` en
+  `smartclimCmd`. Sa signature doit donc recopier **exactement** `($_version = 'dashboard',
+  $_options = '')` — un core futur ajoutant un paramètre rendrait la déclaration incompatible, donc
+  `smartclimCmd` introuvable, donc **tout le plugin hors service** (même famille de panne que l'oubli
+  d'autoload). À re-vérifier à chaque montée de `compatibility` dans `info.json`. ⚠️ Ne pas le confondre
+  avec le stub **commenté** `public function toHtml($_version = 'dashboard') {}` du squelette, qui vit dans
+  la classe **`smartclim` (eqLogic)** et n'a **qu'un** paramètre : le recopier donnerait la mauvaise classe
+  et la mauvaise signature. Il ne lève **jamais** (`try/catch (Throwable)` → `parent::toHtml()`) : un jet
+  ici casserait le rendu du dashboard.
 - **`core/php/jeeSmartclim.php`** — **existe** depuis l'UC02 du domaine post-MVP 05. Point d'entrée du
   **rappel HTTP du démon vers Jeedom** (sens démon → PHP du pont), gardé par
   `jeedom::apiAccess(init('apikey'), 'smartclim')` — **pas** par `isConnect` : il est appelé par un
@@ -846,6 +881,40 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `core/template/` : c'est le **nom standard Jeedom** du dossier de widgets, il ne se renomme pas avec l'id
   du plugin. Un widget se pose sur une commande via `setTemplate('dashboard'|'mobile', 'smartclim::<nom>')`.
   Détail : `.memory/analyse/jeedom-widgets-commandes.md`.
+  **Deux widgets sont livrés** : `cmd.action.other.etat.html` (`smartclim::etat`, UC06 du MVP — le bouton
+  qui reflète l'état courant) et, depuis l'UC01 du domaine post-MVP 06,
+  `cmd.info.binary.climatiseur.html` (`smartclim::climatiseur`) — la **tuile unique** posée sur la
+  commande **info `power`**.
+  ⚠️ **Les deux fichiers d'une paire sont identiques OCTET À OCTET**, l'adaptation d'écran se faisant par
+  CSS et **jamais** par une branche JS : `domUtils.issetWidgetOptParam()` (dashboard) et
+  `$.issetWidgetOptParam()` (mobile) sont **deux API différentes**, n'en utiliser aucune est ce qui rend
+  l'égalité des deux fichiers possible. Une correction faite dans un seul des deux produit une divergence
+  **invisible en CI** — la vérifier par `diff`.
+  ⚠️ **Aucun `{{…}}` dans un template de widget**, pas même en commentaire : `cmd::toHtml()` termine par
+  `translate::exec($template, 'core/template/widgets.html')` et `getWidgetTemplateCode()` renvoie
+  `isCoreWidget => true` **y compris pour un fichier de plugin**, si bien que les entrées
+  `plugins/smartclim/core/template/…` des `core/i18n/*.json` ne seraient jamais lues. Toutes les chaînes
+  visibles sont donc **injectées par PHP**, déjà traduites par `__()` depuis un `.class.php`. ⚠️ Cette
+  déduction est **lue dans le core, pas mesurée** : elle reste marquée « à confirmer » (protocole au § 2.2
+  de la spec technique d'UC01 du domaine 06) — mais la règle, elle, s'applique dès maintenant.
+  ⚠️ **Une tuile qui agrège N commandes ne peut pas se contenter des jetons natifs** : `cmd::toHtml()`
+  n'expose **ni `configuration`, ni aucune AUTRE commande** que celle qui se rend. D'où le mécanisme
+  d'UC01 du domaine 06 — `smartclimCmd::toHtml()` assemble une charge et la passe par le **canal
+  `$_options`**, que `eqLogic::toHtml()` laisse toujours vide (`$cmd->toHtml($_version, '')`) : chaque clé
+  y devient un jeton `#clé#`. La charge est en **base64** parce que son alphabet est structurellement
+  dépourvu de `#`, `{{`, `'` et `<` — c'est ce qui la rend inoffensive dans le HTML rendu, **et non** un
+  filtrage. Côté client, **jamais d'`innerHTML`** sur une donnée de la charge : `textContent` / `.text()`
+  uniquement (un nom de commande est modifiable par l'utilisateur, et `cleanComponanteName()` du core ne
+  retire ni `<` ni `>`).
+  ⚠️ **Le bouton « Rafraîchir » ne peut pas héberger un widget et ne doit jamais être masqué** :
+  `eqLogic::preToHtml()` cherche `getCmd('action', 'refresh')`, le place en `#refresh_id#` dans l'en-tête
+  de l'équipement **et l'exclut du corps** — notre `CMD_RAFRAICHIR` en porte le `logicalId`.
+  ⚠️ **La fraîcheur d'un état se lit sur `collectDate`, jamais sur `valueDate`** :
+  `eqLogic::checkAndUpdateCmd()` réécrit `collectDate` **à chaque cycle** même sans changement, tandis que
+  `valueDate` (donc `CMD_DERNIERE_MAJ`, alimentée sous `if ($change)`) date le dernier **changement**. Les
+  confondre fait afficher « il y a 6 heures » sur un appareil stable que la scrutation vient de confirmer.
+  La tuile lit donc le `#collectDate#` de `power` — et **pas** celui d'`online` ou de `transport`, que
+  `basculerHorsLigne()` et `appliquerEtat()` réécrivent même quand l'état de `power` n'a pas été relu.
 - **`desktop/php/smartclim.php`** — page de configuration admin (HTML), protégée par `isConnect('admin')`.
   Liaison au modèle via `data-l1key`/`data-l2key`. i18n via `{{...}}`. Se termine en incluant le JS du
   plugin puis le JS générique de page plugin **fourni par le core**
@@ -1331,7 +1400,8 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   sont ainsi disponibles dès que `smartclim`/`smartclimCmd` est résolue, donc depuis **tous** les points
   d'entrée (`core/ajax/*.ajax.php`, crons, `desktop/php/*.php`, `install.php`). Chaque nouvelle classe
   (`smartclimCapabilities`, `smartclimFrame`, `smartclimTransport`, `smartclimAuxCloudApi`,
-  `smartclimBroadlinkLan`) **doit** être ajoutée à cette liste — l'oublier ne casse ni `php -l` ni la CI.
+  `smartclimBroadlinkLan`, `smartclimDiagnostic`, `smartclimDemon`, `smartclimWidget`) **doit** être
+  ajoutée à cette liste — l'oublier ne casse ni `php -l` ni la CI.
 - **Aucune méta-séquence littérale dans un commentaire ou une chaîne (fatale, et invisible à la
   relecture)** — un délimiteur écrit au milieu d'une phrase n'est pas du texte : le parseur le prend pour
   lui. **Cas vécu** (recette UC01) : `mb_*/intl` dans un docblock de `smartclimAuxHomeApi`. Le `*/` du

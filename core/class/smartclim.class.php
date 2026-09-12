@@ -101,6 +101,14 @@ class smartclim extends eqLogic {
   const PREFIXE_CMD_MODE = 'mode_';
   const PREFIXE_CMD_VITESSE = 'fan_';
 
+  // UC01 du domaine post-mvp/06-ergonomie-jeedom (§ 6 de la spec technique) : widget de
+  // tuile posé sur la commande info 'power'. WIDGET_TUILE est la valeur passée à
+  // setTemplate() ; JETON_TUILE est le nom (SANS le '#') du jeton de substitution
+  // consommé par smartclimCmd::toHtml() -> cmd::toHtml(), donc lu côté template comme
+  // '#tuile_smartclim#'.
+  const WIDGET_TUILE = 'smartclim::climatiseur';
+  const JETON_TUILE = 'tuile_smartclim';
+
   // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) :
   // suffixes des deux commandes action de chaque fonction de confort — <concept>_on /
   // <concept>_off, dérivés mécaniquement de smartclimCapabilities::conceptsConfortLivres().
@@ -2961,12 +2969,16 @@ class smartclim extends eqLogic {
   }
 
   /**
-   * Libellé traduit de l'état en ligne/hors ligne d'un appareil (AC8).
+   * Libellé traduit de l'état en ligne/hors ligne d'un appareil (AC8). Visibilité élargie
+   * à public depuis l'UC01 du domaine post-mvp/06-ergonomie-jeedom (§ 6 de sa spec
+   * technique) : réutilisée par smartclimWidget::chargeTuile() pour le libellé
+   * 'hors_ligne' de la tuile — pas de redéclaration de la même chaîne dans une autre
+   * classe.
    *
    * @param bool $_enLigne
    * @return string
    */
-  private static function libelleEnLigne($_enLigne) {
+  public static function libelleEnLigne($_enLigne) {
     return $_enLigne ? __('En ligne', __FILE__) : __('Hors ligne', __FILE__);
   }
 
@@ -5427,6 +5439,97 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Pose le widget de tuile « climatiseur » sur la commande info 'power', SI ET
+   * SEULEMENT SI aucun template n'est encore posé sur elle (AC9 : ne jamais écraser un
+   * widget choisi à la main), puis masque les commandes reprises par la tuile (D3, § 6
+   * de la spec technique UC01 du domaine post-mvp/06-ergonomie-jeedom).
+   *
+   * ⚠️ Le masquage n'intervient QUE si le template a été posé À CE PASSAGE : c'est le
+   * template lui-même qui sert de marqueur d'unicité (aucune clé de configuration
+   * nouvelle, cf. § 3 D3 — un marqueur en configuration provoquerait une récursion via
+   * postSave()). Ne lève jamais.
+   *
+   * @param array<string, cmd> $_existantes Commandes indexées par logicalId (getCmd(null, null)).
+   * @return bool Vrai si le template a été posé À CE PASSAGE.
+   */
+  private function poserWidgetTuile(array $_existantes) {
+    if (!isset($_existantes[smartclimCapabilities::CONCEPT_POWER])) {
+      return false;
+    }
+    $power = $_existantes[smartclimCapabilities::CONCEPT_POWER];
+    if ($power->getType() !== 'info' || $power->getTemplate('dashboard', '') !== '') {
+      return false;
+    }
+    try {
+      $power->setTemplate('dashboard', self::WIDGET_TUILE);
+      $power->setTemplate('mobile', self::WIDGET_TUILE);
+      $power->save();
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Pose du widget "climatiseur" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return false;
+    }
+
+    // masquerCommandesTuile() ne lève jamais (try/catch PAR commande, cf. son propre
+    // docblock) : pas de wrapping supplémentaire ici, même patron que l'appel à
+    // masquerCommandesModes() depuis appliquerCapacites().
+    $this->masquerCommandesTuile($_existantes);
+    return true;
+  }
+
+  /**
+   * Masque (isVisible = 0, JAMAIS de suppression) les commandes reprises par la tuile
+   * « climatiseur » (§ 6 « Périmètre exact du masquage » de la spec technique UC01 du
+   * domaine post-mvp/06-ergonomie-jeedom). Appelée UNIQUEMENT depuis poserWidgetTuile(),
+   * donc UNIQUEMENT au passage où le template vient d'être posé — un masquage rejoué à
+   * chaque cycle écraserait le choix d'un utilisateur qui aurait réaffiché la commande
+   * (bord assumé, D3).
+   *
+   * ⚠️ JAMAIS 'power' (hôte de la tuile), JAMAIS 'refresh' (bouton d'en-tête du core,
+   * § 1.7), JAMAIS 'ambient_temp'/'target_temp' (D9, accès aux graphiques historisés), et
+   * jamais les concepts confort/oscillation/protection (hors périmètre de cette UC).
+   *
+   * @param array<string, cmd> $_existantes Commandes indexées par logicalId.
+   * @return int Nombre de commandes masquées.
+   */
+  private function masquerCommandesTuile(array $_existantes) {
+    $cibles = array(
+      smartclimCapabilities::CONCEPT_ONLINE => true,
+      smartclimCapabilities::CONCEPT_MODE => true,
+      smartclimCapabilities::CONCEPT_FAN_SPEED => true,
+      self::CMD_TRANSPORT => true,
+      self::CMD_DERNIERE_MAJ => true,
+      self::CMD_ON => true,
+      self::CMD_OFF => true,
+      self::CMD_CONSIGNE => true,
+    );
+    foreach ($_existantes as $logicalId => $cmd) {
+      if (strpos($logicalId, self::PREFIXE_CMD_MODE) === 0 || strpos($logicalId, self::PREFIXE_CMD_VITESSE) === 0) {
+        $cibles[$logicalId] = true;
+      }
+    }
+
+    $masquees = 0;
+    foreach (array_keys($cibles) as $logicalId) {
+      if (!isset($_existantes[$logicalId])) {
+        continue;
+      }
+      $cmd = $_existantes[$logicalId];
+      if (!$cmd->getIsVisible()) {
+        continue;
+      }
+      try {
+        $cmd->setIsVisible(0);
+        $cmd->save();
+        $masquees++;
+        log::add('smartclim', 'info', 'Commande masquée (reprise par la tuile "climatiseur") : ' . $logicalId . ' sur ' . self::neutraliserPourLog($this->getHumanName()));
+      } catch (Throwable $t) {
+        log::add('smartclim', 'warning', 'Masquage impossible pour ' . $logicalId . ' (tuile "climatiseur") : ' . self::neutraliserPourLog($t->getMessage()));
+      }
+    }
+    return $masquees;
+  }
+
+  /**
    * Crée les commandes action MANQUANTES, pose le widget si aucun n'est choisi, et
    * réaligne minValue/maxValue/step de set_target_temp (UC06, § 4.1/5.3/8 de la spec
    * technique). Appelée APRÈS creerCommandesInfo() (besoin des id d'info pour
@@ -5514,10 +5617,21 @@ class smartclim extends eqLogic {
 
         $cmd->save();
         $crees++;
+        // UC01 du domaine post-mvp/06-ergonomie-jeedom (§ 6 de la spec technique) : sans
+        // cette ligne, une action créée DANS CETTE MÊME passe échapperait au masquage de
+        // poserWidgetTuile() ci-dessous (elle n'était pas dans $existantes au moment où
+        // la boucle a commencé).
+        $existantes[$logicalId] = $cmd;
       } catch (Throwable $t) {
         log::add('smartclim', 'error', 'Création de la commande action "' . $logicalId . '" impossible (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
       }
     }
+
+    // UC01 du domaine post-mvp/06-ergonomie-jeedom (§ 3 D3 de la spec technique) : posée
+    // ICI pour être atteinte à la fois par postSave() et par appliquerEtat() (§ "Pourquoi
+    // là" de la spec technique — même mécanisme qu'UC06 pour lier on/off à l'info power).
+    $this->poserWidgetTuile($existantes);
+
     return $crees;
   }
 
@@ -7275,6 +7389,51 @@ class smartclimCmd extends cmd {
       return;
     }
     $eqLogic->executerCommandeAction($this->getLogicalId(), $_options);
+  }
+
+  /**
+   * Rendu HTML de la commande (UC01 du domaine post-mvp/06-ergonomie-jeedom, §§ 1.4/6/9
+   * de la spec technique). ⚠️⚠️ SIGNATURE RECOPIÉE À L'IDENTIQUE de cmd::toHtml() du
+   * core Jeedom (branche V4-stable, relue le 2026-09-12) — ce n'est PAS un point
+   * d'extension documenté (contrairement à formatValueWidget()/preToHtml()/
+   * dontRemoveCmd()), c'est un OVERRIDE d'une méthode PUBLIQUE du core, atteint par
+   * polymorphisme via cmd::cast() (toute commande d'un équipement smartclim est
+   * instanciée en smartclimCmd). Toute divergence de signature avec une montée future du
+   * core (paramètre ajouté) casse le CHARGEMENT DE LA CLASSE ENTIÈRE — donc TOUT le
+   * plugin — sans qu'aucune erreur ne soit visible à `php -l` ni en CI (R1 de la spec
+   * technique). Forme STRICTE retenue (D8) : à re-vérifier à chaque montée de
+   * 'compatibility' dans plugin_info/info.json.
+   *
+   * Sur la commande info 'power' porteuse du widget de tuile smartclim::WIDGET_TUILE,
+   * injecte la charge de la tuile (smartclimWidget::optionsTuile()) dans $_options puis
+   * délègue au parent ; dans tous les autres cas, délègue telle quelle. try/catch
+   * (Throwable) : toute erreur d'assemblage retombe sur le rendu par défaut du core, le
+   * dashboard ne casse jamais.
+   *
+   * @param string $_version
+   * @param mixed $_options
+   * @return string
+   */
+  public function toHtml($_version = 'dashboard', $_options = '') {
+    // On aliase POUR LE TEST de template ci-dessous ; $_version est transmis NON
+    // MODIFIÉ à parent::toHtml(), qui ré-aliase lui-même (§ 6 de la spec technique :
+    // l'aliasing est idempotent, mais ne pas pré-transformer un argument que le core
+    // transforme déjà est la règle sûre).
+    $version = jeedom::versionAlias($_version);
+    if ($_options === ''
+        && $this->getType() === 'info'
+        && $this->getTemplate($version, '') === smartclim::WIDGET_TUILE
+        && ($eqLogic = $this->getEqLogic()) instanceof smartclim) {
+      try {
+        $charge = smartclimWidget::optionsTuile($eqLogic);
+        if ($charge !== '') {
+          return parent::toHtml($_version, $charge);
+        }
+      } catch (Throwable $t) {
+        log::add('smartclim', 'error', 'Assemblage de la tuile "climatiseur" impossible (équipement "' . smartclim::neutraliserPourLog($eqLogic->getHumanName()) . '") : ' . get_class($t) . ' : ' . smartclim::neutraliserPourLog($t->getMessage()));
+      }
+    }
+    return parent::toHtml($_version, $_options);
   }
 
   /*     * **********************Getteur Setteur*************************** */

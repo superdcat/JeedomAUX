@@ -58,3 +58,4 @@ require_once __DIR__ . '/../class/smartclimBroadlinkLan.class.php';
 require_once __DIR__ . '/../class/smartclimTransport.class.php';
 require_once __DIR__ . '/../class/smartclimDiagnostic.class.php';
 require_once __DIR__ . '/../class/smartclimDemon.class.php';
+require_once __DIR__ . '/../class/smartclimWidget.class.php';

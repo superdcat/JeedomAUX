@@ -15,6 +15,22 @@
 - **Dashboard et mobile sont deux fichiers séparés** (souvent copies identiques → l'en-tête HTML rappelle
   de les synchroniser). **i18n : une entrée de chemin par fichier** (`plugins/<id>/core/template/
   dashboard/<f>` ET `.../mobile/<f>`), même pour des chaînes identiques.
+- ⚠️⚠️ **L'i18n d'un template de widget de plugin est DOUTEUSE — hypothèse non mesurée (2026-09-12).**
+  Le point ci-dessus décrit ce qu'on **croyait**. Lecture du core (`V4-stable`) : `cmd::toHtml()` termine
+  par `if ($isCorewidget) return translate::exec($template, 'core/template/widgets.html');`, et
+  `getWidgetTemplateCode()` renvoie `'isCoreWidget' => true` **y compris pour un fichier de plugin**
+  (seule la branche `customtemp::` renvoie `false`). `translate::exec()` résoudrait alors le domaine par
+  `getPluginFromName('core/template/widgets.html')` = **`core`**, si bien que les entrées
+  `plugins/<id>/core/template/…` des `core/i18n/*.json` **ne seraient jamais lues** : en `fr_FR` les
+  `{{…}}` sont simplement dépouillés, dans les autres langues la chaîne source serait renvoyée telle
+  quelle. **C'est une déduction de lecture, PAS un fait mesuré** — ne pas la propager comme acquise.
+  **Protocole pour trancher** : poser un `{{Test i18n}}` littéral dans un template `cmd.*` de plugin,
+  ajouter sa traduction dans `core/i18n/en_US.json` sous le chemin du fichier, basculer l'interface en
+  anglais, observer. Tant que ce test n'est pas joué, cette section reste **à vérifier**.
+  ⚠️ **Conséquence pratique, elle, applicable dès maintenant** : ne mettre **aucun `{{…}}`** dans un
+  template de widget et **injecter les chaînes déjà traduites** depuis un `.class.php` (domaine i18n dont
+  le fonctionnement est, lui, prouvé). C'est ce que fait `smartclim::climatiseur` (UC01 du domaine
+  post-MVP 06), et les deux widgets du plugin sont dépourvus de `{{…}}`.
 
 ## 2. Tokens disponibles dans le HTML (remplacés par `cmd::toHtml()`)
 
@@ -44,6 +60,17 @@ plusieurs commandes info ensemble.
 - **Corollaire clé : masqué ≠ non-exécutable.** `isVisible=0` retire la tuile du dashboard mais la commande
   reste dans `byEqLogic`, exécutable, et listée dans la table admin → on peut masquer les boutons unitaires
   et laisser un pavé les piloter.
+- ⚠️⚠️ **`byEqLogic` donne la STRUCTURE et les bornes, JAMAIS l'état** (fait établi, lu dans la source
+  le 2026-09-12). `utils::o2a()` (`utils.class.php:48-82`) ne sérialise que les **propriétés
+  persistées** : `id, logicalId, name, type, subType, unite, configuration, display, template, value,
+  isVisible, isHistorized, order, generic_type, eqType, eqLogic_id, alert`. Les propriétés
+  `_collectDate` et `_valueDate` sont **exclues par leur préfixe `_`**, et la **valeur courante n'y est
+  pas** — elle vit dans le cache (cf. § 8.3). ⚠️ Le champ `value` de cette liste n'est **pas** la
+  valeur : c'est la colonne `value` d'une commande **action**, soit l'id de son info liée.
+  **Donc la phrase d'ouverture de cette section est un piège** : pour « une tuile qui lit plusieurs
+  commandes info ensemble », `byEqLogic` **ne suffit pas** — la tuile s'afficherait vide au chargement.
+  Les deux seules voies réelles sont un `execCmd()` par commande info (N requêtes par affichage, et le
+  piège du § 8.7 à chaque site d'appel) ou, bien mieux, l'**injection serveur** du § 9.
 
 ## 4. Exécuter une action depuis un widget
 
@@ -253,3 +280,83 @@ transformer chaque lecture en actionnement.
 ⚠️ Corollaire pour la conception : préférer, quand c'est possible, une méthode de lecture qui **reçoit**
 les commandes info déjà filtrées plutôt qu'une méthode qui les redécouvre — le filtre oublié une seule
 fois suffit à produire l'incident.
+
+## 9. ⚠️⚠️ Injecter un état SERVEUR dans un widget : le canal `$_options` de `cmd::toHtml()`
+
+Vérifié dans la source (`V4-stable`, 2026-09-12) et **mis en œuvre** par la tuile
+`smartclim::climatiseur` (UC01 du domaine post-MVP 06). C'est la réponse au besoin du § 3 — un widget
+qui agrège N commandes — **sans aucune requête au chargement, et sans aucun endpoint AJAX**.
+
+Le point de départ est une limite : ⚠️ **aucun jeton de `cmd::toHtml()` n'expose `configuration`, ni une
+AUTRE commande** que celle qui se rend (cf. § 2). Un widget agrégateur n'a donc rien à se mettre sous
+la dent dans les jetons natifs.
+
+Mais `cmd::toHtml($_version = 'dashboard', $_options = '')` fait, **avant** tout traitement propre au
+type :
+
+```php
+$options = jeedom::toHumanReadable($_options);
+$options = is_json($options, $options);
+if (is_array($options)) {
+  foreach ($options as $key => $value) { $replace['#' . $key . '#'] = $value; }
+}
+```
+
+**Chaque clé du JSON passé en `$_options` devient donc un jeton `#clé#`** utilisable dans le template.
+Et `eqLogic::toHtml()` appelle **systématiquement** `$cmd->toHtml($_version, '')` (branches `table` et
+`default`) : le canal est **libre**, rien de ce qu'on y met n'écrase une valeur du core.
+
+### Comment s'y brancher
+
+⚠️ **Il n'existe AUCUN hook pour cela** : on **surcharge** `<id>Cmd::toHtml()`, une méthode publique du
+core. Ce qui rend l'override légitime est `cmd::cast()` — appelée par `byId`/`byEqLogicId`/
+`byEqLogicIdAndLogicalId` : `if (is_object($_inputs) && class_exists($_inputs->getEqType() . 'Cmd'))
+{ … cast($_inputs, $_inputs->getEqType() . 'Cmd'); }`. **Toute** commande d'un équipement du plugin est
+donc instanciée en `<id>Cmd`, et l'appel de `eqLogic::toHtml()` est **polymorphe**.
+
+⚠️ **Piège de justification, vécu (2026-09-12)** : le squelette `jeedom/plugin-template` contient un
+stub **commenté** `public function toHtml($_version = 'dashboard') {}` précédé de « *Permet de modifier
+l'affichage du widget (également utilisable par les commandes)* ». Ce stub vit dans la classe
+**eqLogic**, porte **un seul** paramètre, et n'est **pas** le point d'extension de `cmd::toHtml()` : le
+recopier donne la mauvaise classe et la mauvaise signature. Ce n'est pas un hook documenté — c'est un
+override, avec la fragilité qui va avec (ci-dessous).
+
+### Les cinq règles à respecter
+
+1. ⚠️ **Signature recopiée EXACTEMENT** (`($_version = 'dashboard', $_options = '')`). Un core futur qui
+   ajouterait un paramètre rendrait la déclaration incompatible → **erreur fatale au chargement de la
+   classe**, donc `<id>Cmd` introuvable, donc **tout le plugin hors service** — invisible à `php -l` et
+   à la CI, fatale au runtime. À re-vérifier à chaque montée de `compatibility`. (Une forme variadique
+   `...$_reste` survit à l'ajout d'un paramètre, au prix d'un risque moins évident à auditer.)
+2. ⚠️ **Encoder la charge en base64.** Son alphabet (`A-Za-z0-9+/=`) est structurellement dépourvu de
+   `#`, `{{`, `'` et `<` : c'est ce qui la rend inoffensive dans le HTML rendu — **et non** un
+   filtrage. Sans cela, un nom de commande (modifiable par l'utilisateur, et `cleanComponanteName()` ne
+   retire ni `<` ni `>`, cf. § 8.1) s'échapperait du littéral JS. Motif supplémentaire :
+   `jeedom::toHumanReadable()` réécrit les motifs `#\d*#`, `#eqLogic\d+#`, `#scenario\d+#`,
+   `#object\d+#` — une charge en clair pourrait les contenir.
+3. ⚠️ **`textContent` / `.text()` côté client, jamais `innerHTML`** sur une donnée de la charge. Le
+   base64 protège le **transport**, pas le **rendu**.
+4. ⚠️ **Ne jamais laisser échapper une exception** : `try/catch (Throwable)` avec repli
+   `parent::toHtml($_version, $_options)`. Un jet ici casse le rendu du **dashboard entier**.
+5. ⚠️ **Garder une garde `$_options === ''`** avant d'injecter, pour ne pas écraser les options d'un
+   autre appelant, et **aliaser par `jeedom::versionAlias()` pour le TEST seulement** (elle ramène
+   `mview` → `mobile` et `dview`/`dplan`/`plan`/`view` → `dashboard` ; `'mobile'` et `'dashboard'` sont
+   rendus à l'identique). Sans l'aliasing, un `getTemplate('plan', '')` renvoie `''` sur les vues
+   `plan`/`view` et le widget y tombe en mode dégradé. **Transmettre `$_version` NON modifié au
+   parent**, qui ré-aliase lui-même.
+
+### Ce que ça coûte, et ce que ça évite
+
+Coût : **une** lecture `getCmd(null, null)` par widget et par rendu (cf. § 8.5 — jamais N requêtes).
+Évité : un aller-retour HTTP, un flash de widget vide au chargement, **et un endpoint AJAX**. Ce dernier
+point est le plus important : un widget de dashboard est vu par des utilisateurs
+**non-administrateurs**, or un `core/ajax/<id>.ajax.php` est gardé par `isConnect('admin')` (cf. § 5).
+L'injection serveur fait donc tenir le besoin **sans écrire une seule ligne de contrôle d'accès** : le
+rendu est déjà gardé par `eqLogic::preToHtml()` (`hasRight('r')`) et l'exécution par
+`core/ajax/cmd.ajax.php` (`isConnect()` + `hasRight('x')`).
+
+⚠️ **Corollaire pour un widget qui affiche une FRAÎCHEUR** : prendre le `#collectDate#` d'une commande
+que le cycle **relit** réellement, jamais le `valueDate` d'une commande « dernière mise à jour » écrite
+sous condition de changement (cf. § 8.3) — sinon un appareil stable affiche un âge de plusieurs heures
+alors que la scrutation vient de confirmer son état. Et choisir la commande avec soin : celle qui
+décrit l'**état regardé**, pas celle qui bouge à chaque cycle quoi qu'il arrive.

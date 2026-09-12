@@ -358,5 +358,9 @@
         "États-Unis": "United States",
         "Chine": "China",
         "Russie": "Russia"
+    },
+    "plugins/smartclim/core/class/smartclimWidget.class.php": {
+        "Diminuer la consigne": "Decrease the target temperature",
+        "Augmenter la consigne": "Increase the target temperature"
     }
 }

@@ -1,0 +1,354 @@
+<div class="cmd cmd-widget smartclim-tuile" data-type="info" data-subtype="binary" data-template="climatiseur" data-cmd_id="#id#" data-cmd_uid="#uid#" data-version="#version#" data-eqLogic_id="#eqLogic_id#" style="display:flex;flex-direction:column;gap:4px;">
+  <div class="smartclim-tuile-degrade">
+    <span class="smartclim-tuile-degrade-texte">#name_display# : #state#</span>
+  </div>
+  <div class="smartclim-tuile-entete" style="display:none;justify-content:space-between;flex-wrap:wrap;gap:4px;font-weight:bold;">
+    <span class="smartclim-tuile-nom"></span>
+    <span class="smartclim-tuile-transport"></span>
+  </div>
+  <div class="smartclim-tuile-horsligne" style="display:none;color:#c0392b;font-size:11px;"></div>
+  <div class="smartclim-tuile-corps" style="display:none;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+    <a href="#" class="smartclim-tuile-etat btn btn-default btn-sm">
+      <i class="fas fa-power-off"></i>
+      <span class="smartclim-tuile-etat-texte"></span>
+    </a>
+    <span class="smartclim-tuile-ambiante"></span>
+  </div>
+  <div class="smartclim-tuile-consigne" style="display:none;align-items:center;flex-wrap:wrap;gap:6px;">
+    <button type="button" class="btn btn-default btn-xs smartclim-tuile-moins"><i class="fas fa-minus"></i></button>
+    <span class="smartclim-tuile-consigne-valeur"></span>
+    <button type="button" class="btn btn-default btn-xs smartclim-tuile-plus"><i class="fas fa-plus"></i></button>
+  </div>
+  <div class="smartclim-tuile-modes" style="display:none;flex-wrap:wrap;gap:4px;"></div>
+  <div class="smartclim-tuile-vitesses" style="display:none;flex-wrap:wrap;gap:4px;"></div>
+  <div class="smartclim-tuile-pied" style="display:none;justify-content:space-between;flex-wrap:wrap;font-size:11px;opacity:0.7;">
+    <span class="smartclim-tuile-fraicheur"></span>
+    <span class="smartclim-tuile-maj"></span>
+  </div>
+</div>
+<script>
+(function () {
+  var cmdUid = '#uid#'
+  var $racine = $('[data-cmd_uid="' + cmdUid + '"]')
+
+  // Un seul enregistrement jeedom.cmd.addUpdateFunction PAR commande info : plusieurs
+  // comportements internes peuvent s'abonner au même id via abonner() ci-dessous, sans
+  // supposer que le core admette plusieurs enregistrements pour le même id.
+  var gestionnaires = {}
+  function abonner(_id, _fn) {
+    if (!_id) {
+      return
+    }
+    if (!gestionnaires[_id]) {
+      gestionnaires[_id] = []
+      jeedom.cmd.addUpdateFunction(_id, function (_options) {
+        gestionnaires[_id].forEach(function (_f) {
+          _f(_options)
+        })
+      })
+    }
+    gestionnaires[_id].push(_fn)
+  }
+  function valeurOptions(_options) {
+    return (isset(_options) && _options.value != undefined) ? String(_options.value) : ''
+  }
+
+  // Décodage de la charge (§ 6/7 de la spec technique) : jeton non substitué (repli du
+  // core sur le libellé littéral, donc commençant par '#') OU JSON illisible => mode
+  // DÉGRADÉ, aucune exception JS, le balisage statique reste affiché tel quel.
+  var charge = null
+  var brut = '#tuile_smartclim#'
+  if (brut.charAt(0) !== '#') {
+    try {
+      charge = JSON.parse(atob(brut))
+    } catch (erreur) {
+      charge = null
+    }
+  }
+  if (!charge || !charge.infos || !charge.infos.power || !charge.actions) {
+    return
+  }
+
+  $racine.find('.smartclim-tuile-degrade').remove()
+  $racine.find('.smartclim-tuile-entete').css('display', 'flex')
+  $racine.find('.smartclim-tuile-corps').css('display', 'flex')
+  $racine.find('.smartclim-tuile-pied').css('display', 'flex')
+
+  // ---- En-tête : nom de l'équipement + transport actif (AC6) ----
+  $racine.find('.smartclim-tuile-nom').text(charge.eqLogic && charge.eqLogic.nom ? charge.eqLogic.nom : '')
+
+  var $transport = $racine.find('.smartclim-tuile-transport')
+  if (charge.infos.transport) {
+    $transport.text(valeurOptions({ value: charge.infos.transport.valeur }))
+    abonner(charge.infos.transport.id, function (_options) {
+      $transport.text(valeurOptions(_options))
+    })
+  }
+
+  // ---- Bandeau hors ligne (D10 : contrôles restent actifs) ----
+  var $horsLigne = $racine.find('.smartclim-tuile-horsligne')
+  function majHorsLigne(_valeur) {
+    var enLigne = (parseInt(_valeur, 10) === 1)
+    $horsLigne.text(charge.libelles.hors_ligne || '')
+    $horsLigne.css('display', enLigne ? 'none' : 'block')
+  }
+  if (charge.infos.online) {
+    majHorsLigne(charge.infos.online.valeur)
+    abonner(charge.infos.online.id, function (_options) {
+      majHorsLigne(valeurOptions(_options))
+    })
+  }
+
+  // ---- Marche/Arrêt (AC1/AC2) ----
+  var $bouton = $racine.find('.smartclim-tuile-etat')
+  var $boutonTexte = $racine.find('.smartclim-tuile-etat-texte')
+  function majPower(_valeur) {
+    var actif = (parseInt(_valeur, 10) === 1)
+    $bouton.toggleClass('btn-primary', actif)
+    $bouton.toggleClass('btn-default', !actif)
+    var nom = ''
+    if (actif && charge.actions.off) {
+      nom = charge.actions.off.nom
+    } else if (!actif && charge.actions.on) {
+      nom = charge.actions.on.nom
+    }
+    $boutonTexte.text(nom)
+  }
+  majPower(charge.infos.power.valeur)
+  abonner(charge.infos.power.id, function (_options) {
+    majPower(valeurOptions(_options))
+  })
+  $bouton.on('click', function (_event) {
+    _event.preventDefault()
+    if ($bouton.hasClass('disabled')) {
+      return
+    }
+    var actif = $bouton.hasClass('btn-primary')
+    var cible = actif ? charge.actions.off : charge.actions.on
+    if (!cible) {
+      return
+    }
+    $bouton.addClass('disabled')
+    jeedom.cmd.execute({
+      id: cible.id,
+      notify: true,
+      success: function () {
+        $bouton.removeClass('disabled')
+      },
+      error: function () {
+        $bouton.removeClass('disabled')
+      }
+    })
+  })
+
+  // ---- Température ambiante (D9 : reste aussi accessible via sa propre ligne d'historique) ----
+  var $ambiante = $racine.find('.smartclim-tuile-ambiante')
+  if (charge.infos.ambient_temp) {
+    $ambiante.text(charge.infos.ambient_temp.valeur + ' ' + charge.infos.ambient_temp.unite)
+    abonner(charge.infos.ambient_temp.id, function (_options) {
+      $ambiante.text(valeurOptions(_options) + ' ' + charge.infos.ambient_temp.unite)
+    })
+  } else {
+    $ambiante.hide()
+  }
+
+  // ---- Consigne (AC5) : quantification d'AFFICHAGE, seconde barrière côté serveur ----
+  var $consigneBloc = $racine.find('.smartclim-tuile-consigne')
+  if (charge.actions.consigne && charge.infos.target_temp && charge.bornes) {
+    $consigneBloc.css('display', 'flex')
+    var min = parseFloat(charge.bornes.min)
+    var max = parseFloat(charge.bornes.max)
+    var pas = parseFloat(charge.bornes.pas)
+    if (!(pas > 0)) {
+      pas = 1
+    }
+    var $valeurConsigne = $racine.find('.smartclim-tuile-consigne-valeur')
+    var $boutonMoins = $consigneBloc.find('.smartclim-tuile-moins').attr('title', charge.libelles.moins || '')
+    var $boutonPlus = $consigneBloc.find('.smartclim-tuile-plus').attr('title', charge.libelles.plus || '')
+    var courante = parseFloat(charge.infos.target_temp.valeur)
+    if (isNaN(courante)) {
+      courante = min
+    }
+
+    function quantifier(_valeur) {
+      var q = min + Math.round((_valeur - min) / pas) * pas
+      if (q < min) {
+        q = min
+      }
+      if (q > max) {
+        q = max
+      }
+      return Math.round(q * 100) / 100
+    }
+
+    function majAffichageConsigne() {
+      $valeurConsigne.text(courante + ' ' + charge.infos.target_temp.unite)
+      $boutonMoins.prop('disabled', courante <= min)
+      $boutonPlus.prop('disabled', courante >= max)
+    }
+
+    function envoyerConsigne(_nouvelle) {
+      var ancienne = courante
+      courante = quantifier(_nouvelle)
+      majAffichageConsigne()
+      $boutonMoins.prop('disabled', true)
+      $boutonPlus.prop('disabled', true)
+      jeedom.cmd.execute({
+        id: charge.actions.consigne.id,
+        value: { slider: courante },
+        notify: true,
+        success: function () {
+          majAffichageConsigne()
+        },
+        error: function () {
+          courante = ancienne
+          majAffichageConsigne()
+        }
+      })
+    }
+
+    $boutonMoins.on('click', function () {
+      envoyerConsigne(courante - pas)
+    })
+    $boutonPlus.on('click', function () {
+      envoyerConsigne(courante + pas)
+    })
+
+    majAffichageConsigne()
+    abonner(charge.infos.target_temp.id, function (_options) {
+      var v = parseFloat(valeurOptions(_options))
+      if (!isNaN(v)) {
+        courante = v
+        majAffichageConsigne()
+      }
+    })
+  } else {
+    $consigneBloc.hide()
+  }
+
+  // ---- Modes (AC3) ----
+  var $modes = $racine.find('.smartclim-tuile-modes')
+  if (charge.actions.modes && charge.actions.modes.length) {
+    $modes.css('display', 'flex')
+    charge.actions.modes.forEach(function (_mode) {
+      var $b = $('<button type="button" class="btn btn-default btn-xs smartclim-tuile-mode"></button>')
+      $b.attr('data-code', _mode.code)
+      $b.attr('title', _mode.nom)
+      if (_mode.icone) {
+        $('<i></i>').addClass(_mode.icone).appendTo($b)
+        $b.append(' ')
+      }
+      $('<span></span>').text(_mode.libelle).appendTo($b)
+      $b.on('click', function () {
+        if ($b.hasClass('disabled')) {
+          return
+        }
+        $modes.find('button').addClass('disabled')
+        jeedom.cmd.execute({
+          id: _mode.id,
+          notify: true,
+          success: function () {
+            $modes.find('button').removeClass('disabled')
+          },
+          error: function () {
+            $modes.find('button').removeClass('disabled')
+          }
+        })
+      })
+      $modes.append($b)
+    })
+    if (charge.infos.mode) {
+      function majModeActif(_valeur) {
+        var code = String(_valeur).toUpperCase()
+        $modes.find('button').each(function () {
+          var $btn = $(this)
+          var actif = ($btn.attr('data-code') === code)
+          $btn.toggleClass('btn-primary', actif)
+          $btn.toggleClass('btn-default', !actif)
+        })
+      }
+      majModeActif(charge.infos.mode.valeur)
+      abonner(charge.infos.mode.id, function (_options) {
+        majModeActif(valeurOptions(_options))
+      })
+    }
+  }
+
+  // ---- Vitesses de ventilation (AC4) ----
+  var $vitesses = $racine.find('.smartclim-tuile-vitesses')
+  if (charge.actions.vitesses && charge.actions.vitesses.length) {
+    $vitesses.css('display', 'flex')
+    charge.actions.vitesses.forEach(function (_vitesse) {
+      var $b = $('<button type="button" class="btn btn-default btn-xs smartclim-tuile-vitesse"></button>')
+      $b.attr('data-code', _vitesse.code)
+      $b.attr('title', _vitesse.nom)
+      $('<span></span>').text(_vitesse.libelle).appendTo($b)
+      $b.on('click', function () {
+        if ($b.hasClass('disabled')) {
+          return
+        }
+        $vitesses.find('button').addClass('disabled')
+        jeedom.cmd.execute({
+          id: _vitesse.id,
+          notify: true,
+          success: function () {
+            $vitesses.find('button').removeClass('disabled')
+          },
+          error: function () {
+            $vitesses.find('button').removeClass('disabled')
+          }
+        })
+      })
+      $vitesses.append($b)
+    })
+    if (charge.infos.fan_speed) {
+      function majVitesseActive(_valeur) {
+        var code = String(_valeur).toUpperCase()
+        $vitesses.find('button').each(function () {
+          var $btn = $(this)
+          var actif = ($btn.attr('data-code') === code)
+          $btn.toggleClass('btn-primary', actif)
+          $btn.toggleClass('btn-default', !actif)
+        })
+      }
+      majVitesseActive(charge.infos.fan_speed.valeur)
+      abonner(charge.infos.fan_speed.id, function (_options) {
+        majVitesseActive(valeurOptions(_options))
+      })
+    }
+  }
+
+  // ---- Fraîcheur (D7 : #collectDate# natif de 'power') + dernière mise à jour (rang 2) ----
+  var $fraicheur = $racine.find('.smartclim-tuile-fraicheur')
+  var collectDate = '#collectDate#'
+  function afficherFraicheur() {
+    if (collectDate && collectDate.charAt(0) !== '#' && typeof jeedom.cmd.displayDuration === 'function' && typeof moment !== 'undefined') {
+      try {
+        var texte = jeedom.cmd.displayDuration(collectDate)
+        if (texte) {
+          $fraicheur.text(texte)
+          return
+        }
+      } catch (erreur) {
+        // repli ci-dessous sur l'horodatage absolu
+      }
+    }
+    $fraicheur.text(collectDate && collectDate.charAt(0) !== '#' ? collectDate : '')
+  }
+  afficherFraicheur()
+  abonner(charge.infos.power.id, function (_options) {
+    if (isset(_options) && _options.collectDate != undefined) {
+      collectDate = _options.collectDate
+      afficherFraicheur()
+    }
+  })
+
+  var $maj = $racine.find('.smartclim-tuile-maj')
+  if (charge.infos.last_update) {
+    $maj.text(charge.infos.last_update.valeur || '')
+    abonner(charge.infos.last_update.id, function (_options) {
+      $maj.text(valeurOptions(_options))
+    })
+  }
+})()
+</script>

@@ -419,3 +419,40 @@ désabonnement, les closures des rendus remplacés restent enregistrées et doiv
 ⚠️ Corollaire de style : **tenir l'état d'une commande dans une variable JS**, jamais le relire depuis
 une classe CSS (`hasClass('btn-primary')`). Sinon un affichage figé ne fait pas qu'afficher faux : il
 fait **envoyer l'ordre inverse** de celui attendu.
+
+## 11. Trois pièges d'affichage d'un widget (recette smartclim, 2026-09-12)
+
+### 11.1 ⚠️ `jeedom.cmd.displayDuration()` ÉCRIT dans un élément, elle ne RENVOIE RIEN
+
+Signature réelle (`core/js/cmd.class.js`) : `displayDuration(_date, _el, _type = 'duration')`. Elle pose
+`_el.innerHTML`, installe un `setInterval` de rafraîchissement et mémorise son id dans `data-interval`
+(qu'elle nettoie au rappel suivant **sur le même élément**). Elle retourne `undefined` — sauf en `_type =
+'date'`, où elle retourne `true`, jamais la chaîne.
+
+L'appeler comme un formateur (`var texte = jeedom.cmd.displayDuration(d)`) lève donc une `TypeError` sur
+`_el.getAttribute` — et si l'appel est dans un `try/catch` avec repli, **l'échec est silencieux** : le
+widget affiche l'horodatage brut `2026-09-12 23:54:38` au lieu de « il y a 3 minutes », sans la moindre
+trace. Passer l'élément : `jeedom.cmd.displayDuration(date, $el[0])`.
+
+### 11.2 ⚠️ `justify-content: space-between` sans `width: 100%` ne sépare rien
+
+Un widget est posé dans un conteneur qui ne lui impose pas de largeur : ses lignes en `display:flex` se
+dimensionnent alors sur leur contenu, et `space-between` n'a plus d'espace à répartir — les deux textes
+d'une ligne se **touchent**. Symptômes vécus : `[Séjour][Clim]AUX Home` et
+`2026-09-12 23:54:3812/09/2026 23:54:38`. Mettre `width:100%` sur le conteneur **et** sur chaque ligne
+flex. ⚠️ Le symptôme ressemble à une donnée dupliquée ou concaténée côté serveur : c'est de la mise en
+page, chercher la largeur avant de chercher dans le PHP.
+
+### 11.3 ⚠️ `eqLogic::getHumanName()` rend la forme TECHNIQUE `[Objet][Équipement]`
+
+Elle est faite pour les **logs** et les sélecteurs d'administration, pas pour une tuile. Dans une charge
+destinée à l'affichage, c'est `getName()`. (Corollaire : le nom de l'équipement est de toute façon déjà
+affiché par le bandeau du bloc équipement — le répéter dans le widget est du bruit.)
+
+### 11.4 Une couleur de bouton ne répond pas à « quelle est la valeur actuelle ? »
+
+Mettre en évidence le bouton du mode courant (`btn-primary`) paraît suffisant à la conception, et ne
+l'est pas en usage : le contraste dépend du thème, la ligne de boutons peut déborder, et un profil peut
+porter l'**info** sans les **actions** correspondantes. Afficher en clair la valeur courante, et n'utiliser
+la mise en évidence que comme renfort — en ajoutant `active` à `btn-primary`, qui porte l'état enfoncé
+indépendamment de la couleur.

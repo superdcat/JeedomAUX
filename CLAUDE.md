@@ -942,6 +942,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Un état de commande se tient en variable JS, jamais relu depuis une classe CSS** : décider l'ordre
   à envoyer d'après `hasClass('btn-primary')` fait dépendre l'action de l'apparence — un affichage figé
   envoie alors l'ordre inverse de celui attendu.
+  ⚠️ **`jeedom.cmd.displayDuration(_date, _el)` ÉCRIT dans un élément et ne RENVOIE RIEN** : l'appeler
+  comme un formateur lève une `TypeError` que le repli rattrape — le widget affiche alors l'horodatage
+  **absolu** au lieu d'une durée, sans aucune trace. ⚠️ Et **une ligne `flex` sans `width:100%` rend
+  `space-between` inopérant** : les deux textes se touchent (`[Séjour][Clim]AUX Home`), symptôme qui
+  ressemble à une concaténation côté serveur alors que c'est de la mise en page. ⚠️ Enfin
+  **`getHumanName()` rend la forme technique `[Objet][Équipement]`** — dans une charge d'affichage, c'est
+  `getName()`. Les trois : `.memory/analyse/jeedom-widgets-commandes.md` § 11.
   ⚠️ **La fraîcheur d'un état se lit sur `collectDate`, jamais sur `valueDate`** :
   `eqLogic::checkAndUpdateCmd()` réécrit `collectDate` **à chaque cycle** même sans changement, tandis que
   `valueDate` (donc `CMD_DERNIERE_MAJ`, alimentée sous `if ($change)`) date le dernier **changement**. Les

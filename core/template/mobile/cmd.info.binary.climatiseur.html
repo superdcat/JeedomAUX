@@ -1,29 +1,28 @@
-<div class="cmd cmd-widget smartclim-tuile" data-type="info" data-subtype="binary" data-template="climatiseur" data-cmd_id="#id#" data-cmd_uid="#uid#" data-version="#version#" data-eqLogic_id="#eqLogic_id#" style="display:flex;flex-direction:column;gap:4px;">
+<div class="cmd cmd-widget smartclim-tuile" data-type="info" data-subtype="binary" data-template="climatiseur" data-cmd_id="#id#" data-cmd_uid="#uid#" data-version="#version#" data-eqLogic_id="#eqLogic_id#" style="display:flex;flex-direction:column;gap:4px;width:100%;">
   <div class="smartclim-tuile-degrade">
     <span class="smartclim-tuile-degrade-texte">#name_display# : #state#</span>
   </div>
-  <div class="smartclim-tuile-entete" style="display:none;justify-content:space-between;flex-wrap:wrap;gap:4px;font-weight:bold;">
-    <span class="smartclim-tuile-nom"></span>
-    <span class="smartclim-tuile-transport"></span>
+  <div class="smartclim-tuile-entete" style="display:none;width:100%;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+    <span class="smartclim-tuile-resume" style="font-weight:bold;"></span>
+    <span class="smartclim-tuile-transport" style="font-size:11px;opacity:0.7;white-space:nowrap;"></span>
   </div>
   <div class="smartclim-tuile-horsligne" style="display:none;color:#c0392b;font-size:11px;"></div>
-  <div class="smartclim-tuile-corps" style="display:none;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+  <div class="smartclim-tuile-corps" style="display:none;width:100%;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
     <a href="#" class="smartclim-tuile-etat btn btn-default btn-sm">
       <i class="fas fa-power-off"></i>
       <span class="smartclim-tuile-etat-texte"></span>
     </a>
     <span class="smartclim-tuile-ambiante"></span>
   </div>
-  <div class="smartclim-tuile-consigne" style="display:none;align-items:center;flex-wrap:wrap;gap:6px;">
+  <div class="smartclim-tuile-consigne" style="display:none;width:100%;align-items:center;flex-wrap:wrap;gap:6px;">
     <button type="button" class="btn btn-default btn-xs smartclim-tuile-moins"><i class="fas fa-minus"></i></button>
     <span class="smartclim-tuile-consigne-valeur"></span>
     <button type="button" class="btn btn-default btn-xs smartclim-tuile-plus"><i class="fas fa-plus"></i></button>
   </div>
-  <div class="smartclim-tuile-modes" style="display:none;flex-wrap:wrap;gap:4px;"></div>
-  <div class="smartclim-tuile-vitesses" style="display:none;flex-wrap:wrap;gap:4px;"></div>
-  <div class="smartclim-tuile-pied" style="display:none;justify-content:space-between;flex-wrap:wrap;font-size:11px;opacity:0.7;">
+  <div class="smartclim-tuile-modes" style="display:none;width:100%;flex-wrap:wrap;gap:4px;"></div>
+  <div class="smartclim-tuile-vitesses" style="display:none;width:100%;flex-wrap:wrap;gap:4px;"></div>
+  <div class="smartclim-tuile-pied" style="display:none;width:100%;justify-content:flex-end;flex-wrap:wrap;font-size:11px;opacity:0.7;">
     <span class="smartclim-tuile-fraicheur"></span>
-    <span class="smartclim-tuile-maj"></span>
   </div>
 </div>
 <script>
@@ -68,6 +67,25 @@
     return (isset(_options) && _options.value != undefined) ? String(_options.value) : ''
   }
 
+  // Libellé déjà traduit d'un code générique, cherché dans la liste des commandes
+  // d'action RÉELLEMENT créées (donc dans le profil de l'appareil). Aucun catalogue
+  // recopié côté client. Code sans correspondance => la valeur brute, jamais une
+  // chaîne vide qui ferait croire que l'appareil n'a pas de mode.
+  function libelleDe(_liste, _valeur) {
+    if (_valeur == undefined || _valeur === '') {
+      return ''
+    }
+    var code = String(_valeur).toUpperCase()
+    if (_liste && _liste.length) {
+      for (var i = 0; i < _liste.length; i++) {
+        if (_liste[i].code === code) {
+          return _liste[i].libelle
+        }
+      }
+    }
+    return String(_valeur)
+  }
+
   // Décodage de la charge (§ 6/7 de la spec technique) : jeton non substitué (repli du
   // core sur le libellé littéral, donc commençant par '#') OU JSON illisible => mode
   // DÉGRADÉ, aucune exception JS, le balisage statique reste affiché tel quel.
@@ -89,8 +107,23 @@
   $racine.find('.smartclim-tuile-corps').css('display', 'flex')
   $racine.find('.smartclim-tuile-pied').css('display', 'flex')
 
-  // ---- En-tête : nom de l'équipement + transport actif (AC6) ----
-  $racine.find('.smartclim-tuile-nom').text(charge.eqLogic && charge.eqLogic.nom ? charge.eqLogic.nom : '')
+  // ---- En-tête : résumé « mode · vitesse » + transport actif (AC6) ----
+  // Le NOM de l'équipement n'est volontairement plus affiché : le bandeau de
+  // l'équipement le porte déjà juste au-dessus, et getHumanName() y rendait la forme
+  // technique « [Objet][Équipement] », collée au transport (recette du 2026-09-12).
+  var $resume = $racine.find('.smartclim-tuile-resume')
+  var libelleMode = ''
+  var libelleVitesse = ''
+  function majResume() {
+    var morceaux = []
+    if (libelleMode !== '') {
+      morceaux.push(libelleMode)
+    }
+    if (libelleVitesse !== '') {
+      morceaux.push(libelleVitesse)
+    }
+    $resume.text(morceaux.join(' · '))
+  }
 
   var $transport = $racine.find('.smartclim-tuile-transport')
   if (charge.infos.transport) {
@@ -282,6 +315,9 @@
           var actif = ($btn.attr('data-code') === code)
           $btn.toggleClass('btn-primary', actif)
           $btn.toggleClass('btn-default', !actif)
+          // 'active' en plus de la couleur : sur un thème où btn-primary contraste mal,
+          // c'est elle qui porte l'état enfoncé. La couleur seule ne suffit pas.
+          $btn.toggleClass('active', actif)
         })
       }
       majModeActif(charge.infos.mode.valeur)
@@ -326,6 +362,7 @@
           var actif = ($btn.attr('data-code') === code)
           $btn.toggleClass('btn-primary', actif)
           $btn.toggleClass('btn-default', !actif)
+          $btn.toggleClass('active', actif)
         })
       }
       majVitesseActive(charge.infos.fan_speed.valeur)
@@ -335,22 +372,55 @@
     }
   }
 
-  // ---- Fraîcheur (D7 : #collectDate# natif de 'power') + dernière mise à jour (rang 2) ----
+  // ---- Résumé « mode · vitesse » ----
+  // Tenu SÉPARÉMENT de la mise en évidence des boutons, et pas dans le même bloc : un
+  // profil peut porter l'info 'mode' sans qu'aucune commande d'action de mode existe, et
+  // surtout une couleur de bouton ne répond pas à « quel est le mode actif ? » — c'est ce
+  // qu'a montré la recette du 2026-09-12. Le texte, lui, est toujours lisible.
+  if (charge.infos.mode) {
+    libelleMode = libelleDe(charge.actions.modes, charge.infos.mode.valeur)
+    abonner(charge.infos.mode.id, function (_options) {
+      libelleMode = libelleDe(charge.actions.modes, valeurOptions(_options))
+      majResume()
+    })
+  }
+  if (charge.infos.fan_speed) {
+    libelleVitesse = libelleDe(charge.actions.vitesses, charge.infos.fan_speed.valeur)
+    abonner(charge.infos.fan_speed.id, function (_options) {
+      libelleVitesse = libelleDe(charge.actions.vitesses, valeurOptions(_options))
+      majResume()
+    })
+  }
+  majResume()
+
+  // ---- Fraîcheur (D7 : #collectDate# natif de 'power') ----
+  // ⚠️ UNE SEULE date affichée. Le pied portait aussi 'last_update' : les deux dataient le
+  // même instant dans deux formats, et se touchaient faute de largeur sur la ligne flex
+  // (recette du 2026-09-12 : « 2026-09-12 23:54:3812/09/2026 23:54:38 »). C'est la
+  // FRAÎCHEUR qui est gardée — elle répond à « la donnée est-elle à jour ? », ce que
+  // 'last_update' ne dit pas (cf. § 8.3 de jeedom-widgets-commandes.md). La commande info
+  // 'last_update' existe toujours, elle est simplement masquée comme les autres doublons.
   var $fraicheur = $racine.find('.smartclim-tuile-fraicheur')
   var collectDate = '#collectDate#'
   function afficherFraicheur() {
-    if (collectDate && collectDate.charAt(0) !== '#' && typeof jeedom.cmd.displayDuration === 'function' && typeof moment !== 'undefined') {
+    if (!collectDate || collectDate.charAt(0) === '#') {
+      $fraicheur.text('')
+      return
+    }
+    // ⚠️ displayDuration(_date, _el, _type) ÉCRIT dans l'élément et ne RENVOIE RIEN :
+    // l'appeler pour récupérer une chaîne levait une TypeError sur _el undefined, que le
+    // try/catch rattrapait en silence — d'où l'horodatage brut affiché au lieu d'une durée.
+    // Elle pose aussi son propre setInterval et nettoie le précédent via data-interval :
+    // la ré-appeler à chaque événement est donc sans fuite.
+    if (typeof jeedom.cmd.displayDuration === 'function' && typeof moment !== 'undefined') {
       try {
-        var texte = jeedom.cmd.displayDuration(collectDate)
-        if (texte) {
-          $fraicheur.text(texte)
-          return
-        }
+        jeedom.cmd.displayDuration(collectDate, $fraicheur[0])
+        return
       } catch (erreur) {
         // repli ci-dessous sur l'horodatage absolu
       }
     }
-    $fraicheur.text(collectDate && collectDate.charAt(0) !== '#' ? collectDate : '')
+    $fraicheur.text(collectDate)
   }
   afficherFraicheur()
   abonner(charge.infos.power.id, function (_options) {
@@ -359,13 +429,5 @@
       afficherFraicheur()
     }
   })
-
-  var $maj = $racine.find('.smartclim-tuile-maj')
-  if (charge.infos.last_update) {
-    $maj.text(charge.infos.last_update.valeur || '')
-    abonner(charge.infos.last_update.id, function (_options) {
-      $maj.text(valeurOptions(_options))
-    })
-  }
 })()
 </script>

@@ -178,7 +178,12 @@ class smartclimWidget {
       'version' => 1,
       'eqLogic' => array(
         'id' => (int) $_eqLogic->getId(),
-        'nom' => (string) $_eqLogic->getHumanName(),
+        // getName(), JAMAIS getHumanName() : le second rend la forme technique
+        // « [Objet][Équipement] » (recette du 2026-09-12). Le nom n'est plus affiché par
+        // la tuile — le bandeau de l'équipement le porte déjà — mais il reste dans la
+        // charge pour l'UC03 du domaine (page-panneau multi-climatiseurs), qui aura bien
+        // besoin d'un nom lisible.
+        'nom' => (string) $_eqLogic->getName(),
       ),
       'infos' => $infos,
       'actions' => array_merge($actions, array(

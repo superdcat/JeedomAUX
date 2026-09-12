@@ -327,9 +327,30 @@ n'existe dans les trois `core/i18n/*.json`.
   `CMD_TRANSPORT` est réécrite **inconditionnellement** à chaque `appliquerEtat()` (l. 7018). Ces deux-là
   répondent « quand le dernier cycle a-t-il tourné », tandis que `power` répond « de quand date l'état que
   je regarde » — c'est la question de l'AC6.
-  **Sort de `CMD_DERNIERE_MAJ`** : conservée, affichée **en second rang** (seconde ligne ou infobulle),
-  et **présentée pour ce qu'elle est** — un « dernier changement d'état », pas une fraîcheur. Aucune
-  commande ajoutée, aucun `logicalId` touché.
+  **Sort de `CMD_DERNIERE_MAJ`** : ~~conservée, affichée **en second rang**~~ → **RETIRÉE DE LA TUILE le
+  2026-09-12**. En recette les deux dates se sont révélées être le **même instant sous deux formats**, et
+  collées faute de largeur sur la ligne flex (§ 11.2 de `jeedom-widgets-commandes.md`) :
+  `2026-09-12 23:54:3812/09/2026 23:54:38`. Une seule date reste, la **fraîcheur** — c'est elle qui répond
+  à la question de l'AC6. La commande info `last_update` n'est ni supprimée ni touchée : elle est masquée
+  comme les autres doublons, et reste dans la charge utile.
+
+  ⚠️ **Bug d'implémentation de D7, corrigé le 2026-09-12** : `jeedom.cmd.displayDuration(_date, _el)`
+  **écrit dans un élément et ne renvoie rien**. Appelée comme un formateur, elle levait une `TypeError`
+  rattrapée par le repli — la tuile affichait donc l'horodatage **absolu** au lieu d'une durée, sans
+  aucune trace. Détail : § 11.1 de `jeedom-widgets-commandes.md`.
+
+- **D11 — Le mode et la vitesse actifs s'affichent EN TEXTE, pas seulement par un bouton mis en
+  évidence** (recette du 2026-09-12). La conception ne prévoyait que `btn-primary` sur le bouton
+  correspondant ; à l'usage l'utilisateur ne sait pas lire l'état actif — le contraste dépend du thème, la
+  ligne de boutons peut déborder, et un profil peut porter l'**info** sans l'**action**. L'en-tête porte
+  donc un résumé « <mode> · <vitesse> », alimenté par un abonnement **distinct** de celui des boutons, et
+  la mise en évidence ajoute `active` à `btn-primary`. Les libellés sont ceux de la charge (déjà traduits
+  par PHP) : aucune clé i18n nouvelle, aucun catalogue recopié côté client.
+
+- **D12 — Le NOM de l'équipement n'est plus affiché par la tuile** (recette du 2026-09-12) : le bandeau
+  du bloc équipement le porte déjà juste au-dessus, et la charge le prenait de `getHumanName()`, qui rend
+  la forme technique `[Objet][Équipement]`. La charge le garde (en `getName()`) pour l'UC03 du domaine.
+  L'en-tête est désormais « résumé d'état » à gauche, « transport » à droite.
 
 - **D8 — Signature stricte à 2 paramètres** pour l'override (arbitrée avec l'utilisateur le 2026-09-12) :
   `($_version = 'dashboard', $_options = '')`, identique au core V4-stable. La variante variadique
@@ -587,7 +608,7 @@ l'élargissement de visibilité plutôt qu'une redéclaration), et les **noms de
 | **AC3** modes | La tuile ne rend **que** les `mode_*` réellement créées, listées dans la charge ; `definitionsCommandesAction()` ne crée déjà que celles du profil et filtre `versTransport() === null` (l. 5246-5264) | code + recette |
 | **AC4** vitesses | Idem `fan_*` (l. 5266-5286) | code + recette |
 | **AC5** bornes de consigne | `bornesTemperature()` injectée ; bornage + **quantification** client, puis re-bornage serveur par `ordreEffectifConsigne()` — double barrière | code + recette |
-| **AC6** transport + fraîcheur | `transport` injecté ; fraîcheur = `#collectDate#` de `power` (**D7**), rendue en relatif par `jeedom.cmd.displayDuration()`, repli absolu. `last_update` en second rang | recette |
+| **AC6** transport + fraîcheur | `transport` injecté ; fraîcheur = `#collectDate#` de `power` (**D7**), rendue en relatif par `jeedom.cmd.displayDuration(date, el)` — **l'élément est obligatoire**, cf. § 11.1 de l'analyse widgets —, repli absolu. `last_update` retirée de la tuile (D7 amendée) | recette |
 | **AC7** capacité absente | Aucun contrôle écrit « en dur » : chaque contrôle n'existe que si sa commande est dans la charge | code |
 | **AC8** mobile = desktop | **Deux fichiers strictement identiques**, aucune API divergente (**D6**) | recette |
 | **AC9** choix utilisateur préservé | Pose **« si vide »** déjà en place (l. 5456-5467), rejouée à l'identique ; l'hôte est une commande **info**, jamais templatée → le parc existant l'obtient au premier cycle. Masquage **conditionné à la pose effective**. ⚠️ Bord assumé de D3 à documenter | code + recette |

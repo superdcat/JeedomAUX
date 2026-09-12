@@ -142,6 +142,25 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 					</table>
 				</div>
 			</div>
+			<div id="div_scanLanAutresWrapper" class="hidden">
+				<h4>{{Autres appareils Broadlink détectés}}</h4>
+				<p>{{Ces appareils ont répondu sur le réseau local mais ne renvoient aucun état de climatisation exploitable : ce ne sont pas des climatiseurs (télécommande RM, prise connectée, etc.). Ils ne sont jamais ajoutés comme équipements.}}</p>
+				<div class="table-responsive">
+					<table id="table_scanLanAutres" class="table table-bordered table-condensed">
+						<thead>
+							<tr>
+								<th>{{Nom}}</th>
+								<th>{{Adresse MAC}}</th>
+								<th>{{Adresse IP}}</th>
+								<th>{{Type d'appareil}}</th>
+								<th>{{Résultat}}</th>
+							</tr>
+						</thead>
+						<tbody>
+						</tbody>
+					</table>
+				</div>
+			</div>
 			<a class="btn btn-primary hidden" id="bt_scanRecharger"><i class="fas fa-sync"></i> <span></span></a>
 		</div>
 		<div class="col-xs-12" id="div_sondeResultat" style="display:none;">

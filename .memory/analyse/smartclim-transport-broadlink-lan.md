@@ -404,3 +404,38 @@ Seuls les octets **6** et **8** diffèrent. ⚠️ Ne pas confondre l'octet 6 de
   (§ 11 étape 4 de sa spec technique) n'a pas montré qu'il bascule **dans les deux sens** aux bits prévus.
   ⚠️ Contrairement à l'état antérieur, **l'octet 11 ne se recopie plus tel quel** : `encoderOrdre()` y
   patche le masque `0xE0` quand un ordre porte `swing_h`. Le reste de l'octet traverse intact.
+
+## 14. Établi en recette (2026-09-12) — distinguer un climatiseur d'un autre appareil Broadlink ✅
+
+**Fait mesuré**, chez l'utilisateur : la découverte par diffusion ramène **tous** les appareils Broadlink
+du réseau, pas seulement des climatiseurs. Deux RM4 Pro (`devtype` **`0x649B`** et **`0x6026`**, nom
+constructeur `智能遥控` = « télécommande intelligente ») figuraient dans le tableau « Climatiseurs détectés
+sur le réseau local ».
+
+Ce que la mesure établit :
+
+- Les deux ont répondu à la diffusion, se sont **authentifiés** (`0x65`) sans difficulté, et sont ressortis
+  en **`STATUT_ETAT_ILLISIBLE`** — « LAN disponible, état non décodable par cet appareil ». Le garde-fou
+  d'UC04 du domaine `post-mvp/01` a donc joué : **aucun équipement n'a été créé**. Ce n'était qu'un défaut
+  d'affichage, jamais de comportement.
+- ✅ **Le critère de distinction est la réponse à `0x6A`, et rien d'autre.** Un appareil Broadlink
+  non-climatiseur authentifie parfaitement mais ne rend **pas** de charge HVAC exploitable. C'est un
+  critère **par capacité observée**, conforme au principe directeur du `brief.md` — et c'est exactement la
+  preuve qui conditionne déjà la création d'équipement, donc les deux décisions ne peuvent pas diverger.
+- ❌ **Le `devtype` n'est PAS un critère.** Les tables publiques (`mjg59/python-broadlink`) rangent bien
+  `0x649B` / `0x6026` dans la famille RM4 Pro (émetteur IR/RF, jamais un climatiseur), mais une **liste
+  blanche** de `devtype` exclurait tout firmware inconnu — ce que le brief interdit. Il reste une
+  information d'**affichage**. Cela ne clôt donc pas la ligne « Signification exploitable de `devtype` »
+  du § 10.
+- ❌ **Le nom n'est pas un critère non plus** : il est renommable dans l'application constructeur.
+- ⚠️ **Piste écartée** : durcir `smartclimFrame::conceptsLisibles()` en exigeant le magic `bb00` via
+  `estTrameHvac()`. Ce préfixe n'a **jamais été observé sur une réponse LAN réelle** (§ 12) — le rendre
+  bloquant rendrait tout le chemin LAN inopérant **en silence**, pour un gain nul ici : le tri par statut
+  de lecture donne déjà le bon résultat sur ce matériel.
+
+**Implémentation** : `smartclim::categorieLigneLan()` range une ligne de scan en `CATEGORIE_LAN_AUTRE`
+**uniquement** sur `STATUT_ETAT_ILLISIBLE` **et** absence d'équipement rapproché ; `desktop/php/smartclim.php`
+porte un second tableau « Autres appareils Broadlink détectés », masqué tant qu'il est vide.
+⚠️ Un appareil **injoignable, refusé, verrouillé ou non sondé** reste dans la liste principale : on ne
+dispose d'aucune preuve qu'il n'est pas un climatiseur, et l'écarter le rendrait invisible au moment même
+où l'utilisateur cherche pourquoi il ne répond pas.

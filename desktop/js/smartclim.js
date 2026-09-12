@@ -310,6 +310,8 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
   $('#table_scanAuxCloud tbody').empty()
   $('#table_scanDisparus tbody').empty()
   $('#table_scanLan tbody').empty()
+  $('#table_scanLanAutres tbody').empty()
+  $('#div_scanLanAutresWrapper').addClass('hidden')
   $('#bt_scanRecharger').addClass('hidden')
   $('#div_scanResultat').hide()
   $.ajax({
@@ -380,7 +382,15 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
       if (resultat.lan) {
         $('#span_scanResumeLan').text(resultat.lan.resume)
         $.each(resultat.lan.appareils, function (index, appareil) {
-          ajouterLigneScan($('#table_scanLan'), [
+          // Recette du 2026-09-12 : la diffusion Broadlink ramène TOUS les appareils du
+          // réseau (RM4 Pro, prises…), pas seulement des climatiseurs. La catégorie est
+          // DÉJÀ tranchée côté serveur (smartclim::categorieLigneLan(), sur la preuve de
+          // lecture d'état) : ce JS n'arbitre rien, il aiguille.
+          var autre = (appareil.categorie === 'autre')
+          if (autre) {
+            $('#div_scanLanAutresWrapper').removeClass('hidden')
+          }
+          ajouterLigneScan($(autre ? '#table_scanLanAutres' : '#table_scanLan'), [
             appareil.nom,
             appareil.mac,
             appareil.ip,

@@ -161,6 +161,15 @@ class smartclim extends eqLogic {
   const CLE_CACHE_LAN = 'smartclim::lan_appareil::';
   const DUREE_MEMOIRE_LAN = 86400; // 24 h
 
+  // Catégorie d'affichage d'une ligne du tableau LAN (recette du 2026-09-12) : la
+  // découverte par diffusion ramène TOUS les appareils Broadlink du réseau (RM4 Pro,
+  // prises SP…), pas seulement des climatiseurs. Le critère de tri est la PREUVE déjà
+  // mesurée par la lecture d'état, JAMAIS une liste de devtypes ou de modèles (brief :
+  // le critère de prise en charge est le protocole joignable et les capacités
+  // observées). Ces deux valeurs sont lues à l'identique par desktop/js/smartclim.js.
+  const CATEGORIE_LAN_CLIMATISEUR = 'climatiseur';
+  const CATEGORIE_LAN_AUTRE = 'autre';
+
   // Budget de temps GLOBAL de la phase LAN d'un scan (D-POSTMVP0101-04) : arrêt DUR
   // évalué avant chaque appareil, dans les deux phases de scannerReseauLocal() — jamais un
   // budget seulement indicatif (cf. smartclimAuxHomeApi § 8.3 pour le précédent qui a
@@ -1992,7 +2001,7 @@ class smartclim extends eqLogic {
    * post-mvp/01-transport-broadlink-lan, § 5.7 de sa spec technique) : id de l'eqLogic
    * rapproché, 0 sinon.
    *
-   * @return array{nom:string, mac:string, ip:string, typeAppareil:string, statut:string, statutLibelle:string, equipementId:int}
+   * @return array{nom:string, mac:string, ip:string, typeAppareil:string, statut:string, statutLibelle:string, equipementId:int, categorie:string}
    */
   private static function ligneResultatLan($_nom, $_mac, $_ip, $_typeAppareil, $_statut, $_statutLibelle, $_equipementId = 0) {
     return array(
@@ -2003,7 +2012,41 @@ class smartclim extends eqLogic {
       'statut' => $_statut,
       'statutLibelle' => $_statutLibelle,
       'equipementId' => (int) $_equipementId,
+      'categorie' => self::categorieLigneLan($_statut, $_equipementId),
     );
+  }
+
+  /**
+   * Catégorie d'affichage d'une ligne du tableau LAN (recette du 2026-09-12) : la
+   * découverte par diffusion ramène TOUS les appareils Broadlink joignables, pas
+   * seulement des climatiseurs — chez l'utilisateur, deux RM4 Pro figuraient dans le
+   * tableau « Climatiseurs détectés sur le réseau local ».
+   *
+   * ⚠️ LE CRITÈRE EST LA PREUVE, JAMAIS LE MODÈLE : un appareil n'est rangé dans
+   * « autre » que s'il a RÉPONDU sans rendre de charge HVAC exploitable
+   * (STATUT_ETAT_ILLISIBLE) — c'est exactement la preuve qui conditionne déjà la
+   * création d'équipement dans scannerReseauLocal(), donc les deux décisions ne peuvent
+   * pas diverger. Un appareil injoignable, refusé, verrouillé ou non sondé reste un
+   * climatiseur POSSIBLE : on ne dispose d'aucune preuve du contraire, et l'écarter le
+   * rendrait invisible au moment même où l'utilisateur cherche pourquoi il ne répond pas.
+   * ⚠️ Ne JAMAIS trancher sur 'type_appareil' (devtype) : une liste blanche de devtypes
+   * exclurait tout firmware inconnu, contre le principe directeur du brief. Le devtype
+   * reste une information d'affichage, jamais un critère.
+   * ⚠️ Un équipement DÉJÀ rapproché reste un climatiseur quel que soit le statut : il a
+   * fourni la preuve un jour, ou il vient d'un des deux clouds.
+   *
+   * @param string $_statut Statut de ligne (STATUT_* de lecture, ou 'ignore_*').
+   * @param int $_equipementId Id de l'eqLogic rapproché, 0 sinon.
+   * @return string Une des constantes self::CATEGORIE_LAN_*.
+   */
+  private static function categorieLigneLan($_statut, $_equipementId) {
+    if ((int) $_equipementId > 0) {
+      return self::CATEGORIE_LAN_CLIMATISEUR;
+    }
+    if ($_statut === smartclimBroadlinkLan::STATUT_ETAT_ILLISIBLE) {
+      return self::CATEGORIE_LAN_AUTRE;
+    }
+    return self::CATEGORIE_LAN_CLIMATISEUR;
   }
 
   /**

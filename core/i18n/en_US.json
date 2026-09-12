@@ -339,7 +339,9 @@
         "Sens inversé pour ce transport": "Reversed direction for this transport",
         "À cocher si les commandes d'oscillation produisent l'effet inverse de celui annoncé": "Check this if the swing commands produce the opposite effect of the one announced",
         "Temps réel": "Real-time",
-        "Aucun climatiseur trouvé, cliquez sur \"Scanner les climatiseurs\" pour commencer": "No air conditioner found, click \"Scan for air conditioners\" to start"
+        "Aucun climatiseur trouvé, cliquez sur \"Scanner les climatiseurs\" pour commencer": "No air conditioner found, click \"Scan for air conditioners\" to start",
+        "Autres appareils Broadlink détectés": "Other Broadlink devices detected",
+        "Ces appareils ont répondu sur le réseau local mais ne renvoient aucun état de climatisation exploitable : ce ne sont pas des climatiseurs (télécommande RM, prise connectée, etc.). Ils ne sont jamais ajoutés comme équipements.": "These devices replied on the local network but return no usable air conditioning state: they are not air conditioners (RM remote, smart plug, etc.). They are never added as equipment."
     },
     "plugins/smartclim/desktop/modal/modal.smartclim.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access"

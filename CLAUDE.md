@@ -936,6 +936,17 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   assumé : un appareil absent des deux clouds **et** injoignable par diffusion (VLAN, réseau segmenté)
   n'est plus créable du tout — `lan_ip` / `lan_mac` restent un secours pour un équipement **déjà
   découvert**, pas un moyen de création. Ne pas remettre ce bouton sans rouvrir cet arbitrage.
+  ⚠️ **Le tableau du scan LAN est SCINDÉ EN DEUX** depuis la recette du 2026-09-12 (« Climatiseurs
+  détectés sur le réseau local » / « Autres appareils Broadlink détectés », le second masqué tant qu'il
+  est vide) : la diffusion ramène **tous** les appareils Broadlink du réseau — deux RM4 Pro figuraient
+  parmi les « climatiseurs ». Le tri vit **côté serveur**, dans `smartclim::categorieLigneLan()`, et tient
+  à une seule chose : `STATUT_ETAT_ILLISIBLE`, **la preuve qui conditionne déjà la création
+  d'équipement** — les deux décisions ne peuvent donc pas diverger. ⚠️ **Ne JAMAIS trier sur
+  `type_appareil` (devtype)** : une liste blanche de codes exclurait tout firmware inconnu, contre le
+  principe directeur du brief ; le devtype reste une information d'affichage. ⚠️ Un appareil
+  **injoignable, refusé ou verrouillé** reste dans la liste principale — aucune preuve qu'il n'est pas un
+  climatiseur, et l'écarter le rendrait invisible au moment où l'utilisateur cherche pourquoi il ne
+  répond pas. Détail et mesures : `.memory/analyse/smartclim-transport-broadlink-lan.md` § 14.
   Liaison au modèle via `data-l1key`/`data-l2key`. i18n via `{{...}}`. Se termine en incluant le JS du
   plugin puis le JS générique de page plugin **fourni par le core**
   (`include_file('core', 'plugin.template', 'js')` → asset du core, **à ne pas renommer/modifier** : le

@@ -15,7 +15,17 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-09-12** (UC01 du domaine `post-mvp/06` — **tuile de
+> **Dernière mise à jour de cet index : 2026-09-12** (recette — **distinguer un climatiseur d'un autre
+> appareil Broadlink** : § 14 **nouveau** de `smartclim-transport-broadlink-lan.md`. Deux RM4 Pro du
+> réseau de l'utilisateur figuraient dans le tableau « Climatiseurs détectés sur le réseau local ». Fait
+> établi : un appareil Broadlink non-climatiseur **s'authentifie parfaitement** et ne se trahit qu'à la
+> réponse `0x6A` — donc le **seul** critère est la charge HVAC exploitable (`STATUT_ETAT_ILLISIBLE`),
+> qui est déjà la preuve conditionnant la création d'équipement : les deux décisions ne peuvent pas
+> diverger. ⚠️ **Le `devtype` n'est pas un critère** (`0x649B`/`0x6026` = RM4 Pro dans les tables
+> publiques, mais une liste blanche exclurait tout firmware inconnu), et le durcissement par le magic
+> `bb00` reste **écarté** — jamais observé sur une réponse LAN réelle. Aucun « À confirmer » fermé :
+> la ligne « signification exploitable de `devtype` » du § 10 reste ouverte.)
+> Précédente : 2026-09-12 (UC01 du domaine `post-mvp/06` — **tuile de
 > commande « climatiseur » livrée** : § 9 **nouveau** de `jeedom-widgets-commandes.md`, entièrement
 > générique Jeedom — **injecter un état serveur dans un widget par le canal `$_options` de
 > `cmd::toHtml()`**, seule voie pour une tuile agrégatrice, avec ses 5 règles (signature à recopier

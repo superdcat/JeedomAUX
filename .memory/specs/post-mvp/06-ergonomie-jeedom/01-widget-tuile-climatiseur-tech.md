@@ -120,6 +120,31 @@ consigne absente ou non numérique ». Patron identique au widget core `cmd.acti
 aucun élément DOM pour la commande (`?.hasClass('noRefresh')` sur un nœud absent ⇒ non filtré). C'est ce
 qui permet à la tuile de suivre l'état de commandes dont l'affichage individuel a été retiré.
 
+⚠️⚠️ **CETTE FONCTION DÉDUPLIQUE PAR `_function.toString()`** (constat de recette du 2026-09-12, non vu
+à la conception) :
+
+```js
+for (var i in jeedom.cmd.update[_cmd_id]) {
+  if (jeedom.cmd.update[_cmd_id][i].toString() == _function.toString()) { return }
+}
+```
+
+La tuile enregistrait **une fonction relais générique**, au texte source identique d'un rendu à l'autre.
+Conséquence : au **ré-rendu** du widget — courant, puisque tout `cmd::save()` appelle `refreshWidget()` et
+que le dashboard remplace alors le HTML —, le nouveau script **ne se réabonnait pas** ; seule la closure
+du rendu **précédent** restait enregistrée, et elle écrivait dans un DOM **détaché**. La tuile se figeait :
+le bouton « Marche » ne devenait jamais « Arrêt », **sans aucune erreur JS ni trace serveur**.
+
+**Parade, identique à celle des widgets du core** : faire figurer le littéral `#uid#` **dans le corps** de
+la fonction enregistrée (substitué avec un `mt_rand()`, il change à chaque rendu — une variable qui le
+contient ne suffit pas, c'est le texte SOURCE qui est comparé), plus une garde
+`if (document.querySelector('[data-cmd_uid="#uid#"]') === null) return` qui rend **inertes** les closures
+des rendus remplacés : le core n'expose aucune API de désabonnement.
+
+⚠️ Corollaire appliqué en même temps : l'état de marche est tenu dans une **variable JS** (`powerActif`),
+jamais relu depuis `hasClass('btn-primary')`. Sinon un affichage figé ne fait pas qu'afficher faux — il
+fait **envoyer l'ordre inverse** de celui attendu.
+
 Charge utile d'un événement info (`cmd::event()`) : `{cmd_id, value, display_value, unit, raw_unit,
 valueDate, collectDate, alertLevel}`.
 
@@ -252,6 +277,19 @@ n'existe dans les trois `core/i18n/*.json`.
   > sélectionner le widget à la main sur chaque équipement ; (2) dans ce cas le template est **déjà** posé
   > à l'entrée de `poserWidgetTuile()`, donc il ne peut plus signifier « masquage pas encore joué », et
   > l'utilisateur se retrouvait avec la tuile **et** les commandes qu'elle reprend.
+  >
+  > ⚠️⚠️ **SECONDE CORRECTION, LE MÊME JOUR — le premier correctif n'a rien changé, parce qu'il s'est
+  > trompé de sentinelle.** Il a remplacé `=== ''` par « le template ne contient pas `::` », en supposant
+  > que le core enregistrait `default`. Le code réel de `cmd::save()` (V4-stable) est :
+  > `if ($this->getTemplate('dashboard','') == '') { $this->setTemplate('dashboard', 'core::default'); }`
+  > — la sentinelle **contient** un `::`, donc la garde restait fausse et la tuile n'était toujours pas
+  > posée. Le prédicat est désormais explicite : `'' | 'default' | 'core::default'`. **Leçon** : une
+  > sentinelle de framework se **lit dans le framework**, jamais ne se devine — et un correctif qui
+  > repose sur une valeur supposée doit être vérifié contre la source avant d'être annoncé comme tenu.
+  >
+  > ⚠️ Corollaire découvert à cette occasion : le masquage étant **en aval** de cette garde, un seul
+  > critère faux produisait **les deux** symptômes rapportés (tuile non posée **et** doublons non
+  > masqués). Le second n'était pas un défaut distinct.
   **Écarté aussi** : tout mettre dans `postSave()` seul — cela ressusciterait la panne silencieuse que
   `CLAUDE.md` documente deux fois (UC05 et UC06 : un scan qui ne change rien n'émet aucun `save()`, donc
   aucun `postSave()`, donc rien n'apparaîtrait sur un parc stable).
@@ -298,11 +336,19 @@ n'existe dans les trois `core/i18n/*.json`.
   (`...$_reste`) a été écartée : la forme stricte est la seule où R1 se vérifie d'un coup d'œil par
   comparaison avec le core.
 
-- **D9 — `ambient_temp` et `target_temp` restent VISIBLES** (arbitré avec l'utilisateur le 2026-09-12) :
-  ces deux commandes sont `isHistorized = 1`, et les masquer ferait disparaître l'accès en un clic à leurs
-  graphiques (cf. R2). La tuile ne peut pas le restituer proprement — le clic `.history` se résout sur le
-  `data-cmd_id` du conteneur, donc sur l'hôte `power`. Deux lignes subsistent donc sous la tuile ;
-  l'AC1 reste tenu, la tuile regroupant bien l'état, la consigne, le mode et la vitesse.
+- **D9 — ~~`ambient_temp` et `target_temp` restent VISIBLES~~ → RÉVISÉE le 2026-09-12** : l'argument
+  d'origine (ces deux commandes sont `isHistorized = 1`, les masquer fait disparaître l'accès en un clic
+  à leurs graphiques, cf. R2 ; la tuile ne peut pas le restituer — le clic `.history` se résout sur le
+  `data-cmd_id` du conteneur, donc sur l'hôte `power`) reste **factuellement exact**, mais l'utilisateur a
+  tranché en recette pour le masquage : la tuile affiche déjà les deux valeurs, les laisser visibles les
+  montrait **en double**, ce que l'AC1 (« une tuile unique ») cherche précisément à éviter. Les deux
+  commandes sont donc masquées depuis la **v2 du périmètre**. L'historique reste atteignable en
+  réaffichant la commande, ou depuis la page d'analyse de l'équipement.
+
+  ⚠️ **C'est ce revirement qui impose une VERSION de périmètre** (`smartclim::VERSION_MASQUAGE_TUILE`)
+  plutôt qu'un booléen sur `CLE_MASQUAGE_TUILE` : un équipement déjà masqué sous la v1 doit rattraper les
+  **seules** cibles ajoutées en v2, sans re-masquer celles de la v1 — un utilisateur a pu en réafficher
+  une, et l'invariant « un masquage ne se rejoue jamais » vaut cible par cible.
 
 - **D10 — Hors ligne : bandeau seul, contrôles actifs** (arbitré avec l'utilisateur le 2026-09-12). Un
   `online` périmé ne doit pas rendre la tuile inutilisable ; si l'ordre échoue réellement, le message déjà
@@ -387,9 +433,10 @@ const JETON_TUILE  = 'tuile_smartclim';                 // -> jeton #tuile_smart
  *  try/catch par commande, ne lève JAMAIS. */
 private function poserWidgetTuile(array $_existantes)         // -> bool (posé à ce passage)
 /** isVisible = 0 sur les commandes reprises par la tuile. JAMAIS 'refresh' (#refresh_id#),
- *  JAMAIS 'power' (l'hôte), JAMAIS ambient_temp/target_temp (D9), jamais les concepts
- *  confort/oscillation/protection (hors périmètre). */
-private function masquerCommandesTuile(array $_existantes)    // -> int
+ *  JAMAIS 'power' (l'hôte), jamais les concepts confort/oscillation/protection (hors
+ *  périmètre). $_depuisVersion = version de périmètre déjà appliquée : seules les cibles
+ *  apparues APRÈS elle sont traitées (D9 révisée). */
+private function masquerCommandesTuile(array $_existantes, $_depuisVersion = 0) // -> int
 public static function libelleEnLigne($_enLigne)              // visibilité élargie (était private)
 ```
 
@@ -397,10 +444,9 @@ public static function libelleEnLigne($_enLigne)              // visibilité él
 
 | Masqué | Laissé visible |
 |---|---|
-| infos `online`, `mode`, `fan_speed`, `transport`, `last_update` | `power` (hôte de la tuile) |
-| actions `on`, `off`, `set_target_temp`, `mode_*`, `fan_*` | `refresh` (bouton d'en-tête du core, § 1.7) |
-| | `ambient_temp`, `target_temp` (**D9**, graphiques) |
-| | toutes les capacités secondaires (confort, oscillation, protection) — **hors périmètre** |
+| **v1** — infos `online`, `mode`, `fan_speed`, `transport`, `last_update` | `power` (hôte de la tuile) |
+| **v1** — actions `on`, `off`, `set_target_temp`, `mode_*`, `fan_*` | `refresh` (bouton d'en-tête du core, § 1.7) |
+| **v2** — infos `ambient_temp`, `target_temp` (**D9 révisée**) | toutes les capacités secondaires (confort, oscillation, protection) — **hors périmètre** |
 
 ### Modifications chirurgicales de `creerCommandesAction()` (l. 5437-5522)
 
@@ -500,7 +546,8 @@ l'élargissement de visibilité plutôt qu'une redéclaration), et les **noms de
   d'en-tête rappelant que la signature recopie celle du core et citant la version de référence
   (V4-stable, relue le 2026-09-12) ; (2) re-vérification à chaque montée de `compatibility` dans
   `info.json` ; (3) forme stricte retenue (**D8**), la variante variadique ayant été écartée.
-- **R2 — Accès aux graphiques** : traité par **D9** (`ambient_temp` / `target_temp` laissées visibles).
+- **R2 — Accès aux graphiques** : ~~traité par **D9**~~ — **assumé** depuis la révision de D9 : les deux
+  commandes sont masquées, l'historique se consulte depuis la page d'analyse de l'équipement.
 - **R3 — La fraîcheur est exacte au rendu, puis dérive pendant la session.** Quand rien ne change,
   `checkAndUpdateCmd()` **n'émet aucun événement** (`return false` sans `cmd::event()`), et
   `eqLogic::setStatus()` n'appelle `refreshWidget()` que pour les clés d'alerte du core — aucun

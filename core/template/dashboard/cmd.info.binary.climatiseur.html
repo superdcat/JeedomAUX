@@ -42,6 +42,21 @@
     if (!gestionnaires[_id]) {
       gestionnaires[_id] = []
       jeedom.cmd.addUpdateFunction(_id, function (_options) {
+        // Le littéral '#uid#' DOIT rester dans le CORPS de cette fonction, et il n'y est
+        // que pour ça : jeedom.cmd.addUpdateFunction() du core DÉDUPLIQUE par
+        // _function.toString(). Sans un littéral qui change à chaque rendu, toute
+        // ré-émission du widget (cmd::save() appelle refreshWidget(), et le dashboard
+        // remplace alors le HTML de la tuile) échouait à se réabonner : seule la closure
+        // du rendu PRÉCÉDENT restait enregistrée, et elle pilotait un DOM détaché.
+        // Symptôme de recette (2026-09-12) : tuile figée, le bouton Marche ne devenait
+        // jamais Arrêt. Les widgets du core tiennent l'unicité de la même façon — leur
+        // fonction enregistrée contient elle aussi '#uid#'.
+        if (document.querySelector('[data-cmd_uid="#uid#"]') === null) {
+          // Ce rendu a été remplacé : la closure est morte et ne doit plus rien écrire.
+          // Le core laisse de même ses anciennes fonctions inertes plutôt que de les
+          // désenregistrer (aucune API ne le permet).
+          return
+        }
         gestionnaires[_id].forEach(function (_f) {
           _f(_options)
         })
@@ -102,14 +117,17 @@
   // ---- Marche/Arrêt (AC1/AC2) ----
   var $bouton = $racine.find('.smartclim-tuile-etat')
   var $boutonTexte = $racine.find('.smartclim-tuile-etat-texte')
+  // État courant de la marche, tenu en variable et JAMAIS relu depuis une classe CSS :
+  // c'est lui, et non l'apparence du bouton, qui décide de l'ordre envoyé au clic.
+  var powerActif = false
   function majPower(_valeur) {
-    var actif = (parseInt(_valeur, 10) === 1)
-    $bouton.toggleClass('btn-primary', actif)
-    $bouton.toggleClass('btn-default', !actif)
+    powerActif = (parseInt(_valeur, 10) === 1)
+    $bouton.toggleClass('btn-primary', powerActif)
+    $bouton.toggleClass('btn-default', !powerActif)
     var nom = ''
-    if (actif && charge.actions.off) {
+    if (powerActif && charge.actions.off) {
       nom = charge.actions.off.nom
-    } else if (!actif && charge.actions.on) {
+    } else if (!powerActif && charge.actions.on) {
       nom = charge.actions.on.nom
     }
     $boutonTexte.text(nom)
@@ -123,8 +141,7 @@
     if ($bouton.hasClass('disabled')) {
       return
     }
-    var actif = $bouton.hasClass('btn-primary')
-    var cible = actif ? charge.actions.off : charge.actions.on
+    var cible = powerActif ? charge.actions.off : charge.actions.on
     if (!cible) {
       return
     }
@@ -141,7 +158,7 @@
     })
   })
 
-  // ---- Température ambiante (D9 : reste aussi accessible via sa propre ligne d'historique) ----
+  // ---- Température ambiante (sa commande info est masquée depuis la v2 du périmètre) ----
   var $ambiante = $racine.find('.smartclim-tuile-ambiante')
   if (charge.infos.ambient_temp) {
     $ambiante.text(charge.infos.ambient_temp.valeur + ' ' + charge.infos.ambient_temp.unite)

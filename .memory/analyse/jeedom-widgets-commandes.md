@@ -114,12 +114,32 @@ plusieurs commandes info ensemble.
 
 ## 6. Appliquer un template sans écraser le choix utilisateur
 
-- Poser **« si vide »** : `if ($cmd->getTemplate($version,'')==='') $cmd->setTemplate($version, ...)` à
-  chaque sync. Couvre les **installs existantes** (template absent → posé au prochain re-sync) **sans**
-  réécrire un widget choisi à la main. Même philosophie idempotente que `visibleOnCreate`/
-  `configurationOnCreate`.
-- Bord assumé : si l'utilisateur repasse explicitement au widget « par défaut » du core (template ''), le
-  nôtre est re-posé au prochain sync. Toléré (cosmétique, rare).
+⚠️⚠️ **« Si vide » NE VEUT PAS DIRE `=== ''` — mesuré dans `cmd::save()` (V4-stable, 2026-09-12) :**
+
+```php
+if ($this->getTemplate('dashboard', '') == '') { $this->setTemplate('dashboard', 'core::default'); }
+if ($this->getTemplate('mobile', '') == '')    { $this->setTemplate('mobile', 'core::default'); }
+```
+
+Une commande **qui a été enregistrée une seule fois** ne porte donc **jamais** un template vide : le core
+y grave la sentinelle `core::default`. Conséquences, vécues **deux fois** sur le plugin smartclim :
+
+- une garde `getTemplate($v,'') === ''` ne matche plus dès le premier `save()` → le widget du plugin
+  n'est **jamais** posé en automatique, et il faut le sélectionner à la main sur chaque commande ;
+- une garde « le template ne contient pas `::` » ne matche pas davantage — la sentinelle en contient un.
+
+**Le prédicat correct** : `$t === '' || $t === 'default' || $t === 'core::default'`. `default` nu est à
+accepter parce que `cmd::getWidgetTemplateCode()` le traite exactement comme `core::default`. Toute autre
+valeur est un widget réellement choisi (du core comme d'un plugin) et ne doit jamais être écrasée.
+
+⚠️ **Évaluer `dashboard` et `mobile` SÉPARÉMENT** : l'IHM du core les règle par deux champs distincts.
+
+⚠️ **Corollaire de conception** : ne jamais placer une action secondaire (masquage de commandes,
+initialisation…) **en aval** de cette garde sans le savoir — un seul critère faux fait alors disparaître
+deux comportements, et le second symptôme masque la cause du premier.
+
+- Bord assumé : si l'utilisateur repasse explicitement au widget « par défaut » du core, le nôtre est
+  re-posé au prochain sync. Toléré (cosmétique, rare) — et indissociable du prédicat ci-dessus.
 
 ## 7. ⚠️ CSP Jeedom : tout média/image EXTERNE est bloqué côté navigateur → proxy same-origin obligatoire
 
@@ -360,3 +380,42 @@ que le cycle **relit** réellement, jamais le `valueDate` d'une commande « dern
 sous condition de changement (cf. § 8.3) — sinon un appareil stable affiche un âge de plusieurs heures
 alors que la scrutation vient de confirmer son état. Et choisir la commande avec soin : celle qui
 décrit l'**état regardé**, pas celle qui bouge à chaque cycle quoi qu'il arrive.
+
+## 10. ⚠️⚠️ `jeedom.cmd.addUpdateFunction()` déduplique par le TEXTE de la fonction
+
+Code du core (`core/js/cmd.class.js`, V4-stable, relu le 2026-09-12) :
+
+```js
+jeedom.cmd.addUpdateFunction = function(_cmd_id, _function) {
+  ...
+  for (var i in jeedom.cmd.update[_cmd_id]) {
+    if (jeedom.cmd.update[_cmd_id][i].toString() == _function.toString()) {
+      return                       // <- abonnement SILENCIEUSEMENT ignoré
+    }
+  }
+  jeedom.cmd.update[_cmd_id].push(_function)
+}
+```
+
+**Le piège.** Un widget dont la fonction d'abonnement est une closure au texte source **constant**
+(typiquement une fonction générique qui relaie vers un tableau de gestionnaires) n'est enregistrée
+**qu'au tout premier rendu**. Or un widget est **ré-rendu** couramment : `cmd::save()` appelle
+`eqLogic::refreshWidget()`, et le dashboard remplace alors le HTML de la tuile. Au ré-rendu :
+
+1. le nouveau script s'exécute, ses closures pointent vers le **nouveau** DOM ;
+2. `addUpdateFunction()` voit un `toString()` identique et **retourne sans rien faire** ;
+3. seule la closure du rendu **précédent** reste abonnée — elle écrit dans un DOM **détaché**.
+
+Résultat : le widget se **fige**, sans aucune erreur console, sans rien dans les logs PHP. Vécu sur
+smartclim (2026-09-12) : le bouton Marche/Arrêt de la tuile ne reflétait plus jamais l'état.
+
+**La parade, c'est celle des widgets du core** : leur fonction enregistrée contient le littéral `#uid#`,
+substitué par `cmd::toHtml()` avec un `mt_rand()` — son `toString()` **change donc à chaque rendu**. À
+reproduire tel quel, en faisant figurer `#uid#` **dans le corps** de la fonction (une variable qui le
+contient ne suffit pas : c'est le texte SOURCE qui est comparé), et à compléter par une garde
+`if (document.querySelector('[data-cmd_uid="#uid#"]') === null) return` — le core n'expose aucune API de
+désabonnement, les closures des rendus remplacés restent enregistrées et doivent devenir **inertes**.
+
+⚠️ Corollaire de style : **tenir l'état d'une commande dans une variable JS**, jamais le relire depuis
+une classe CSS (`hasClass('btn-primary')`). Sinon un affichage figé ne fait pas qu'afficher faux : il
+fait **envoyer l'ordre inverse** de celui attendu.

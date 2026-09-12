@@ -575,7 +575,7 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   une erreur.
   Côté `smartclim.class.php`, la même UC ajoute `poserWidgetTuile()` / `masquerCommandesTuile()` et
   l'override `smartclimCmd::toHtml()`.
-  ⚠️ **`masquerCommandesTuile()` est joué UNE SEULE FOIS par équipement, et son marqueur d'unicité
+  ⚠️ **`masquerCommandesTuile()` est joué UNE SEULE FOIS PAR CIBLE ET PAR ÉQUIPEMENT, et son marqueur
   est `smartclim::CLE_MASQUAGE_TUILE` posé sur la CONFIGURATION DE LA COMMANDE `power`** — il le fallait
   bien, `creerCommandesAction()` étant appelée par `postSave()` **et** par `appliquerEtat()`, donc à
   chaque cycle de lecture, et un masquage rejoué écraserait le choix d'un utilisateur ayant réaffiché une
@@ -586,19 +586,26 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   en recette le 2026-09-12) : le masquage doit aussi être joué quand `power` porte **déjà** la tuile sans
   avoir jamais masqué — utilisateur l'ayant sélectionnée à la main, ou pose antérieure au correctif
   ci-dessous. Sans cela il obtient la tuile **et** les commandes qu'elle reprend, affichées en double.
-  ⚠️⚠️ **`smartclim::templateLibre()` est LE prédicat « aucun widget choisi », et le critère n'est PAS
-  `=== ''`** : la garde d'origine n'a **jamais** posé la tuile en automatique (symptôme de recette :
-  widget à forcer à la main sur chaque équipement). Motif — `power` est la **seule** commande sur
-  laquelle le plugin pose un widget **après** son `save()` (`creerCommandesInfo()`), là où les widgets
-  d'action sont posés sur un objet `cmd` **neuf** dont le `display` est encore vierge ; le core y
-  enregistre une **sentinelle** (`default`), que `=== ''` lit comme « widget choisi par l'utilisateur ».
-  Le critère retenu est donc la **présence de `::`** : tout widget réellement sélectionné, de plugin
-  comme du core, s'écrit `<domaine>::<nom>`. Les deux poses de `smartclim::etat` passent par le même
-  prédicat, pour ne pas laisser subsister deux notions de « template vide ».
+  ⚠️⚠️ **`smartclim::templateLibre()` est LE prédicat « aucun widget choisi », et son critère est la
+  SENTINELLE `core::default` du core — lue dans `cmd::save()`, pas déduite** : ce `save()` fait
+  `if (getTemplate('dashboard','') == '') setTemplate('dashboard', 'core::default')`, si bien qu'une
+  commande **déjà enregistrée une fois** ne porte **jamais** un template vide. Les deux gardes
+  précédentes se sont trompées de critère pour cette raison — `=== ''` ne matche plus dès le premier
+  `save()`, et « absence de `::` » pas davantage, la sentinelle en contenant un — et **la tuile n'a
+  donc jamais été posée automatiquement** (recette du 2026-09-12, deux fois de suite). Le prédicat
+  accepte `''`, `default` et `core::default`, rien d'autre. Corollaire **majeur** : le masquage étant
+  **en aval** de cette garde dans `poserWidgetTuile()`, il ne se jouait pas non plus — un seul critère
+  faux produisait les deux symptômes. Les deux poses de `smartclim::etat` passent par le même prédicat,
+  pour ne pas laisser subsister deux notions de « template vide ».
+  ⚠️ Les versions **dashboard et mobile sont évaluées séparément** : l'IHM du core les règle par deux
+  champs distincts, une seule lecture laisserait le mobile indéfiniment au widget par défaut.
   ⚠️ **`power` et `refresh` ne sont JAMAIS masquées** (la première héberge la tuile, la seconde est le
-  bouton d'en-tête du core), **ni `ambient_temp` / `target_temp`** — décision de recette : elles sont
-  historisées, et les masquer ferait disparaître l'accès en un clic à leurs graphiques, que la tuile ne
-  peut pas restituer (le clic `.history` se résout sur le `data-cmd_id` du conteneur, donc sur `power`).
+  bouton d'en-tête du core). En revanche **`ambient_temp` / `target_temp` LE SONT depuis la v2** du
+  périmètre (recette du 2026-09-12) : la tuile affiche les deux, les laisser visibles les montrait en
+  double — **D9 est donc révisée**, l'accès en un clic à leurs graphiques se retrouve en réaffichant la
+  commande. ⚠️ C'est pour cela que `CLE_MASQUAGE_TUILE` porte une **version de périmètre**
+  (`VERSION_MASQUAGE_TUILE`) et non un booléen : un équipement déjà masqué en v1 rattrape les **seules**
+  cibles ajoutées en v2, sans re-masquer une commande que l'utilisateur aurait réaffichée.
   ⚠️ **`smartclimCmd::toHtml()` est un OVERRIDE d'une méthode publique du core, pas un point d'extension** :
   il n'est légitimé que par `cmd::cast()`, qui instancie toute commande d'un équipement `smartclim` en
   `smartclimCmd`. Sa signature doit donc recopier **exactement** `($_version = 'dashboard',
@@ -923,6 +930,18 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Le bouton « Rafraîchir » ne peut pas héberger un widget et ne doit jamais être masqué** :
   `eqLogic::preToHtml()` cherche `getCmd('action', 'refresh')`, le place en `#refresh_id#` dans l'en-tête
   de l'équipement **et l'exclut du corps** — notre `CMD_RAFRAICHIR` en porte le `logicalId`.
+  ⚠️⚠️ **`jeedom.cmd.addUpdateFunction()` DÉDUPLIQUE par `_function.toString()`** — donc une fonction
+  d'abonnement dont le **texte source** est identique d'un rendu à l'autre n'est enregistrée **qu'une
+  fois** : au ré-rendu du widget (tout `cmd::save()` appelle `refreshWidget()`, et le dashboard remplace
+  alors le HTML), seule la closure du rendu **précédent** reste abonnée, et elle pilote un DOM **détaché**
+  — la tuile se fige, sans aucune erreur JS. Symptôme de recette du 2026-09-12 : le bouton « Marche » ne
+  devenait jamais « Arrêt ». La parade est celle des widgets du core : faire figurer le littéral `#uid#`
+  **dans le corps** de la fonction enregistrée (il change à chaque rendu), plus une garde
+  `document.querySelector('[data-cmd_uid="#uid#"]') === null` qui rend inertes les closures des rendus
+  remplacés (le core n'expose aucune API de désabonnement).
+  ⚠️ **Un état de commande se tient en variable JS, jamais relu depuis une classe CSS** : décider l'ordre
+  à envoyer d'après `hasClass('btn-primary')` fait dépendre l'action de l'apparence — un affichage figé
+  envoie alors l'ordre inverse de celui attendu.
   ⚠️ **La fraîcheur d'un état se lit sur `collectDate`, jamais sur `valueDate`** :
   `eqLogic::checkAndUpdateCmd()` réécrit `collectDate` **à chaque cycle** même sans changement, tandis que
   `valueDate` (donc `CMD_DERNIERE_MAJ`, alimentée sous `if ($change)`) date le dernier **changement**. Les

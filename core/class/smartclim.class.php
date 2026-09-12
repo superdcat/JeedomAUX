@@ -114,7 +114,16 @@ class smartclim extends eqLogic {
   // setConfiguration() sur l'eqLogic imposerait un save() -> postSave() ->
   // creerCommandesAction() -> poserWidgetTuile(), donc une récursion. cmd::save()
   // n'appelle pas eqLogic::postSave() : le marqueur y est inerte.
+  //
+  // ⚠️ Ce marqueur porte une VERSION de périmètre, pas un booléen : un équipement déjà
+  // masqué sous un périmètre plus étroit doit pouvoir rattraper les cibles AJOUTÉES depuis,
+  // sans re-masquer celles du périmètre précédent (un utilisateur a pu en réafficher une :
+  // c'est l'invariant « un masquage ne se rejoue jamais »). masquerCommandesTuile() ne
+  // traite donc que les cibles dont la version d'apparition est > à celle déjà enregistrée.
+  // v1 : périmètre d'origine d'UC01. v2 (recette du 2026-09-12) : ajout d'ambient_temp et
+  // target_temp, que la tuile affiche aussi — elles restaient donc en double.
   const CLE_MASQUAGE_TUILE = 'tuile_masquage_joue';
+  const VERSION_MASQUAGE_TUILE = 2;
 
   // UC01 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) :
   // suffixes des deux commandes action de chaque fonction de confort — <concept>_on /
@@ -5513,6 +5522,8 @@ class smartclim extends eqLogic {
     if ($power->getType() !== 'info') {
       return false;
     }
+    // Le DASHBOARD fait foi pour décider « widget choisi à la main » : c'est la version
+    // que l'utilisateur règle en premier, et la seule dont dépend le masquage ci-dessous.
     $template = (string) $power->getTemplate('dashboard', '');
     if (!self::templateLibre($template) && $template !== self::WIDGET_TUILE) {
       // Widget choisi à la main (le nôtre ou celui d'un autre plugin) : on ne touche ni
@@ -5520,11 +5531,22 @@ class smartclim extends eqLogic {
       return false;
     }
 
+    // ⚠️ Les deux versions sont évaluées SÉPARÉMENT : l'IHM du core les règle par des
+    // champs distincts, si bien qu'un utilisateur ayant sélectionné la tuile pour le seul
+    // dashboard serait resté indéfiniment sur le widget par défaut en mobile.
+    $aPoser = array();
+    foreach (array('dashboard', 'mobile') as $version) {
+      if (self::templateLibre((string) $power->getTemplate($version, ''))) {
+        $aPoser[] = $version;
+      }
+    }
+
     $pose = false;
-    if (self::templateLibre($template)) {
+    if (!empty($aPoser)) {
       try {
-        $power->setTemplate('dashboard', self::WIDGET_TUILE);
-        $power->setTemplate('mobile', self::WIDGET_TUILE);
+        foreach ($aPoser as $version) {
+          $power->setTemplate($version, self::WIDGET_TUILE);
+        }
         $power->save();
         $pose = true;
       } catch (Throwable $t) {
@@ -5533,19 +5555,21 @@ class smartclim extends eqLogic {
       }
     }
 
-    // ⚠️ Le masquage n'est PLUS conditionné à la pose de CE passage : il est joué une
-    // fois dès que 'power' porte la tuile, y compris quand l'utilisateur l'a
-    // sélectionnée lui-même dans la liste des widgets — sans quoi il se retrouve avec
-    // la tuile ET les commandes qu'elle reprend, affichées en double. Le marqueur
-    // d'unicité est CLE_MASQUAGE_TUILE, porté par 'power' : le template ne pouvait plus
-    // jouer ce rôle dès lors qu'il peut être déjà posé à l'entrée.
-    if (!$power->getConfiguration(self::CLE_MASQUAGE_TUILE)) {
+    // ⚠️ Le masquage n'est PLUS conditionné à la pose de CE passage : il est joué dès
+    // que 'power' porte la tuile, y compris quand l'utilisateur l'a sélectionnée lui-même
+    // dans la liste des widgets — sans quoi il se retrouve avec la tuile ET les commandes
+    // qu'elle reprend, affichées en double. Le marqueur est CLE_MASQUAGE_TUILE, porté par
+    // 'power' : le template ne pouvait plus jouer ce rôle dès lors qu'il peut être déjà
+    // posé à l'entrée. C'est une VERSION de périmètre, pas un booléen (cf. la constante) :
+    // un équipement masqué sous le périmètre v1 rattrape les seules cibles ajoutées en v2.
+    $versionMasquee = (int) $power->getConfiguration(self::CLE_MASQUAGE_TUILE, 0);
+    if ($versionMasquee < self::VERSION_MASQUAGE_TUILE) {
       // masquerCommandesTuile() ne lève jamais (try/catch PAR commande, cf. son propre
       // docblock) : pas de wrapping supplémentaire ici, même patron que l'appel à
       // masquerCommandesModes() depuis appliquerCapacites().
-      $this->masquerCommandesTuile($_existantes);
+      $this->masquerCommandesTuile($_existantes, $versionMasquee);
       try {
-        $power->setConfiguration(self::CLE_MASQUAGE_TUILE, 1);
+        $power->setConfiguration(self::CLE_MASQUAGE_TUILE, self::VERSION_MASQUAGE_TUILE);
         $power->save();
       } catch (Throwable $t) {
         log::add('smartclim', 'warning', 'Marqueur de masquage de la tuile non enregistré (équipement "' . self::neutraliserPourLog($this->getHumanName()) . '") : ' . self::neutraliserPourLog($t->getMessage()));
@@ -5558,52 +5582,76 @@ class smartclim extends eqLogic {
    * Vrai si AUCUN widget n'est sélectionné sur une commande, c'est-à-dire si le template
    * est libre et peut recevoir le nôtre (§ 8.2 de la spec technique UC06 du MVP).
    *
-   * ⚠️ Le critère n'est PAS `=== ''` : le core n'enregistre pas nécessairement la chaîne
-   * vide pour « widget par défaut » (il y stocke une sentinelle, 'default'), et la garde
-   * historique empêchait alors TOUTE pose sur une commande déjà sauvegardée — cas de la
-   * tuile, posée sur 'power' que creerCommandesInfo() vient d'enregistrer, là où les
-   * widgets d'action sont posés sur un objet cmd neuf dont le display est encore vierge.
-   * Le critère retenu est la PRÉSENCE DU SÉPARATEUR '::' : tout widget réellement
-   * sélectionné, de plugin comme du core, s'écrit '<domaine>::<nom>' — toute valeur qui
-   * n'en porte pas est une sentinelle du core, jamais un choix de l'utilisateur.
+   * ⚠️⚠️ LE CRITÈRE EST LA SENTINELLE DU CORE, et elle est MESURÉE, plus déduite —
+   * cmd::save() (jeedom/core, branche V4-stable, relue le 2026-09-12) :
+   *     if ($this->getTemplate('dashboard', '') == '') { $this->setTemplate('dashboard', 'core::default'); }
+   * Autrement dit une commande QUI A ÉTÉ ENREGISTRÉE UNE FOIS ne porte JAMAIS un
+   * template vide : le core y grave 'core::default'. Les deux gardes précédentes se sont
+   * trompées de critère pour cette raison — `=== ''` ne matchait plus dès le premier
+   * save(), et « absence de :: » pas davantage, la sentinelle en contenant un. Résultat
+   * en recette (2026-09-12) : la tuile n'était JAMAIS posée automatiquement, et le
+   * masquage des doublons, qui est en aval de cette garde dans poserWidgetTuile(), ne
+   * s'est donc jamais joué non plus. Ne pas « simplifier » ce test sans relire
+   * cmd::save() du core de la version visée.
+   *
+   * 'default' nu est accepté lui aussi : cmd::getWidgetTemplateCode() le traite
+   * exactement comme 'core::default'. Toute AUTRE valeur est un widget réellement choisi
+   * — du core comme d'un plugin — et n'est jamais écrasée (AC9).
    *
    * @param string $_template Valeur de cmd::getTemplate().
    * @return bool
    */
   private static function templateLibre($_template) {
-    return strpos((string) $_template, '::') === false;
+    $template = trim((string) $_template);
+    return $template === '' || $template === 'default' || $template === 'core::default';
   }
 
   /**
    * Masque (isVisible = 0, JAMAIS de suppression) les commandes reprises par la tuile
    * « climatiseur » (§ 6 « Périmètre exact du masquage » de la spec technique UC01 du
    * domaine post-mvp/06-ergonomie-jeedom). Appelée UNIQUEMENT depuis poserWidgetTuile(),
-   * et UNE SEULE FOIS par équipement (marqueur CLE_MASQUAGE_TUILE sur la commande
-   * 'power') — un masquage rejoué à chaque cycle écraserait le choix d'un utilisateur qui
-   * aurait réaffiché la commande (bord assumé, D3).
+   * et UNE SEULE FOIS PAR CIBLE ET PAR ÉQUIPEMENT (marqueur versionné CLE_MASQUAGE_TUILE
+   * sur la commande 'power') — un masquage rejoué à chaque cycle écraserait le choix d'un
+   * utilisateur qui aurait réaffiché la commande (bord assumé, D3). D'où le paramètre
+   * $_depuisVersion : seules les cibles APPARUES APRÈS la version déjà enregistrée sont
+   * traitées, ce qui permet d'élargir le périmètre sans jamais re-masquer l'ancien.
    *
-   * ⚠️ JAMAIS 'power' (hôte de la tuile), JAMAIS 'refresh' (bouton d'en-tête du core,
-   * § 1.7), JAMAIS 'ambient_temp'/'target_temp' (D9, accès aux graphiques historisés), et
-   * jamais les concepts confort/oscillation/protection (hors périmètre de cette UC).
+   * ⚠️ JAMAIS 'power' (hôte de la tuile) ni 'refresh' (bouton d'en-tête du core, § 1.7),
+   * et jamais les concepts confort/oscillation/protection (hors périmètre de cette UC).
+   * ⚠️ 'ambient_temp'/'target_temp' SONT masquées depuis la v2 (recette du 2026-09-12) :
+   * la tuile affiche les deux, les laisser visibles les montrait en double. D9, qui les
+   * gardait visibles pour l'accès en un clic à leurs graphiques historisés, est donc
+   * RÉVISÉE — l'historique reste atteignable en réaffichant la commande, ou depuis la page
+   * d'analyse de l'équipement.
    *
    * @param array<string, cmd> $_existantes Commandes indexées par logicalId.
+   * @param int $_depuisVersion Version de périmètre déjà appliquée à cet équipement (0 = aucune).
    * @return int Nombre de commandes masquées.
    */
-  private function masquerCommandesTuile(array $_existantes) {
-    $cibles = array(
-      smartclimCapabilities::CONCEPT_ONLINE => true,
-      smartclimCapabilities::CONCEPT_MODE => true,
-      smartclimCapabilities::CONCEPT_FAN_SPEED => true,
-      self::CMD_TRANSPORT => true,
-      self::CMD_DERNIERE_MAJ => true,
-      self::CMD_ON => true,
-      self::CMD_OFF => true,
-      self::CMD_CONSIGNE => true,
-    );
-    foreach ($_existantes as $logicalId => $cmd) {
-      if (strpos($logicalId, self::PREFIXE_CMD_MODE) === 0 || strpos($logicalId, self::PREFIXE_CMD_VITESSE) === 0) {
-        $cibles[$logicalId] = true;
+  private function masquerCommandesTuile(array $_existantes, $_depuisVersion = 0) {
+    $depuis = (int) $_depuisVersion;
+    $cibles = array();
+    if ($depuis < 1) {
+      $cibles = array(
+        smartclimCapabilities::CONCEPT_ONLINE => true,
+        smartclimCapabilities::CONCEPT_MODE => true,
+        smartclimCapabilities::CONCEPT_FAN_SPEED => true,
+        self::CMD_TRANSPORT => true,
+        self::CMD_DERNIERE_MAJ => true,
+        self::CMD_ON => true,
+        self::CMD_OFF => true,
+        self::CMD_CONSIGNE => true,
+      );
+      foreach ($_existantes as $logicalId => $cmd) {
+        if (strpos($logicalId, self::PREFIXE_CMD_MODE) === 0 || strpos($logicalId, self::PREFIXE_CMD_VITESSE) === 0) {
+          $cibles[$logicalId] = true;
+        }
       }
+    }
+    if ($depuis < 2) {
+      // v2 : les deux températures, que la tuile affiche elle aussi (révision de D9).
+      $cibles[smartclimCapabilities::CONCEPT_AMBIENT_TEMP] = true;
+      $cibles[smartclimCapabilities::CONCEPT_TARGET_TEMP] = true;
     }
 
     $masquees = 0;

@@ -174,7 +174,16 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 				echo '<br>';
 				// Nom d'équipement = donnée d'origine externe (cloud AUX Home ou diffusion LAN Broadlink
 				// non authentifiée, post-mvp 01-04) : échapper avant rendu HTML (XSS stocké corrigé en review).
-				echo '<span class="name">' . htmlspecialchars($eqLogic->getHumanName(true, true), ENT_QUOTES, 'UTF-8') . '</span>';
+				// ⚠️ getHumanName(true, true) ne renvoie PAS du texte : le second argument (prettify) fait
+				// fabriquer par le core le HTML du label de l'objet parent (couleur, icône) puis du nom en gras.
+				// L'échapper en bloc affichait donc les balises telles quelles. Le rendu « prettify » est
+				// recomposé ici à l'identique : HTML du core pour l'objet (nom saisi par un admin Jeedom),
+				// échappement pour le seul nom d'équipement, qui est la donnée d'origine externe.
+				$sc_objetParent = $eqLogic->getObject();
+				$sc_labelObjet = is_object($sc_objetParent)
+					? $sc_objetParent->getHumanName(true, true)
+					: '<span class="label label-default">' . __('Aucun', __FILE__) . '</span>';
+				echo '<span class="name">' . $sc_labelObjet . '<br/><strong> ' . htmlspecialchars($eqLogic->getName(), ENT_QUOTES, 'UTF-8') . '</strong></span>';
 				// UC08 (AC8) : badge d'état de connexion, DÉJÀ traduit côté serveur
 				// (smartclim::etatsConnexionAffichables() ci-dessus, calculé une seule fois).
 				$sc_etatCarte = isset($smartclimEtatsConnexion[$eqLogic->getId()]) ? $smartclimEtatsConnexion[$eqLogic->getId()] : null;

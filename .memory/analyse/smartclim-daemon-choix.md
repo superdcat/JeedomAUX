@@ -137,10 +137,21 @@ compatibilité `paho-mqtt` 1.x vs 2.x (API cliente incompatible entre les deux m
       D'où **trois marches**, et non une seule :
       1. **Validation d'accès** — un CONNECT authentifié, lecture du code retour. Zéro dépendance, zéro
          démon. C'est le seul geste manquant.
+         ⚠️ **INSTRUMENTÉE le 2026-09-12** (UC05 du domaine post-mvp/05,
+         `core/php/sonde-mqtt-auxhome.php`) — **pas « jouée »** : la machine de développement n'a ni PHP,
+         ni Jeedom, ni compte AUX Home, donc le CONNECT réel n'a **pas** pu être envoyé pendant ce cycle.
+         Elle ne sera **jouée** qu'après exécution du protocole de recette par l'utilisateur (§ 10 de la
+         spec technique de l'UC05) — voir le résultat au § 7.2 et la décision au § 7.7 de
+         `smartclim-transport-aux-home.md`.
       2. **MQTT ponctuel en PHP** dans le cycle de cron existant : si `query_temperatures()` se transpose,
          on gagne potentiellement la **fraîcheur d'ambiante** — le vrai point faible du transport
          (`smartclim-transport-aux-home.md` § 6.4) — **sans démon, sans `packages.json`, sans indicateur
          de dépendances**. ⚠️ Cette marche **n'existait pas** dans l'arbitrage d'origine.
+         ⚠️⚠️ **La dérogation TLS de l'UC05 ne vaut pas précédent** — toute UC ultérieure qui ouvrirait
+         cette marche doit **revérifier le certificat au moment où elle s'écrit** (protocole de re-mesure :
+         `core/php/sonde-mqtt-auxhome.php --certificat`) plutôt que de recopier la dérogation bornée et
+         datée de la sonde de validation. Le vecteur de propagation d'une dérogation TLS n'est jamais
+         l'autoload, c'est la **recopie humaine** d'une fonction « qui marchait déjà ».
       3. **Démon Python + souscription permanente** : justifié seulement si la marche 2 réussit **et** que
          l'évènement non sollicité (changement depuis la télécommande) est retenu comme besoin. Le démon
          reste de toute façon justifié **indépendamment** par le WebSocket du cloud legacy (UC03 de ce

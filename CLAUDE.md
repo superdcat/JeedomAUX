@@ -602,8 +602,7 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   retrait s'y fait par `grep -n auxlink`, pas par suppression de blocs. Détail : spec technique d'UC04 § 10.
   ⚠️ À lancer sous `www-data` (`sudo -u www-data php …`) : le pong est écrit par le processus Apache dans
   le cache, et la CLI le relit. Vaut aussi pour les trois CLI existantes.
-- **`core/php/commande-auxcloud.php`** — **existe** depuis l'UC03 du domaine post-MVP 03. **5ᵉ et dernière
-  CLI** du plugin, même moule que les quatre autres (garde `php_sapi_name() === 'cli'` **avant tout
+- **`core/php/commande-auxcloud.php`** — **existe** depuis l'UC03 du domaine post-MVP 03. **5ᵉ CLI** du plugin, même moule que les autres (garde `php_sapi_name() === 'cli'` **avant tout
   `require_once`**, aucun POST, aucune écriture en base ni sur disque, sorties FR **sans `__()`**).
   Cinq usages : `--lister`, `--etat`, `--commande=<logicalId> [--valeur=]`, `--parametre=<clé> --valeur=<n>`
   et `--special` (le seul moyen de trancher factuellement l'utilité du second `get`).
@@ -617,6 +616,35 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ `--parametre` accepte une **clé brute** : sa forme est validée **deux fois** (dans le script pour un
   message utilisable, dans `smartclimAuxCloudApi::sonderParametre()` comme barrière) — défense en
   profondeur, ne supprimer ni l'une ni l'autre comme « redondante ».
+- **`core/php/sonde-mqtt-auxhome.php`** — **existe** depuis l'UC05 du domaine post-MVP 05. **6ᵉ CLI** du
+  plugin, même moule que les cinq autres (garde `php_sapi_name() === 'cli'` **avant tout `require_once`**,
+  aucun POST, aucune écriture en base ni sur disque, sorties FR **sans `__()`**). Instrument de mesure
+  **jamais appelé par le plugin en fonctionnement** : il construit un **CONNECT MQTT 3.1.1 à la main** sur
+  un socket TLS et lit le **CONNACK** du broker AUX Home européen, pour trancher la seule question que le
+  spike d'UC01 avait laissée ouverte — « nos identifiants EU sont-ils acceptés ? ». Trois modes :
+  `--certificat` (aucun identifiant envoyé), `--controle` (CONNECT **anonyme** vers le broker **CN** à
+  certificat **valide**, donc TLS pleinement vérifié) et `--connack` (le test réel).
+  ⚠️⚠️ **Seul fichier du dépôt qui déroge à « TLS toujours vérifié »**, et la dérogation est cadrée par
+  quatre choses simultanées : un drapeau `--accepter-certificat-invalide` **jamais implicite**, la garde
+  CLI, le `Deny from all` de `core/php/.htaccess`, et surtout **l'absence de toute entrée dans
+  `core/php/smartclim.inc.php`** — aucune classe n'est créée, donc la dérogation n'est résoluble depuis
+  **aucun** point d'entrée du plugin, et chaque invocation est un **processus isolé**. Motif : le
+  certificat du broker EU est **expiré** (2025-11-06) *et* son SAN ne couvre pas son nom d'hôte.
+  ⚠️ **Cette dérogation NE VAUT PAS PRÉCÉDENT** : toute UC qui voudrait exploiter ce canal doit
+  **revérifier le certificat au moment où elle s'écrit**. Le vecteur de propagation d'une dérogation n'est
+  pas l'autoload — c'est la **recopie humaine** d'une fonction « qui marchait déjà dans la sonde ».
+  ⚠️ **`--controle` n'est pas un confort** : il exerce toute la chaîne de construction du paquet contre un
+  broker au certificat **valide**, sans envoyer le moindre secret. Sans lui, un varint mal encodé produit
+  un paquet malformé, donc une connexion fermée, **lue comme un refus d'authentification** — soit un faux
+  négatif consigné dans l'analyse.
+  ⚠️ **`conclusion()` porte l'AC3 par DEUX mécanismes INDÉPENDANTS, à ne jamais imbriquer** : la
+  discrimination d'une série homogène de `0x02` (qui désigne le **ClientId**, pas le `configId`) s'évalue
+  **avant** la garde des trois conditions, et **ne dépend d'aucune d'elles** — `--protocole` n'acceptant
+  qu'une valeur par invocation, l'imbriquer la rendrait **inatteignable par construction**.
+  ⚠️ Livrée **non recettée**, comme les transports LAN et legacy : le fait mesuré n'existera qu'après
+  exécution du protocole du § 10 de sa spec technique. Le `❓` du § 7.2 de
+  `.memory/analyse/smartclim-transport-aux-home.md` est **volontairement intact** jusque-là, et le § 7.7
+  n'est qu'un **gabarit en attente**.
 - **`core/class/smartclimTransport.class.php`** — **existe** depuis l'UC01 du domaine post-MVP 02. Couche
   de **décision de transport**, et rien d'autre : même statut que `smartclimCapabilities` et
   `smartclimFrame` — aucune E/S, aucun socket, aucun cURL, aucune écriture de cache, aucun `config::save`,
@@ -797,8 +825,7 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   l'AC5 de cette UC (« en CLOUD, aucun paquet LAN »), conservé parce qu'il est la seule façon de tester le
   LAN sur un équipement réglé en CLOUD, et qu'un outil CLI admin/SSH nommé pour ce qu'il fait n'est pas
   « une commande » au sens de l'AC.
-- **`core/php/sonde-intent-auxhome.php`** — **existe** depuis l'UC01 du domaine post-MVP 04. Troisième et
-  dernière CLI du plugin, calquée sur les deux précédentes (garde `php_sapi_name() === 'cli'` **avant**
+- **`core/php/sonde-intent-auxhome.php`** — **existe** depuis l'UC01 du domaine post-MVP 04. Troisième CLI du plugin, calquée sur les deux précédentes (garde `php_sapi_name() === 'cli'` **avant**
   tout `require_once`, aucun POST, aucune écriture en base ni sur disque, sorties FR **sans `__()`**).
   C'est l'**instrument de mesure** des fonctions de confort : `--etat` (lecture seule),
   `--concept=<code>`, ou `--intent=<clé brute>` — il lit la trame, envoie l'ordre, attend, relit, et
@@ -1358,7 +1385,7 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   ⚠️ **`core/php/.htaccess` whiteliste UN SEUL fichier** depuis l'UC02 du domaine post-MVP 05 —
   `jeeSmartclim.php`, via un bloc `<Files>` sur le modèle de `plugin_info/.htaccess` : c'est le rappel HTTP
   du démon, il **doit** être joignable, sinon le démon s'arrête au démarrage sur un 403. Le `Deny from all`
-  continue de protéger `smartclim.inc.php` et les **5 CLI** — n'y ajouter aucun autre fichier sans vérifier
+  continue de protéger `smartclim.inc.php` et les **6 CLI** — n'y ajouter aucun autre fichier sans vérifier
   ce qu'il rendrait public, et ne jamais élargir le bloc à une **extension** (ce serait ouvrir tout le
   dossier).
   ⚠️ **`plugin_info/.htaccess` whiteliste des extensions** (`allow from all` sur les images) pour servir

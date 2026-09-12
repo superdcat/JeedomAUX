@@ -58,8 +58,9 @@ laisser ouverte.
 
 ## Critères d'acceptation
 
-- [ ] **AC1** — La décision sur le certificat TLS invalide est consignée **explicitement** dans les notes
+- [x] **AC1** — La décision sur le certificat TLS invalide est consignée **explicitement** dans les notes
       d'analyse avant toute connexion : blocage assumé, ou exception cadrée et bornée à ce test.
+      (D-1, `.memory/analyse/smartclim-transport-aux-home.md` § 7.3, datée du 2026-09-12.)
 - [ ] **AC2** — Si le test est mené, le § 7.2 de `smartclim-transport-aux-home.md` ne porte plus le `❓`
       « nos identifiants EU sont-ils acceptés ? » : il affirme le résultat, avec le code retour observé.
 - [ ] **AC3** — Une conclusion négative n'est consignée qu'après avoir écarté le `configId` comme cause :
@@ -68,8 +69,9 @@ laisser ouverte.
       `id` essayés, quel code de retour) — c'est la seule voie sans compromis TLS.
 - [ ] **AC5** — Une décision explicite est consignée : à quelle marche du § 6 de
       `smartclim-daemon-choix.md` on s'engage, ou maintien de la scrutation avec le motif.
-- [ ] **AC6** — Aucun fichier versionné ne contient de jeton, d'`uid`, de `configId` réel ni de capture
-      brute d'échange MQTT.
+- [x] **AC6** — Aucun fichier versionné ne contient de jeton, d'`uid`, de `configId` réel ni de capture
+      brute d'échange MQTT. (Couvert par construction : `core/php/sonde-mqtt-auxhome.php` n'écrit rien sur
+      disque, et les fichiers d'analyse modifiés ne portent que de la forme, § 7.1/7.2/7.3/7.7.)
 
 ## Impact i18n
 

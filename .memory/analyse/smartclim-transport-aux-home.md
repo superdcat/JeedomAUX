@@ -759,12 +759,31 @@ sur ce champ tant que cette mesure n'est pas faite. Le gain certain porterait su
   exactement la forme du backend EU**. Les deux ingrédients (`uid` et jeton) sont donc **déjà extraits et
   déjà en cache de session** par `smartclimAuxHomeApi::login()` (cf. § 2.1) : côté REST, il n'y a **rien à
   ajouter**.
+  ⚠️⚠️ **Deux écarts à cette table, identifiés lors de l'écriture de l'UC05 (2026-09-12), tous deux
+  consignés à la lettre au § 2.1 de sa spec technique** :
+  1. **Le `client-id` de la référence porte en réalité un SUFFIXE** : `usr<uid>_ha_<6 derniers caractères
+     du device_id>`, `usr<uid>` seul n'étant que son **repli** (branche appelée quand aucun `device_id`
+     n'est disponible). Sans `device_id` côté EU au moment de cette UC, `core/php/sonde-mqtt-auxhome.php`
+     utilise ce repli — donc un **confondant possible** d'un `0x02` (*Identifier rejected*) homogène : un
+     tel résultat désignerait le ClientId, pas le `configId` ni les identifiants. Dette **D-05-05-01**.
+  2. **La référence parle en réalité MQTT 3.1** (`MQIsdp`, niveau de protocole **3**), pas 3.1.1 — le
+     tableau ci-dessus ne le précisait pas. Le spike du 2026-09-07 a prouvé que le broker EU **accepte**
+     un CONNECT de niveau 4 (il répond `0x04`, pas `0x01`), mais rien n'établit que sa politique
+     d'**authentification** soit identique dans les deux dialectes. D'où l'option `--protocole=3|4` de la
+     sonde MQTT et l'interdiction faite à `conclusion()` de conclure négatif sans que les deux niveaux
+     aient été essayés.
 
 ### 7.2 Ce qui reste ouvert — et pourquoi ce n'est plus la même question
 
 - ❓ **Nos identifiants EU sont-ils acceptés par ce broker ?** Un broker qui répond n'est pas un broker qui
   sert : tout ce qui est prouvé, c'est qu'un processus MQTT écoute et refuse les anonymes. Que le compte EU
   y soit connu, que l'appareil y publie, que les topics soient ceux du CN : **tout cela reste à établir.**
+  ⚠️ **Instrument livré (UC05 du domaine post-mvp/05, 2026-09-12)** :
+  `core/php/sonde-mqtt-auxhome.php --connack`, protocole de recette au § 10 de sa spec technique. **Le fait
+  n'a PAS pu être mesuré pendant ce cycle** (aucun PHP, aucun Jeedom, aucun compte AUX sur la machine de
+  développement) — cette puce reste donc un `❓` tant que la recette n'a pas été exécutée par
+  l'utilisateur. Résultat à reporter ici sous la forme figée au § 9 de la spec technique dès qu'il est
+  connu ; voir aussi le § 7.7 ci-dessous.
 - ❓ **Le `configId` EU est inconnu**, et il entre dans le nom d'utilisateur. C'est le paramètre le plus
   susceptible de faire échouer un test d'accès pour une raison **étrangère** à l'existence du canal : ⚠️ ne
   jamais conclure « le broker EU refuse nos comptes » sur la foi d'un seul `0x04`.
@@ -812,6 +831,37 @@ conforme à nos propres règles ne peut pas se connecter à ce broker en l'état
   Les deux lectures impliquent la même prudence : **ne pas dépendre de cet endpoint**, dégrader vers la
   scrutation.
 
+⚠️ **Mesure datée du 2026-09-07** (tableau ci-dessus), soit **5 jours** au moment où l'arbitrage D-1
+ci-dessous est pris. `core/php/sonde-mqtt-auxhome.php --certificat` est conçu comme la **toute première**
+étape du protocole de recette (§ 10 de la spec technique de l'UC05) : si le certificat a été renouvelé
+depuis, ce mode le détecte tout seul, l'affiche comme un succès, et **D-1 devient sans objet** — meilleur
+scénario possible, il ne coûte qu'une commande. **Protocole de re-mesure** : relancer `--certificat` (ports
+8883 et 443) avant toute nouvelle exploitation de ce canal, à n'importe quelle échéance future — ne jamais
+réutiliser telle quelle la mesure du 2026-09-07.
+
+**Décision d'arbitrage D-1 (prise avec l'utilisateur le 2026-09-12, § 0.1 de la spec technique de l'UC05)**
+— *certificat expiré et SAN non couvrant, contre la règle « TLS toujours vérifié »* : **dérogation cadrée**,
+bornée à la seule CLI `core/php/sonde-mqtt-auxhome.php --connack`, activée par un drapeau **jamais
+implicite** (`--accepter-certificat-invalide`), jamais silencieuse (le script l'annonce explicitement à
+l'écran avant toute connexion). Motif retenu : l'information manquante (acceptation de nos identifiants)
+est inobtenable autrement, c'est le **dernier inconnu** du dossier, et le gain visé n'est pas d'ouvrir le
+push immédiatement (cf. R8 ci-dessous) mais de pouvoir **clore** le dossier avec un fait plutôt qu'une
+inconnue.
+
+⚠️⚠️ **D-1 NE VAUT PAS PRÉCÉDENT.** Toute UC future qui voudrait exploiter ce canal (marches 2 ou 3 du § 6
+de `smartclim-daemon-choix.md`) doit **revérifier le certificat au moment où elle s'écrit** — le vecteur de
+propagation d'une dérogation TLS n'est jamais l'autoload ni une classe partagée, c'est la **recopie
+humaine** d'une fonction « qui marchait déjà dans la sonde ». Voir la même phrase répétée dans le texte de
+la marche 2, `smartclim-daemon-choix.md` § 6.
+
+⚠️ **Nuance sur l'épinglage (§ 2.3 de la spec technique de l'UC05)** : il n'existe **aucune empreinte de
+référence hors bande** pour ce certificat — la ligne ci-dessus rapporte sujet/SAN/dates, jamais une
+empreinte SHA-256. Épingler depuis la **première connexion faite par nous-mêmes** serait donc du **TOFU**
+(*Trust On First Use*), pas une preuve de qui est réellement le pair. Ce qui est retenu à la place, à coût
+nul : `--certificat` **affiche** l'empreinte SHA-256 observée, et `--connack` accepte un `--empreinte=<v>`
+**optionnel** que l'opérateur colle depuis une exécution antérieure de `--certificat` — une simple
+**corroboration entre deux exécutions**, jamais présentée comme un contrôle de sécurité.
+
 ### 7.4 ⚠️ Ce que ce spike corrige dans notre propre raisonnement
 
 L'argument « *aucune implémentation de référence ne fait de push, donc il n'y en a pas* » — qui sous-tendait
@@ -852,6 +902,22 @@ il coûte une seule connexion. Le test n'a **volontairement pas** été mené da
 jeton de session réel vers un serveur au certificat invalide, ce qui mérite son propre cadre.
 ⚠️ **Conséquence pour l'arbitrage du démon** : « MQTT ⇒ démon » est une prémisse **fausse** — voir
 `smartclim-daemon-choix.md` § 6, amendé en trois marches.
+
+### 7.7 Décision d'exploitation
+
+> ⚠️ **En attente de la recette (UC05 du domaine post-mvp/05, livrée le 2026-09-12).** Cette section porte
+> le **gabarit figé** de la décision (§ 9 de la spec technique de l'UC05) — elle ne préjuge **d'aucun**
+> résultat : le fait mesuré n'existe pas encore au moment où ce cycle se clôt (aucun PHP, aucun Jeedom,
+> aucun compte AUX sur la machine de développement). À compléter par l'utilisateur en exécutant
+> `core/php/sonde-mqtt-auxhome.php` selon le protocole du § 10 de cette spec technique, puis en reportant
+> ici le résultat sous exactement cette forme :
+
+> **Décision du `<date>`** : `<ouvrir la marche N du § 6 de smartclim-daemon-choix.md | maintenir la
+> scrutation>`.
+> **Motif** : `<le fait mesuré>`.
+> **Ce que cette décision ne change pas** : les marches 2 et 3 restent fermées tant que le certificat du
+> broker EU est invalide (R8) ; et la dette D-05-01-03 conditionne toujours le **gain** attendu (R9).
+
 ## 8. Robustesse & sécurité — règles retenues
 
 1. **Ne jamais journaliser** mot de passe, `account` chiffré, ou jeton complet. Journaliser au plus

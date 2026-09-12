@@ -15,7 +15,19 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-09-11** (UC04 du domaine `post-mvp/05` — **sonde de
+> **Dernière mise à jour de cet index : 2026-09-12** (UC05 du domaine `post-mvp/05` — **instrument de
+> validation d'accès au broker MQTT AUX Home livré** (`core/php/sonde-mqtt-auxhome.php`, 6ᵉ CLI du
+> plugin) : `smartclim-transport-aux-home.md` §§ 7.1 (deux écarts consignés — ClientId suffixé par la
+> référence, niveau de protocole réel MQTT 3.1), 7.2 (renvoi vers l'instrument, `❓` **intact**), 7.3
+> (arbitrage TLS **D-1 daté du 2026-09-12** — dérogation cadrée, bornée à cette CLI, ne valant **pas
+> précédent** ; protocole de re-mesure du certificat ; nuance sur l'absence d'épinglage hors-bande) et
+> **7.7 nouveau** (« Décision d'exploitation », gabarit **en attente de la recette**, aucun fait ni
+> décision inventés) ; `smartclim-daemon-choix.md` § 6 (marche 1 **instrumentée**, pas jouée — la phrase
+> « la dérogation TLS de l'UC05 ne vaut pas précédent » redite dans le texte de la marche 2 elle-même).
+> ⚠️ **Ce cycle ne se clôt pas au commit** : le fait (acceptation des identifiants EU) et la décision
+> d'exploitation restent à produire par l'utilisateur, en SSH sur son Jeedom, sur la base du protocole de
+> recette § 10 de la spec technique.)
+> Précédente : 2026-09-11 (UC04 du domaine `post-mvp/05` — **sonde de
 > découverte AUXLink livrée** (lecture seule, aucune session ni pilotage — AC1) : § 8 **nouveau** de
 > `smartclim-ecosysteme-aux-broadlink.md`, §§ 4/6/7 amendés. ⚠️ **Verdict EN ATTENTE** : la campagne
 > d'observation réelle sur l'appareil de validation reste à mener (24 h + corroboration humaine
@@ -152,7 +164,7 @@
 | **AUX Home** (`eu-smthome-api.aux-global.com`) : `getPubkey`, chiffrement RSA/AES du login, bearer, `/app/user_device`, `/app/device/v2/control` | `smartclim-transport-aux-home.md` §§ 1-4 |
 | En-tête **`country` (ISO-3)** : cause documentée d'échec de login AUX Home | `smartclim-transport-aux-home.md` § 5 |
 | Décoder `status.control` / `status.running` (trames `bb00…`) ; **température ambiante = octet[15] − 32** ; fraîcheur très lente | `smartclim-transport-aux-home.md` § 6 |
-| ⚠️⚠️ **Y a-t-il un PUSH sur AUX Home ?** → **un broker MQTT existe côté EU** (`eu-smthome-m2m.aux-global.com`, spike du 2026-09-07) — mais nos identifiants n'y sont **pas** testés et son **certificat est expiré et ne couvre pas son nom d'hôte**, donc inaccessible sous la règle « TLS toujours vérifié ». Décision : **scrutation maintenue** | `smartclim-transport-aux-home.md` § 7 |
+| ⚠️⚠️ **Y a-t-il un PUSH sur AUX Home ?** → **un broker MQTT existe côté EU** (`eu-smthome-m2m.aux-global.com`, spike du 2026-09-07) — l'instrument de validation d'accès est **livré** (`core/php/sonde-mqtt-auxhome.php`, UC05 du domaine post-mvp/05, 2026-09-12) mais le **fait reste en attente de recette** : ni l'acceptation de nos identifiants ni la décision d'exploitation ne sont encore connues. Certificat toujours **expiré et non couvrant** au 2026-09-12 (dérogation D-1 cadrée, bornée, jamais un précédent) | `smartclim-transport-aux-home.md` §§ 7.2, 7.3, 7.7 · `smartclim-daemon-choix.md` § 6 |
 | ⚠️⚠️ **« Aucune implémentation tierce ne fait X, donc X n'existe pas »** → raisonnement à ne pas tenir : vérifier d'abord si l'**instrument** de la source pouvait voir X (une capture au proxy HTTPS est aveugle au MQTT brut). Cas vécu, il a coûté une hypothèse fausse portée plusieurs mois | `smartclim-transport-aux-home.md` § 7.4 |
 | **MQTT impose-t-il un démon ?** → **NON** : une connexion **ponctuelle** (requête/réponse dans un cron) tient en PHP pur ; seule la **souscription permanente** exige un processus long. Trois marches, pas une | `smartclim-daemon-choix.md` § 6 |
 | **Fonctions de confort** (afficheur, sommeil, ioniseur, nettoyage, anti-moisissure, éco, ultra-silence) : noms d'intent, codes ⚠️ **non booléens pour `screen` et `ultra_silence`**, et **conditions de disponibilité** déclarées par le backend | `smartclim-transport-aux-home.md` § 4.4 |

@@ -456,3 +456,42 @@ l'est pas en usage : le contraste dépend du thème, la ligne de boutons peut d�
 porter l'**info** sans les **actions** correspondantes. Afficher en clair la valeur courante, et n'utiliser
 la mise en évidence que comme renfort — en ajoutant `active` à `btn-primary`, qui porte l'état enfoncé
 indépendamment de la couleur.
+
+## 12. Le thème du core ALTERNE tout seul, et les icônes de plugin sont rendues à 18 px
+
+Mesuré dans le core le 2026-09-13, en livrant l'icône du plugin (UC03 du domaine post-mvp/07 de
+SmartClim). Trois faits génériques Jeedom, utiles à **tout** travail visuel — widget, page-panneau,
+icône —, qu'aucune autre analyse ne portait.
+
+**12.1 — Le thème bascule clair/sombre automatiquement, en configuration LIVRÉE.**
+`core/config/default.config.ini` : `theme_changeAccordingTime = 1`, `jeedom_theme_main = core2019_Light`,
+`jeedom_theme_alternate = core2019_Dark`, bascule à **08:00 / 20:00**. Fonds de panneau mesurés :
+`--panel-bg-color` = `#F0F1F2` (clair) et `#212121` (sombre).
+⚠️ **Ce n'est pas une préférence que l'utilisateur aurait activée** : c'est le défaut. Un visuel validé
+sur un seul des deux fonds est validé sur la moitié de la journée. Le corollaire de conception : faire
+porter la lisibilité par un élément dont le contraste **ne dépend pas du fond de page** (chez nous, le
+monogramme blanc sur sa plaque, à 10,66:1 quel que soit le thème) plutôt que par le contraste de la
+tuile elle-même.
+
+**12.2 — L'icône d'un plugin est rendue à 18 px de large par défaut, pas à 75 px.**
+`default.config.ini` : `theme_displayAsTable = 1`, donc la liste des plugins est en mode **tableau** ;
+`desktop/php/plugin.php` ajoute alors la classe `displayAsTable`, et `desktop/css/desktop.main.css`
+applique `max-width: 18px !important`. En mode **carte** (bouton de bascule à droite du champ de
+recherche), c'est `width: 75px !important`. ⚠️ **Aucune de ces deux règles n'est dans une media query** —
+ce n'est pas du responsive, c'est le mode d'affichage.
+⚠️ Conséquence pour toute recette : « je ne vois pas ma nouvelle icône / elle est illisible » est le plus
+souvent le **mode tableau**, pas un défaut du fichier. Basculer en mode carte avant de conclure.
+
+**12.3 — Le chemin de l'icône est CODÉ EN DUR depuis l'id, jamais lu dans `info.json`.**
+`plugin::getPathImgIcon()` (`core/class/plugin.class.php`) essaie quatre chemins en cascade —
+`plugins/<id>/plugin_info/<id>_icon.png`, `plugins/<id>/doc/images/<id>_icon.png`, puis les deux mêmes
+avec `strtolower($id)` — et retombe sur `core/img/no-image-plugin.png`. **`info.json` ne porte aucune clé
+d'icône** : inutile d'en chercher une ou d'en ajouter.
+Format imposé par la doc : PNG **309 × 348**. ⚠️ Ce que « garder les mêmes tailles du modèle » veut dire,
+mesuré sur le `template_icon.png` officiel et non déduit : sa **bbox alpha est `(0, 0, 309, 309)`** — le
+dessin occupe le carré supérieur, les **39 px du bas sont transparents**, place qu'occupait le nom du
+plugin avant la directive de 2020 qui l'a supprimé.
+⚠️ La doc demande de **ne pas reprendre le code couleur des icônes officielles** sans publier la liste :
+cinq d'entre elles échantillonnées (`mode`, `script`, `virtual`, `openzwave`, `mobile`) sont toutes au
+vert **`#95C12B`** — qui est aussi la couleur de l'icône du **squelette**. Un plugin dérivé du template
+et non retouché est donc en infraction par construction.

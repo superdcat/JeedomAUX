@@ -59,7 +59,12 @@ manière structurée :
   (il ne fait plus que piloter), `/init-plugin` en `xhigh` (cadrage = arbitrage).
 - **`.memory/`** — connaissance interne **versionnée** : `specs/` (specs fonctionnelles/techniques des
   features), `analyse/` (décisions/pièges Jeedom **et** protocoles AUX/Broadlink), `external/doc/` (index
-  de la doc externe).
+  de la doc externe), et depuis l'UC03 du domaine post-MVP 07 `assets/` — **fichiers sources binaires,
+  jamais exécutés**, rangés là et non à la racine du dépôt parce que `.memory/.htaccess` porte un
+  `Deny from all` **récursif** alors que la racine du plugin n'a aucun `.htaccess` (un fichier qui y
+  séjourne est téléchargeable sans authentification). Seul occupant à ce jour : le logo source dont dérive
+  l'icône du plugin. ⚠️ Un `.htaccess` protège une **installation Jeedom**, jamais le dépôt GitHub public
+  — y ranger un fichier ne le dépublie pas.
 
 ## Architecture
 
@@ -1042,6 +1047,23 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
 - **`plugin_info/helperConfiguration.php` / `.py`** — assistant de renommage du squelette. **Déjà joué**
   (`template` → `smartclim`) : ces fichiers ne servent plus, ils sont conservés comme outillage hérité du
   template d'origine.
+- **`plugin_info/smartclim_icon.png`** — icône du plugin, **propre depuis l'UC03 du domaine post-MVP 07**
+  (elle était jusque-là la copie renommée de celle du template, **au vert `#95C12B` des plugins officiels
+  Jeedom**, ce que la doc demande précisément d'éviter). PNG 309 × 348 imposé par le core, dont seul le
+  **carré supérieur 309 × 309** porte le dessin — les 39 px du bas sont transparents, c'est la place
+  qu'occupait le nom du plugin avant la directive de 2020, et « garder les mêmes tailles du modèle » veut
+  dire cette bbox-là. Consommée par `plugin::getPathImgIcon()`, qui construit le chemin **en dur** depuis
+  l'id : **`info.json` ne porte aucune clé d'icône**.
+  ⚠️ **Elle ne se retouche pas à la main** : elle est produite par `.claude/scripts/generer-icone.py`
+  (Pillow, machine de dev) depuis `.memory/assets/logo-aux-Blk--YM1.png`, et le script porte à la fois la
+  recette, la **provenance/licence du visuel** et ses propres contrôles (`--verifier`). ⚠️ Il vit dans
+  `.claude/scripts/` et **jamais** sous `core/`, `desktop/` ou `resources/` : il y serait livré sur
+  l'installation Jeedom et suggérerait une dépendance runtime à Pillow **qui n'existe pas** — le plugin ne
+  génère aucune image à l'exécution.
+  ⚠️ **Le visuel dérive du logo de la marque AUX**, sur arbitrage explicite de l'utilisateur du
+  2026-09-13 **borné à un usage local et privé**. Une publication sur le market (UC04 du même domaine)
+  exige de repasser à un visuel neutre — seule `charger_monogramme()` est alors à refaire. Détail,
+  limites et dette : `.memory/specs/post-mvp/07-multimarque-documentation-et-diffusion/03-icone-du-plugin-tech.md`.
 - **`resources/smartclimd/`** — **restauré à l'UC02 du domaine post-MVP 05** (il avait été supprimé au
   renommage, le MVP n'ayant pas de démon). Contient `smartclimd.py` (point d'entrée), **`relais_auxcloud.py`
   depuis l'UC03 du même domaine** (cf. ci-dessous), **`sonde_auxlink.py` depuis l'UC04** (cf. ci-dessous)

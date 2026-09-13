@@ -49,6 +49,22 @@ BLANCS = ' \t\r\n'
 # produirait 5 faux positifs à chaque exécution, et un script qui crie au loup se fait ignorer.
 EXT_CRLF = ('.php', '.js', '.ini', '.txt', '.html')
 
+# Assets binaires que `fichiers_git()` peut remonter (il ne filtre pas par extension,
+# contrairement à `fichiers_tout()`). Sans cette liste, un `.png` modifié traverse
+# `check_fins_de_ligne` et `check_octets_controle`, qui n'ont pas de garde, et le script
+# sort en PROBLEME sur « fins de ligne MIXTES » et « octets de contrôle BRUTS » — constaté
+# sur le commit de l'icône du plugin (UC03 post-mvp/07).
+# ⚠️ Liste FERMÉE et fondée sur l'EXTENSION, jamais sur le contenu. Sauter un fichier parce
+# qu'il contient un octet nul ferait taire le cas que `check_octets_controle` existe
+# justement pour attraper : un texte accidentellement enregistré en UTF-16, où un `0x00`
+# sépare chaque caractère ASCII.
+EXT_BINAIRE = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.pdf', '.ico')
+
+# Gabarit UNIQUE de la ligne de rapport, partagé par la branche texte et la branche binaire.
+# Deux formats distincts divergent dès qu'on touche à l'un : les colonnes se désalignent et
+# le rapport devient illisible en diagonale, ce qui est tout ce qu'on lui demande.
+LIGNE = '  %-52s %-8s ctrl=%-3s struct=%-8s meta=%s'
+
 problemes = []
 avis = []
 
@@ -503,6 +519,11 @@ def main():
         if not os.path.isfile(os.path.join(RACINE, rel)):
             avis.append('%s : introuvable' % rel)
             continue
+        if rel.endswith(EXT_BINAIRE):
+            # Verdict imprimé, jamais un saut muet : un fichier absent du rapport se lirait
+            # comme un fichier oublié de la liste.
+            print(LIGNE % (rel, 'binaire', 'n/a', 'n/a', 'n/a'))
+            continue
         data = lire_octets(rel)
         texte = data.decode('utf-8', 'replace')
         fdl = check_fins_de_ligne(rel, data)
@@ -510,7 +531,7 @@ def main():
         struct = check_structure(rel, texte)
         meta = check_meta_commentaires(rel, texte)
         check_espaces_fin(rel, texte)
-        print('  %-52s %-8s ctrl=%d  struct=%-8s meta=%s' % (rel, fdl, ctrl, struct, meta))
+        print(LIGNE % (rel, fdl, ctrl, struct, meta))
 
     print('\n=== Transverse ===')
     check_miroir(fichiers)

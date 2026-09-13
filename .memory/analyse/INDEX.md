@@ -15,7 +15,8 @@
 > réutilisables par tout plugin. S'y ajoutent les analyses **propres au plugin SmartClim** (climatiseurs
 > AUX / Broadlink / AC Freedom), produites lors du cadrage `/init-plugin`.
 >
-> **Dernière mise à jour de cet index : 2026-09-12** (recette — **distinguer un climatiseur d'un autre
+> **Dernière mise à jour de cet index : 2026-09-13** (UC03 du domaine `post-mvp/07` — **icône du plugin livrée** : § 12 **nouveau** de `jeedom-widgets-commandes.md`, entièrement générique Jeedom. Trois faits mesurés dans le core qu'aucune analyse ne portait : le thème **alterne clair/sombre tout seul** en configuration livrée (donc un visuel validé sur un seul fond ne l'est qu'à moitié — faire porter la lisibilité par un élément dont le contraste ne dépend pas du fond de page) ; l'icône d'un plugin est rendue à **18 px** par défaut et non 75 px (mode **tableau**, qui explique la plupart des « je ne vois pas ma nouvelle icône ») ; et son chemin est **codé en dur** depuis l'id par `getPathImgIcon()`, `info.json` ne portant **aucune** clé d'icône. ⚠️ Fait annexe utile à tout plugin dérivé du squelette : les icônes officielles échantillonnées sont **toutes** au vert `#95C12B`, qui est aussi celle du template — un plugin non retouché est donc en infraction avec la recommandation de la doc **par construction**.)
+> Précédente : 2026-09-12 (recette — **distinguer un climatiseur d'un autre
 > appareil Broadlink** : § 14 **nouveau** de `smartclim-transport-broadlink-lan.md`. Deux RM4 Pro du
 > réseau de l'utilisateur figuraient dans le tableau « Climatiseurs détectés sur le réseau local ». Fait
 > établi : un appareil Broadlink non-climatiseur **s'authentifie parfaitement** et ne se trahit qu'à la
@@ -171,6 +172,8 @@
 | ⚠️ **`cmd::event()` jette silencieusement** une valeur `numeric` hors `minValue`/`maxValue` | `jeedom-widgets-commandes.md` § 8.4 |
 | **Créer des commandes de façon idempotente** sans N requêtes par cycle (`getCmd(null, null)` indexé) | `jeedom-widgets-commandes.md` § 8.5 |
 | **`generic_type`** : enrôle automatiquement la commande dans les résumés d'objet et les intégrations tierces | `jeedom-widgets-commandes.md` § 8.6 |
+| ⚠️ **Le thème du core ALTERNE clair/sombre TOUT SEUL** (défaut `theme_changeAccordingTime = 1`, 08:00/20:00, fonds `#F0F1F2` et `#212121`) : un visuel validé sur un seul fond ne l'est qu'à moitié | `jeedom-widgets-commandes.md` § 12.1 |
+| **Icône de plugin** : rendue à **18 px** par défaut (mode tableau), 75 px en mode carte ; format 309 × 348 dont seul le carré **309 × 309** du haut porte le dessin ; chemin **codé en dur** par `getPathImgIcon()`, jamais dans `info.json` | `jeedom-widgets-commandes.md` §§ 12.2-12.3 |
 | Ajouter une **PAGE** au menu Jeedom (panel) ; toggle natif `displayDesktopPanel/Mobile` ; page non-admin | `jeedom-panel-page-menu.md` |
 | **Afficher une image externe dans un panel** (carte…) : `data:` URI inline (panel serveur) vs proxy (widget client) | `jeedom-panel-page-menu.md` § 4 |
 | **Config plugin** : ordre réel de `config::save`, pourquoi `preConfig_<clé>` est parfois **court-circuité**, pourquoi valider **en lecture ET en écriture** | `jeedom-config-plugin-et-cycle-de-vie.md` § 1 |

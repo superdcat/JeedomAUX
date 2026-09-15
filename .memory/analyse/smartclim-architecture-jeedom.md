@@ -95,18 +95,34 @@ Repli si aucune MAC n'est disponible :
 
 ### 3.2 Configuration d'équipement
 
+> ⚠️ **Table réalignée sur le code livré le 2026-09-16** (UC02 du domaine post-MVP 06). La version
+> précédente datait de la conception et listait des clés **prévisionnelles qui n'ont jamais existé**
+> (`capabilities`, `temp_step`, `lan_mac_source`, `transport_actif`, `etat_optimiste`, `marque`,
+> `auxcloud_region` au niveau équipement) : elle a été citée comme référence par une spec fonctionnelle
+> avant qu'on s'aperçoive qu'aucune de ces clés n'était dans le code. **Le code fait foi** — les clés
+> ci-dessous sont les constantes `smartclim::CLE_CONF_*`, sauf les trois littérales signalées.
+
 | Clé | Contenu |
 |---|---|
-| `mac` | MAC normalisée |
-| `transport_mode` | `AUTO` (défaut — LAN prioritaire + repli cloud) / `LOCAL` / `CLOUD` |
-| `transport_actif` | dernier transport ayant réussi (lecture seule, affiché) |
-| `auxhome_device_id` | identifiant AUX Home |
-| `auxcloud_endpoint_id`, `auxcloud_region` | identifiants legacy *(post-MVP)* |
-| `lan_ip`, `lan_mac_source` | LAN *(post-MVP)* — `lan_ip` **saisissable manuellement** (VLAN / broadcast bloqué) |
-| `capabilities` | profil JSON (§ 4 du modèle abstrait) |
-| `modele`, `marque` | informatif |
-| `temp_min`, `temp_max`, `temp_step` | bornes surchargeables |
-| `etat_optimiste` | état commandé + horodatage (protection anti-état-périmé) |
+| `mac` *(littérale)* | MAC normalisée — posée par `memoriserMacEquipement()` **seulement si vide** |
+| `modele` *(littérale)* | informatif |
+| `auxhome_device_id` *(littérale)* | identifiant AUX Home |
+| `transport_mode` | `auto` (défaut) / `local` / `cloud` — **minuscules**, et le défaut tient à l'**absence** de la clé |
+| `capacites` | profil de capacités **détecté**, réécrit par chaque scan |
+| `lan_ip`, `lan_mac` | adresses locales **saisies par l'utilisateur** (secours VLAN / diffusion filtrée), vide = non personnalisé |
+| `temp_min`, `temp_max`, `temp_pas` | bornes **personnalisées**, vide = non personnalisé |
+| `auxcloud_endpoint_id`, `auxcloud_product_id`, `auxcloud_devicetype_flag`, `auxcloud_family_id`, `auxcloud_partage`, `auxcloud_swing_inverse` | identité legacy de l'appareil, **en clair** (non sensible et stable) |
+
+⚠️ **Trois choses qu'on chercherait ici à tort** : le **transport actif** est une **commande info**
+(`smartclim::CMD_TRANSPORT`), pas une clé de configuration ; l'**état optimiste** vit en **cache**
+(`smartclim::ordres::<id>`, 60 s) ; `auxcloud_region` est une clé de config **plugin**, jamais équipement.
+⚠️ `CLE_MASQUAGE_TUILE` (`tuile_masquage_joue`) n'est pas non plus une clé d'équipement : elle est posée
+sur la **configuration de la commande `power`** — un `setConfiguration()` sur l'eqLogic y provoquerait une
+récursion `save()` puis `postSave()`.
+⚠️ **Détecté et personnalisé sont deux espaces disjoints, et doivent le rester** : `capacites` contre
+`temp_*`, adresse LAN détectée (en cache `smartclim::lan_appareil::<mac>`) contre `lan_ip`/`lan_mac`.
+C'est cette séparation — pas une convention de nommage — qui garantit qu'une redétection n'écrase jamais
+une personnalisation.
 
 Aucun secret au niveau équipement dans le périmètre actuel. Si un jour un secret par équipement apparaît
 (passcode AUXLink), utiliser `encrypt()`/`decrypt()` **d'instance** — pas `$_encryptConfigKey` (qui ne vaut
@@ -118,13 +134,26 @@ que pour la config **plugin**).
 > `cp plugin_info/configuration.txt plugin_info/configuration.php`. Vérifier par
 > `git status --short plugin_info/configuration.php`, ne jamais relire le `.php`.
 
+> ⚠️ **Table réalignée sur le code livré le 2026-09-16.** La version précédente écrivait `auxhome_login`
+> et `auxcloud_login` (réels : `auxhome_email`, `auxcloud_email`) et affirmait que le pays était **déduit
+> du fuseau horaire de Jeedom** — heuristique **révoquée en recette d'UC01** : le fuseau ne dit rien du
+> pays d'un compte cloud, et un pays faux échoue au login sur un message trompeur.
+
 | Clé | Type | Chiffrée |
 |---|---|---|
-| `auxhome_login` | e-mail | non |
+| `auxhome_email` | e-mail | non |
 | `auxhome_password` | mot de passe | **oui** |
-| `auxhome_country` | code ISO-3 (défaut déduit du fuseau Jeedom) | non |
-| `refresh_interval` | minutes (défaut 5, min 1) | non |
-| `auxcloud_login` / `auxcloud_password` / `auxcloud_region` *(post-MVP)* | | **mot de passe : oui** |
+| `auxhome_country` | code ISO-3 majuscules, **défaut constant** `smartclim::PAYS_DEFAUT` = `FRA` | non |
+| `refresh_interval` | minutes (1..1440, défaut 5 via l'INI) | non |
+| `auxcloud_email` | e-mail du compte legacy | non |
+| `auxcloud_password` | mot de passe du compte legacy | **oui** |
+| `auxcloud_region` | `EU` / `USA` / `CHN` / `RUS`, **défaut constant** `smartclim::REGION_DEFAUT` = `EU` | non |
+| `demon_port` | port du démon, défaut 55112 — ⚠️ **sans aucun champ de formulaire** (échappatoire API) | non |
+
+⚠️ Les deux comptes sont **indépendants** : on peut renseigner l'un, l'autre, les deux, ou aucun —
+`compteConfigure()` (AUX Home) et `compteAuxCloudConfigure()` (legacy) sont deux garde-fous distincts.
+⚠️ Les valeurs par défaut vivent **en double** : dans la constante PHP **et** en littéral dans
+`core/config/smartclim.config.ini` (seul défaut vu par `config::byKeys()`, donc par le formulaire).
 
 ```php
 public static $_encryptConfigKey = array('auxhome_password', 'auxcloud_password');
@@ -134,19 +163,36 @@ Hooks disponibles : `preConfig_auxhome_country()` (normaliser en majuscules, val
 `postConfig_auxhome_password()` (invalider le jeton en cache). ⚠️ Ce sont des **noms de méthode fixes**,
 pas une boucle dynamique.
 
-**Jeton de session** : jamais en configuration. `cache::set('smartclim::auxhome::token', utils::encrypt($token), <ttl>)`,
-lu via `cache::byKey(...)` + `utils::decrypt`. Purge sur changement d'identifiants.
+**Jeton de session** : jamais en configuration. Clé réelle **`smartclim::session_auxhome`** (30 min,
+`utils::encrypt(json_encode(...))`), et non `smartclim::auxhome::token` comme l'écrivait la version
+précédente de cette section. Deux autres familles existent : `smartclim::session_auxcloud` (legacy,
+globale au compte) et `smartclim::session_lan::<mac>` (une par appareil). Purge sur changement
+d'identifiants — ⚠️ `config::remove()` ne déclenche **pas** les hooks `postConfig_`.
 
 ## 4. Fusion des doublons LAN / cloud
 
-Algorithme de rapprochement, dans l'ordre :
+> ⚠️ **Section réalignée sur le code livré le 2026-09-16.** Elle décrivait 4 étapes ; l'implémentation en
+> a **8**, et surtout elle applique **tous les ordres directs avant tous les ordres inversés** (correction
+> apportée à l'UC04 du domaine post-MVP 01) — l'ordre naïf « MAC puis MAC inversée, clé par clé » est
+> précisément ce qu'il ne faut pas faire.
 
-1. **MAC normalisée** (identique) → même équipement.
-2. **MAC inversée** — ⚠️ les implémentations Broadlink lisent la MAC dans des **ordres d'octets opposés**
-   (`ac_freedom` inverse, `fparrav` non ; cf. `smartclim-transport-broadlink-lan.md` § 6). Toujours tester
-   la MAC **et** son inverse avant de conclure à un nouvel appareil.
-3. Identifiant de transport déjà mémorisé sur un équipement existant.
-4. Sinon → nouvel équipement.
+Rapprochement **unique**, implémenté par
+`smartclim::chercherEquipementExistant($mac, $deviceId, $index, $transport = '', $endpointAuxCloud = '')`
+et emprunté par les **trois** sens de scan. Ordre figé :
+
+1. à 3. les trois clés **directes** : `logicalId`, `configuration.mac`, `lan_mac` ;
+4. à 6. les **mêmes**, sur la **MAC inversée** — ⚠️ les implémentations Broadlink lisent la MAC dans des
+   **ordres d'octets opposés** (`ac_freedom` inverse, `fparrav` non ; cf.
+   `smartclim-transport-broadlink-lan.md` § 6) ;
+7. `auxhome_device_id` ;
+8. `auxcloud_endpoint_id` ;
+
+sinon → nouvel équipement.
+
+⚠️ **Trois gardes non négociables** : `lan_mac` ne rapproche **que** pour le transport LAN et
+`auxcloud_endpoint_id` **que** pour le transport legacy (ce sont des déclarations liées à un transport ;
+s'en servir ailleurs attacherait, sur une faute de frappe, un appareil neuf à l'équipement d'un autre) ;
+et les étapes inversées sont **sautées sur une MAC palindrome**.
 
 Un équipement fusionné cumule les identifiants de plusieurs transports (`auxhome_device_id` **et**
 `lan_ip`), ce qui est précisément ce qui rend le mode `AUTO` possible.

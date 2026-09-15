@@ -221,8 +221,12 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   Depuis l'UC04 du domaine post-MVP 01, elle porte enfin la **fusion multi-transport** : le rapprochement
   unique `chercherEquipementExistant()` (cf. § Modèle de données), `memoriserMacEquipement()`,
   `creerEquipement()` rendue **neutre de transport** (elle sert les deux sens de scan), et la synthèse
-  d'affichage `lignesFusionScan()` — une ligne par climatiseur : LAN oui/non, cloud oui/non, transport
-  actif. **`scannerReseauLocal()` peut désormais CRÉER un équipement** depuis la seule découverte LAN,
+  d'affichage `lignesFusionScan()` — une ligne par climatiseur. ⚠️ **Depuis l'UC02 du domaine post-MVP 06
+  elle rend 11 colonnes** (nom, MAC, IP, modèle, identifiant cloud, les **trois** disponibilités, état en
+  ligne, capacités, transport actif) et les disponibilités ont **trois** états, pas deux : `Oui` / `Non` /
+  **`Non interrogé`** — une source non configurée, ou une sonde LAN délibérément non émise
+  (`ignore_mode_cloud`), n'est pas un échec et ne doit jamais s'afficher « Non ».
+  **`scannerReseauLocal()` peut désormais CRÉER un équipement** depuis la seule découverte LAN,
   conditionné à la preuve `STATUT_ETAT_LU`.
   ⚠️ **Ce garde-fou est plus faible qu'il n'en a l'air** : `conceptsLisibles()` ne teste que des
   **longueurs** (≥ 13 octets), **jamais** le magic `bb00`. Il vaut « un appareil Broadlink a répondu à
@@ -967,12 +971,22 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   assumé : un appareil absent des deux clouds **et** injoignable par diffusion (VLAN, réseau segmenté)
   n'est plus créable du tout — `lan_ip` / `lan_mac` restent un secours pour un équipement **déjà
   découvert**, pas un moyen de création. Ne pas remettre ce bouton sans rouvrir cet arbitrage.
-  ⚠️ **Le tableau du scan LAN est SCINDÉ EN DEUX** depuis la recette du 2026-09-12 (« Climatiseurs
-  détectés sur le réseau local » / « Autres appareils Broadlink détectés », le second masqué tant qu'il
-  est vide) : la diffusion ramène **tous** les appareils Broadlink du réseau — deux RM4 Pro figuraient
-  parmi les « climatiseurs ». Le tri vit **côté serveur**, dans `smartclim::categorieLigneLan()`, et tient
-  à une seule chose : `STATUT_ETAT_ILLISIBLE`, **la preuve qui conditionne déjà la création
-  d'équipement** — les deux décisions ne peuvent donc pas diverger. ⚠️ **Ne JAMAIS trier sur
+  ⚠️ **Depuis l'UC02 du domaine post-MVP 06, les résultats de scan tiennent en UN SEUL TABLEAU** : les
+  trois tables par source (`table_scanTrouves`, `table_scanAuxCloud`, `table_scanLan`) et les deux
+  `span_` de résumé ont été **supprimées** au profit de `table_scanClimatiseurs`, précédé du bloc
+  **persistant** « Sources interrogées » (une ligne par source, quatre états
+  `ok`/`degradee`/`echec`/`non_configuree` — ⚠️ « non configurée » n'est **pas** un échec et n'émet
+  aucune alerte). Trois sections résiduelles subsistent, **masquées quand elles sont vides** :
+  « Appareils écartés » (**absence de preuve** : identifiant inexploitable, doublon, injoignable),
+  « Autres appareils détectés » (**preuve négative** : ce n'est pas un climatiseur) et « disparus ».
+  ⚠️ **Ces deux familles ne se fondent pas** — absence de preuve et preuve négative sont deux choses
+  différentes ; c'est la distinction née de la recette du 2026-09-12 (la diffusion ramène **tous** les
+  appareils Broadlink du réseau — deux RM4 Pro figuraient parmi les « climatiseurs »).
+  Le tri vit **côté serveur**, dans `smartclim::lignesResiduellesScan()`, qui **appelle**
+  `smartclim::categorieLigneLan()` pour la branche LAN plutôt que de retester son critère — source unique
+  de vérité, et non deux critères « identiques » qu'un correctif ferait diverger. Il tient à une seule
+  chose : `STATUT_ETAT_ILLISIBLE`, **la preuve qui conditionne déjà la création d'équipement** — les deux
+  décisions ne peuvent donc pas diverger. ⚠️ **Ne JAMAIS trier sur
   `type_appareil` (devtype)** : une liste blanche de codes exclurait tout firmware inconnu, contre le
   principe directeur du brief ; le devtype reste une information d'affichage. ⚠️ Un appareil
   **injoignable, refusé ou verrouillé** reste dans la liste principale — aucune preuve qu'il n'est pas un
@@ -1131,13 +1145,14 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ Le rapprochement doit tester la MAC **et la MAC inversée** : les implémentations Broadlink de
   référence lisent des ordres d'octets opposés.
   **Depuis l'UC04 du domaine post-MVP 01**, ce rapprochement est implémenté et **unique** :
-  `smartclim::chercherEquipementExistant($mac, $deviceId, $index, $transport = '')`, empruntée par les
-  **deux** sens de scan, essaie 7 clés dans un ordre figé — les trois **directes**
+  `smartclim::chercherEquipementExistant($mac, $deviceId, $index, $transport = '', $endpointAuxCloud = '')`,
+  empruntée par les **trois** sens de scan, essaie 8 clés dans un ordre figé — les trois **directes**
   (`logicalId`, `configuration.mac`, `lan_mac`) **avant** les trois **inversées**, puis
-  `auxhome_device_id`. Deux gardes non négociables : `lan_mac` ne rapproche **que** pour le transport LAN
+  `auxhome_device_id`, puis `auxcloud_endpoint_id`. Trois gardes non négociables : `lan_mac` ne rapproche
+  **que** pour le transport LAN
   (c'est une déclaration de l'utilisateur *pour le LAN* ; s'en servir côté cloud attacherait, sur une
-  faute de frappe, un appareil neuf à l'équipement d'un autre), et les étapes inversées sont **sautées sur
-  une MAC palindrome** (sinon un `warning` trompeur sur ce qui est le même équipement que l'étape 1).
+  faute de frappe, un appareil neuf à l'équipement d'un autre), `auxcloud_endpoint_id` est gardée de même
+  par le transport legacy, et les étapes inversées sont **sautées sur une MAC palindrome** (sinon un `warning` trompeur sur ce qui est le même équipement que l'étape 1).
   ⚠️ **Un `logicalId` d'équipement n'est JAMAIS réécrit** — rien n'en garantit l'unicité au niveau SQL (un
   renommage vers un `mac:<x>` déjà pris rendrait `eqLogic::byLogicalId()` non déterministe), et c'est
   l'identité exposée à l'API Jeedom. La fusion passe par `configuration.mac`, posée **seulement si elle

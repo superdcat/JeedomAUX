@@ -690,10 +690,32 @@ class smartclim extends eqLogic {
    * équipement piloté par AUX Home strictement INCHANGÉ. Son exception éventuelle est
    * capturée SÉPARÉMENT ('legacyErreur'), même doctrine que 'cloudErreur' ci-dessus.
    *
-   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, legacy:array, legacyErreur:string, cloudErreur:string, climatiseurs:array}
+   * @return array{resume:string, compteurs:array<string,int>, appareils:array, disparus:array, profils:array, etatsConnexion:array, lan:array, legacy:array, legacyErreur:string, cloudErreur:string, lanErreur:string, sources:array, climatiseurs:array, ecartes:array, autres:array}
    */
   public static function scannerClimatiseurs() {
-    $lan = self::scannerReseauLocal();
+    // Phase LAN — TROIS `try` INDÉPENDANTS dans cette méthode (§ 5.1 de la spec
+    // technique UC02 du domaine post-mvp/06-ergonomie-jeedom), JAMAIS de `return` dans
+    // l'un d'eux : même piège que les quatre cycles de cron(), un `return` ici
+    // court-circuiterait les deux phases cloud. scannerReseauLocal() ne lève JAMAIS
+    // elle-même — ce `try` est une CEINTURE, pas un déplacement de responsabilité : sans
+    // lui, une Error PHP 8 levée hors de ses try internes ferait perdre TOUT le scan.
+    $lan = array(
+      'resume' => '',
+      'compteurs' => array(),
+      'appareils' => array(),
+      'profils' => array(),
+      'etatsConnexion' => array(),
+      'diffusionIndisponible' => false,
+    );
+    $lanErreur = '';
+    try {
+      $lan = self::scannerReseauLocal();
+    } catch (smartclimException $e) {
+      $lanErreur = $e->getMessage();
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Scan du réseau local : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      $lanErreur = __('Le scan du réseau local a échoué de façon inattendue — consultez les logs du plugin', __FILE__);
+    }
 
     $resultatLegacy = array(
       'resume' => '',
@@ -704,6 +726,10 @@ class smartclim extends eqLogic {
       'etatsConnexion' => array(),
     );
     $legacyErreur = '';
+    // D2 de la spec technique : le drapeau de configuration est calculé ICI, AVANT
+    // l'appel, pour alimenter sourcesScan() — scannerAuxCloud() reste inchangée (garde
+    // SILENCIEUSE déjà en place, aucune exception sur compte non configuré).
+    $legacyConfigure = self::compteAuxCloudConfigure();
     try {
       $resultatLegacy = self::scannerAuxCloud();
     } catch (smartclimException $e) {
@@ -711,6 +737,9 @@ class smartclim extends eqLogic {
       // technique avant de lever) : niveau warning côté JS, pas une panne — même
       // doctrine que 'cloudErreur' (D-POSTMVP0101-10).
       $legacyErreur = $e->getMessage();
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Scan AUX Cloud legacy : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      $legacyErreur = __('Le scan du cloud historique a échoué de façon inattendue — consultez les logs du plugin', __FILE__);
     }
 
     $resultatCloud = array(
@@ -722,12 +751,24 @@ class smartclim extends eqLogic {
       'etatsConnexion' => array(),
     );
     $cloudErreur = '';
-    try {
-      $resultatCloud = self::scannerAuxHome();
-    } catch (smartclimException $e) {
-      // Message déjà curaté en français (scannerAuxHome() journalise déjà le technique
-      // avant de lever) : niveau warning côté JS, pas une panne (D-POSTMVP0101-10).
-      $cloudErreur = $e->getMessage();
+    // Pré-garde `compteConfigure()` AVANT scannerAuxHome() (D2, seul changement de
+    // comportement fonctionnel de cette UC, arbitré avec l'utilisateur le 2026-09-15) :
+    // un compte AUX Home non configuré devient un état PERSISTANT « Non configurée »
+    // (cf. sourcesScan()) au lieu d'une alerte modale à chaque clic — le scan passe de
+    // 68 s à 18 s pour un parc purement LAN. scannerAuxHome() elle-même reste
+    // STRICTEMENT INCHANGÉE (elle doit continuer de lever si appelée seule).
+    $cloudConfigure = self::compteConfigure();
+    if ($cloudConfigure) {
+      try {
+        $resultatCloud = self::scannerAuxHome();
+      } catch (smartclimException $e) {
+        // Message déjà curaté en français (scannerAuxHome() journalise déjà le technique
+        // avant de lever) : niveau warning côté JS, pas une panne (D-POSTMVP0101-10).
+        $cloudErreur = $e->getMessage();
+      } catch (Throwable $t) {
+        log::add('smartclim', 'error', 'Scan AUX Home : erreur inattendue : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+        $cloudErreur = __('Le scan AUX Home a échoué de façon inattendue — consultez les logs du plugin', __FILE__);
+      }
     }
 
     $lanProfils = isset($lan['profils']) && is_array($lan['profils']) ? $lan['profils'] : array();
@@ -738,6 +779,16 @@ class smartclim extends eqLogic {
     $etatsConnexionFusionnes = array_replace($lanEtatsConnexion, $resultatLegacy['etatsConnexion'], $resultatCloud['etatsConnexion']);
     $profilsFusionnes = array_replace($lanProfils, $resultatLegacy['profils'], $resultatCloud['profils']);
 
+    // UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.2/D2 de sa spec technique) :
+    // bloc persistant « Sources interrogées », distinguant « non configurée » de
+    // « en échec ».
+    $sources = self::sourcesScan($lan, $lanErreur, $resultatLegacy, $legacyErreur, $resultatCloud, $cloudErreur, $cloudConfigure, $legacyConfigure);
+
+    // UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.3/D3 de sa spec technique) :
+    // tableau UNIQUE de climatiseurs + sections résiduelles (écartés / autres), calculés
+    // APRÈS les trois phases — remplace le calcul direct de 'climatiseurs' ci-dessous.
+    $tableaux = self::tableauxScanUnifie($lan['appareils'], $resultatLegacy['appareils'], $resultatCloud['appareils'], $etatsConnexionFusionnes, $profilsFusionnes, $sources);
+
     return array_merge($resultatCloud, array(
       'profils' => $profilsFusionnes,
       'etatsConnexion' => $etatsConnexionFusionnes,
@@ -745,11 +796,15 @@ class smartclim extends eqLogic {
       'legacy' => $resultatLegacy,
       'legacyErreur' => $legacyErreur,
       'cloudErreur' => $cloudErreur,
+      'lanErreur' => $lanErreur,
+      'sources' => $sources,
       // UC04 (§ 5.10), enrichie à l'UC02 du domaine post-mvp/03-cloud-aux-legacy
-      // (§ 6.2) : une ligne de synthèse par climatiseur (LAN oui/non, cloud historique
-      // oui/non, cloud AUX Home oui/non, transport actif), calculée APRÈS les trois
-      // phases.
-      'climatiseurs' => self::lignesFusionScan($lan['appareils'], $resultatCloud['appareils'], $etatsConnexionFusionnes, $resultatLegacy['appareils']),
+      // (§ 6.2) puis à l'UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.3/5.5) : une
+      // ligne de synthèse par climatiseur (LAN oui/non, cloud historique oui/non, cloud
+      // AUX Home oui/non, transport actif, modèle, identifiant cloud, capacités…).
+      'climatiseurs' => $tableaux['climatiseurs'],
+      'ecartes' => $tableaux['ecartes'],
+      'autres' => $tableaux['autres'],
     ));
   }
 
@@ -1447,6 +1502,10 @@ class smartclim extends eqLogic {
       // touchés par CE scan LAN — même motif que scannerAuxHome() (UC04/UC08).
       'profils' => self::profilsAffichables($eqLogicsTouches),
       'etatsConnexion' => self::etatsConnexionAffichables($eqLogicsTouches),
+      // UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.9 de sa spec technique) : la
+      // variable existait déjà, elle n'était transmise qu'à resumeScanLan() — sourcesScan()
+      // en a besoin pour distinguer l'état 'degradee' de l'état 'echec'.
+      'diffusionIndisponible' => $diffusionIndisponible,
     );
   }
 
@@ -2010,7 +2069,7 @@ class smartclim extends eqLogic {
    * post-mvp/01-transport-broadlink-lan, § 5.7 de sa spec technique) : id de l'eqLogic
    * rapproché, 0 sinon.
    *
-   * @return array{nom:string, mac:string, ip:string, typeAppareil:string, statut:string, statutLibelle:string, equipementId:int, categorie:string}
+   * @return array{nom:string, mac:string, ip:string, typeAppareil:string, statut:string, statutLibelle:string, equipementId:int}
    */
   private static function ligneResultatLan($_nom, $_mac, $_ip, $_typeAppareil, $_statut, $_statutLibelle, $_equipementId = 0) {
     return array(
@@ -2021,7 +2080,6 @@ class smartclim extends eqLogic {
       'statut' => $_statut,
       'statutLibelle' => $_statutLibelle,
       'equipementId' => (int) $_equipementId,
-      'categorie' => self::categorieLigneLan($_statut, $_equipementId),
     );
   }
 
@@ -2850,16 +2908,242 @@ class smartclim extends eqLogic {
   }
 
   /**
-   * Libellé traduit d'une disponibilité (Oui/Non), UC04 du domaine
-   * post-mvp/01-transport-broadlink-lan (§ 5.9 de sa spec technique). SEUL endroit du
-   * plugin où vivent ces deux __() (même règle que libelleStatutLan()/
-   * messageErreurAuxHome()).
+   * Libellé traduit d'une disponibilité (Oui/Non/Non interrogé), UC04 du domaine
+   * post-mvp/01-transport-broadlink-lan (§ 5.9 de sa spec technique) — étendue à 3 états
+   * par l'UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.8/D2 de sa spec technique).
+   * SEUL endroit du plugin où vivent ces trois __() (même règle que libelleStatutLan()/
+   * messageErreurAuxHome()). Paramètre par défaut : reproduit le comportement d'AVANT
+   * cette UC — son unique appelant est lignesFusionScan().
    *
    * @param bool $_disponible
+   * @param bool $_interrogee
    * @return string
    */
-  private static function libelleDisponibilite($_disponible) {
+  private static function libelleDisponibilite($_disponible, $_interrogee = true) {
+    if (!$_interrogee) {
+      return __('Non interrogé', __FILE__);
+    }
     return $_disponible ? __('Oui', __FILE__) : __('Non', __FILE__);
+  }
+
+  /**
+   * Libellé traduit d'un état de source de scan (UC02 du domaine
+   * post-mvp/06-ergonomie-jeedom, § 5.2/D2 de sa spec technique). SEUL endroit du
+   * plugin où vivent ces quatre __() — unique appelant sourcesScan().
+   *
+   * @param string $_etat 'ok' | 'degradee' | 'echec' | 'non_configuree'
+   * @return string
+   */
+  private static function libelleEtatSource($_etat) {
+    if ($_etat === 'ok') {
+      return __('Disponible', __FILE__);
+    }
+    if ($_etat === 'degradee') {
+      return __('Dégradée', __FILE__);
+    }
+    if ($_etat === 'echec') {
+      return __('En échec', __FILE__);
+    }
+    return __('Non configurée', __FILE__);
+  }
+
+  /**
+   * Dérive le SEUL niveau visuel (`ok`/`warning`/`neutre`) d'un état de source (UC02 du
+   * domaine post-mvp/06-ergonomie-jeedom, § 5.2 de sa spec technique) — c'est la seule
+   * chose que le JS dérive d'un code serveur (§ 6 de la spec technique).
+   *
+   * @param string $_etat 'ok' | 'degradee' | 'echec' | 'non_configuree'
+   * @return string 'ok' | 'warning' | 'neutre'
+   */
+  private static function niveauEtatSource($_etat) {
+    if ($_etat === 'ok') {
+      return 'ok';
+    }
+    if ($_etat === 'non_configuree') {
+      return 'neutre';
+    }
+    return 'warning';
+  }
+
+  /**
+   * Bloc persistant « Sources interrogées » (UC02 du domaine post-mvp/06-ergonomie-jeedom,
+   * § 5.2/D2 de sa spec technique, fonction PURE) : trois entrées, dans l'ORDRE
+   * D'EXÉCUTION (LAN, cloud historique, AUX Home) — distingue « source non configurée »
+   * (aucun identifiant renseigné, scan légitimement non tenté) de « source en échec »
+   * (tentative faite, a échoué), deux états distincts jamais confondus.
+   *
+   * ⚠️ Jamais `non_configuree` pour le LAN : il n'y a rien à y configurer, il est
+   * toujours tenté.
+   *
+   * @param array $_lan Retour de scannerReseauLocal() (ou son repli si Throwable).
+   * @param string $_lanErreur
+   * @param array $_legacy Retour de scannerAuxCloud() (ou son repli).
+   * @param string $_legacyErreur
+   * @param array $_cloud Retour de scannerAuxHome() (ou son repli).
+   * @param string $_cloudErreur
+   * @param bool $_cloudConfigure
+   * @param bool $_legacyConfigure
+   * @return array<int, array{code:string, libelle:string, etat:string, etatLibelle:string, detail:string, niveau:string}>
+   */
+  private static function sourcesScan(array $_lan, $_lanErreur, array $_legacy, $_legacyErreur, array $_cloud, $_cloudErreur, $_cloudConfigure, $_legacyConfigure) {
+    $sources = array();
+
+    if (!empty($_lan['diffusionIndisponible'])) {
+      $etatLan = 'degradee';
+    } elseif ($_lanErreur !== '') {
+      $etatLan = 'echec';
+    } else {
+      $etatLan = 'ok';
+    }
+    $detailLan = ($etatLan === 'echec') ? $_lanErreur : (isset($_lan['resume']) && is_string($_lan['resume']) ? $_lan['resume'] : '');
+    $sources[] = array(
+      'code' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN,
+      'libelle' => smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_BROADLINK_LAN),
+      'etat' => $etatLan,
+      'etatLibelle' => self::libelleEtatSource($etatLan),
+      'detail' => $detailLan,
+      'niveau' => self::niveauEtatSource($etatLan),
+    );
+
+    if (!$_legacyConfigure) {
+      $etatLegacy = 'non_configuree';
+      $detailLegacy = __('Compte cloud historique non configuré : renseignez l\'e-mail et le mot de passe', __FILE__);
+    } elseif ($_legacyErreur !== '') {
+      $etatLegacy = 'echec';
+      $detailLegacy = $_legacyErreur;
+    } else {
+      $etatLegacy = 'ok';
+      $detailLegacy = isset($_legacy['resume']) && is_string($_legacy['resume']) ? $_legacy['resume'] : '';
+    }
+    $sources[] = array(
+      'code' => smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY,
+      'libelle' => smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY),
+      'etat' => $etatLegacy,
+      'etatLibelle' => self::libelleEtatSource($etatLegacy),
+      'detail' => $detailLegacy,
+      'niveau' => self::niveauEtatSource($etatLegacy),
+    );
+
+    if (!$_cloudConfigure) {
+      $etatCloud = 'non_configuree';
+      $detailCloud = __('Compte AUX Home non configuré : renseignez l\'e-mail et le mot de passe', __FILE__);
+    } elseif ($_cloudErreur !== '') {
+      $etatCloud = 'echec';
+      $detailCloud = $_cloudErreur;
+    } else {
+      $etatCloud = 'ok';
+      $detailCloud = isset($_cloud['resume']) && is_string($_cloud['resume']) ? $_cloud['resume'] : '';
+    }
+    $sources[] = array(
+      'code' => smartclimCapabilities::TRANSPORT_AUX_HOME,
+      'libelle' => smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_AUX_HOME),
+      'etat' => $etatCloud,
+      'etatLibelle' => self::libelleEtatSource($etatCloud),
+      'detail' => $detailCloud,
+      'niveau' => self::niveauEtatSource($etatCloud),
+    );
+
+    return $sources;
+  }
+
+  /**
+   * Orchestrateur d'affichage du scan (UC02 du domaine post-mvp/06-ergonomie-jeedom,
+   * § 5.3 de sa spec technique) : une SEULE requête SQL (indexerEquipements()), une 2ᵉ
+   * passe de rapprochement tardif (resoudreEquipementLignes()) sur chacune des trois
+   * listes de lignes, puis la fusion (lignesFusionScan()) et les sections résiduelles
+   * (lignesResiduellesScan()). NE LÈVE JAMAIS (try/catch(Throwable) GLOBAL) : elle
+   * tourne APRÈS jusqu'à 68 s de travail réseau, elle ne doit jamais le faire perdre.
+   *
+   * @param array $_lignesLan Lignes normalisées par ligneResultatLan() (scannerReseauLocal()).
+   * @param array $_lignesLegacy Lignes normalisées par ligneResultatScan() (scannerAuxCloud()).
+   * @param array $_lignesCloud Lignes normalisées par ligneResultatScan() (scannerAuxHome()).
+   * @param array $_etatsConnexion Carte id eqLogic => etatConnexionAffichable(), déjà FUSIONNÉE.
+   * @param array $_profils Carte id eqLogic => profilAffichable(), déjà FUSIONNÉE.
+   * @param array $_etatsSource Retour de sourcesScan().
+   * @return array{climatiseurs:array, ecartes:array, autres:array}
+   */
+  private static function tableauxScanUnifie(array $_lignesLan, array $_lignesLegacy, array $_lignesCloud, array $_etatsConnexion, array $_profils, array $_etatsSource) {
+    try {
+      $index = self::indexerEquipements();
+
+      $lanResolu = self::resoudreEquipementLignes($_lignesLan, smartclimCapabilities::TRANSPORT_BROADLINK_LAN, $index);
+      $cloudResolu = self::resoudreEquipementLignes($_lignesCloud, smartclimCapabilities::TRANSPORT_AUX_HOME, $index);
+      $legacyResolu = self::resoudreEquipementLignes($_lignesLegacy, smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY, $index);
+
+      $contexte = array(
+        'index' => $index,
+        'profils' => $_profils,
+        'sources' => $_etatsSource,
+      );
+
+      $climatiseurs = self::lignesFusionScan($lanResolu, $cloudResolu, $_etatsConnexion, $legacyResolu, $contexte);
+      $residuelles = self::lignesResiduellesScan($lanResolu, $legacyResolu, $cloudResolu);
+
+      return array(
+        'climatiseurs' => $climatiseurs,
+        'ecartes' => $residuelles['ecartes'],
+        'autres' => $residuelles['autres'],
+      );
+    } catch (Throwable $t) {
+      log::add('smartclim', 'error', 'Synthèse unifiée du scan impossible : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
+      return array('climatiseurs' => array(), 'ecartes' => array(), 'autres' => array());
+    }
+  }
+
+  /**
+   * 2ᵉ passe de rapprochement, EN LECTURE SEULE (UC02 du domaine post-mvp/06-ergonomie-jeedom,
+   * § 5.4 de sa spec technique) : rattrape un défaut d'exactitude d'AC6, pas seulement de
+   * présentation — une ligne émise AVANT qu'une AUTRE source ne crée l'équipement garde
+   * `equipementId === 0`, donc le rapprochement de lignesFusionScan() ne la retrouve
+   * jamais, et la ligne fusionnée affiche à tort « Disponible : Non » pour un appareil
+   * que CE scan vient pourtant de voir.
+   *
+   * ⚠️⚠️ N'ÉCRIT JAMAIS (ni save(), ni setConfiguration(), ni cache) : c'est un
+   * rattrapage d'AFFICHAGE — en faire un chemin d'écriture contournerait les gardes de
+   * preuve (STATUT_ETAT_LU, preuve_climatiseur) qui conditionnent la création
+   * d'équipement. POINT DE REVUE N°1 de cette UC.
+   * ⚠️ Saute les lignes de statut 'ignore_doublon' : une telle ligne désigne par
+   * construction un équipement qu'une autre ligne de LA MÊME source a déjà consommé ; la
+   * résoudre produirait un faux « vu par cette source » supplémentaire.
+   *
+   * @param array $_lignes Lignes d'UNE source (ligneResultatLan() ou ligneResultatScan()).
+   * @param string $_transport smartclimCapabilities::TRANSPORT_BROADLINK_LAN,
+   *   TRANSPORT_AUX_HOME ou TRANSPORT_AUX_CLOUD_LEGACY.
+   * @param array $_index Index construit par indexerEquipements().
+   * @return array Mêmes lignes, 'equipementId' renseigné quand un rapprochement tardif est trouvé.
+   */
+  private static function resoudreEquipementLignes(array $_lignes, $_transport, array $_index) {
+    $resultat = array();
+    foreach ($_lignes as $ligne) {
+      if (isset($ligne['equipementId']) && (int) $ligne['equipementId'] > 0) {
+        $resultat[] = $ligne;
+        continue;
+      }
+      if (isset($ligne['statut']) && $ligne['statut'] === 'ignore_doublon') {
+        $resultat[] = $ligne;
+        continue;
+      }
+      $mac = isset($ligne['mac']) && is_string($ligne['mac']) ? $ligne['mac'] : '';
+      if ($mac === '') {
+        $resultat[] = $ligne;
+        continue;
+      }
+      $identifiant = isset($ligne['identifiant']) && is_string($ligne['identifiant']) ? $ligne['identifiant'] : '';
+
+      if ($_transport === smartclimCapabilities::TRANSPORT_BROADLINK_LAN) {
+        $eqLogic = self::chercherEquipementExistant($mac, '', $_index, smartclimCapabilities::TRANSPORT_BROADLINK_LAN);
+      } elseif ($_transport === smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY) {
+        $eqLogic = self::chercherEquipementExistant($mac, '', $_index, smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY, $identifiant);
+      } else {
+        $eqLogic = self::chercherEquipementExistant($mac, $identifiant, $_index);
+      }
+
+      if (is_object($eqLogic)) {
+        $ligne['equipementId'] = $eqLogic->getId();
+      }
+      $resultat[] = $ligne;
+    }
+    return $resultat;
   }
 
   /**
@@ -2881,13 +3165,17 @@ class smartclim extends eqLogic {
    * ajoute la colonne `cloudHistorique` (via libelleDisponibilite(), ZÉRO chaîne
    * nouvelle).
    *
-   * @param array $_lignesLan Lignes normalisées par ligneResultatLan() (scannerReseauLocal()).
-   * @param array $_lignesCloud Lignes normalisées par ligneResultatScan() (scannerAuxHome()).
+   * @param array $_lignesLan Lignes normalisées par ligneResultatLan() (scannerReseauLocal()), résolues par resoudreEquipementLignes().
+   * @param array $_lignesCloud Lignes normalisées par ligneResultatScan() (scannerAuxHome()), résolues par resoudreEquipementLignes().
    * @param array $_etatsConnexion Carte id eqLogic => etatConnexionAffichable(), déjà FUSIONNÉE (LAN puis cloud).
-   * @param array $_auxCloud Lignes normalisées par ligneResultatScan() (scannerAuxCloud()).
-   * @return array<int, array{nom:string, mac:string, lan:string, cloud:string, cloudHistorique:string, transport:string}>
+   * @param array $_auxCloud Lignes normalisées par ligneResultatScan() (scannerAuxCloud()), résolues par resoudreEquipementLignes().
+   * @param array $_contexte UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.5 de sa spec
+   *   technique) : {'index' => array (indexerEquipements()), 'profils' => array<int,array>
+   *   (profilAffichable() par équipement), 'sources' => array (sourcesScan())}. Optionnel :
+   *   à défaut, retombe sur une requête SQL dédiée (compatibilité défensive).
+   * @return array<int, array{nom:string, mac:string, ip:string, modele:string, identifiantCloud:string, lan:string, cloud:string, cloudHistorique:string, enLigne:string, capacites:string, transport:string}>
    */
-  private static function lignesFusionScan(array $_lignesLan, array $_lignesCloud, array $_etatsConnexion, array $_auxCloud = array()) {
+  private static function lignesFusionScan(array $_lignesLan, array $_lignesCloud, array $_etatsConnexion, array $_auxCloud = array(), array $_contexte = array()) {
     try {
       $ids = array();
       foreach ($_lignesLan as $ligneLan) {
@@ -2909,10 +3197,35 @@ class smartclim extends eqLogic {
         return array();
       }
 
+      // UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.5/§ 2.1 de sa spec technique) :
+      // réutilise l'index DÉJÀ chargé par tableauxScanUnifie() (une seule requête SQL
+      // pour tout le scan) au lieu d'un 2e eqLogic::byType('smartclim') dédié.
       $eqLogics = array();
-      foreach (eqLogic::byType('smartclim') as $eqLogic) {
-        $eqLogics[$eqLogic->getId()] = $eqLogic;
+      if (isset($_contexte['index']['tous']) && is_array($_contexte['index']['tous'])) {
+        foreach ($_contexte['index']['tous'] as $eqLogic) {
+          if ($eqLogic instanceof smartclim) {
+            $eqLogics[$eqLogic->getId()] = $eqLogic;
+          }
+        }
+      } else {
+        foreach (eqLogic::byType('smartclim') as $eqLogic) {
+          $eqLogics[$eqLogic->getId()] = $eqLogic;
+        }
       }
+
+      // D2 : une source à l'état 'non_configuree' n'a jamais été interrogée — sans
+      // cette carte, la colonne correspondante afficherait « Non » sur tout un parc
+      // sans compte concerné, c'est-à-dire un échec là où il n'y a rien à échouer.
+      $sourcesParCode = array();
+      if (isset($_contexte['sources']) && is_array($_contexte['sources'])) {
+        foreach ($_contexte['sources'] as $source) {
+          if (isset($source['code'])) {
+            $sourcesParCode[$source['code']] = $source;
+          }
+        }
+      }
+      $cloudInterrogee = !isset($sourcesParCode[smartclimCapabilities::TRANSPORT_AUX_HOME]) || $sourcesParCode[smartclimCapabilities::TRANSPORT_AUX_HOME]['etat'] !== 'non_configuree';
+      $legacyInterrogee = !isset($sourcesParCode[smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY]) || $sourcesParCode[smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY]['etat'] !== 'non_configuree';
 
       $lignes = array();
       foreach (array_keys($ids) as $id) {
@@ -2921,38 +3234,99 @@ class smartclim extends eqLogic {
         }
         $eqLogic = $eqLogics[$id];
 
-        $lan = false;
+        $ligneLanEq = null;
         foreach ($_lignesLan as $ligneLan) {
-          if (isset($ligneLan['equipementId']) && (int) $ligneLan['equipementId'] === $id && isset($ligneLan['statut']) && !self::statutEnEchec($ligneLan['statut'])) {
-            $lan = true;
+          if (isset($ligneLan['equipementId']) && (int) $ligneLan['equipementId'] === $id) {
+            $ligneLanEq = $ligneLan;
             break;
           }
         }
-        $cloud = false;
+        $lan = ($ligneLanEq !== null) && isset($ligneLanEq['statut']) && !self::statutEnEchec($ligneLanEq['statut']);
+        // Un équipement en mode CLOUD n'ouvre AUCUNE session (AC5 de l'UC01 du domaine
+        // post-mvp/02-strategies-de-transport) : sa ligne LAN porte 'ignore_mode_cloud',
+        // la sonde n'a délibérément pas été émise — « Non interrogé », pas « Non ».
+        $lanInterrogee = !($ligneLanEq !== null && isset($ligneLanEq['statut']) && $ligneLanEq['statut'] === 'ignore_mode_cloud');
+
+        $ligneCloudEq = null;
         foreach ($_lignesCloud as $ligneCloud) {
-          if (isset($ligneCloud['equipementId']) && (int) $ligneCloud['equipementId'] === $id && isset($ligneCloud['statut']) && in_array($ligneCloud['statut'], array('cree', 'existant'), true)) {
-            $cloud = true;
+          if (isset($ligneCloud['equipementId']) && (int) $ligneCloud['equipementId'] === $id) {
+            $ligneCloudEq = $ligneCloud;
             break;
           }
         }
-        $cloudHistorique = false;
+        $cloud = ($ligneCloudEq !== null) && isset($ligneCloudEq['statut']) && in_array($ligneCloudEq['statut'], array('cree', 'existant'), true);
+
+        $ligneAuxCloudEq = null;
         foreach ($_auxCloud as $ligneAuxCloud) {
-          if (isset($ligneAuxCloud['equipementId']) && (int) $ligneAuxCloud['equipementId'] === $id && isset($ligneAuxCloud['statut']) && in_array($ligneAuxCloud['statut'], array('cree', 'existant'), true)) {
-            $cloudHistorique = true;
+          if (isset($ligneAuxCloud['equipementId']) && (int) $ligneAuxCloud['equipementId'] === $id) {
+            $ligneAuxCloudEq = $ligneAuxCloud;
             break;
           }
         }
+        $cloudHistorique = ($ligneAuxCloudEq !== null) && isset($ligneAuxCloudEq['statut']) && in_array($ligneAuxCloudEq['statut'], array('cree', 'existant'), true);
 
         $transport = (isset($_etatsConnexion[$id]['transport']) && is_string($_etatsConnexion[$id]['transport']) && $_etatsConnexion[$id]['transport'] !== '')
           ? $_etatsConnexion[$id]['transport']
           : __('Inconnu', __FILE__);
 
+        $ip = ($ligneLanEq !== null && isset($ligneLanEq['ip']) && is_string($ligneLanEq['ip']) && $ligneLanEq['ip'] !== '')
+          ? $ligneLanEq['ip']
+          : $eqLogic->adresseLan()['ip'];
+
+        $modele = '';
+        if ($ligneCloudEq !== null && isset($ligneCloudEq['modele']) && is_string($ligneCloudEq['modele']) && $ligneCloudEq['modele'] !== '') {
+          $modele = $ligneCloudEq['modele'];
+        } elseif ($ligneAuxCloudEq !== null && isset($ligneAuxCloudEq['modele']) && is_string($ligneAuxCloudEq['modele']) && $ligneAuxCloudEq['modele'] !== '') {
+          $modele = $ligneAuxCloudEq['modele'];
+        } elseif ($ligneLanEq !== null && isset($ligneLanEq['typeAppareil']) && is_string($ligneLanEq['typeAppareil'])) {
+          $modele = $ligneLanEq['typeAppareil'];
+        }
+
+        // D1 : un seul identifiant -> valeur nue (comportement d'avant cette UC préservé
+        // pour la quasi totalité du parc) ; deux -> préfixés et joints, cf.
+        // identifiantCloudAffichable().
+        $identifiants = array();
+        if ($ligneCloudEq !== null && isset($ligneCloudEq['identifiant']) && is_string($ligneCloudEq['identifiant']) && $ligneCloudEq['identifiant'] !== '') {
+          $identifiants[smartclimCapabilities::TRANSPORT_AUX_HOME] = $ligneCloudEq['identifiant'];
+        }
+        if ($ligneAuxCloudEq !== null && isset($ligneAuxCloudEq['identifiant']) && is_string($ligneAuxCloudEq['identifiant']) && $ligneAuxCloudEq['identifiant'] !== '') {
+          $identifiants[smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY] = $ligneAuxCloudEq['identifiant'];
+        }
+
+        // ⚠️ JAMAIS déduit du LAN : etatAppareil() du LAN ne pose jamais 'online' — un LAN
+        // muet ne prouve pas qu'un appareil est hors ligne (§ 5.5/9 de la spec technique).
+        if ($ligneCloudEq !== null && isset($ligneCloudEq['enLigneLibelle']) && is_string($ligneCloudEq['enLigneLibelle'])) {
+          $enLigne = $ligneCloudEq['enLigneLibelle'];
+        } elseif ($ligneAuxCloudEq !== null && isset($ligneAuxCloudEq['enLigneLibelle']) && is_string($ligneAuxCloudEq['enLigneLibelle'])) {
+          $enLigne = $ligneAuxCloudEq['enLigneLibelle'];
+        } else {
+          $enLigne = __('État inconnu', __FILE__);
+        }
+
+        // Repli non décoratif (§ 5.5) : les lignes 'ignore_doublon'/'ignore_mode_cloud'
+        // portent un equipementId SANS figurer dans eqLogicsTouches, donc sans entrée
+        // dans $_contexte['profils'].
+        $capacites = '';
+        if (isset($_contexte['profils'][$id]['modes']) && is_string($_contexte['profils'][$id]['modes']) && $_contexte['profils'][$id]['modes'] !== '') {
+          $capacites = $_contexte['profils'][$id]['modes'];
+        } elseif (isset($_contexte['profils'][$id]['concepts']) && is_string($_contexte['profils'][$id]['concepts']) && $_contexte['profils'][$id]['concepts'] !== '') {
+          $capacites = $_contexte['profils'][$id]['concepts'];
+        } else {
+          $profilRepli = $eqLogic->profilAffichable();
+          $capacites = isset($profilRepli['concepts']) && is_string($profilRepli['concepts']) ? $profilRepli['concepts'] : '';
+        }
+
         $lignes[] = array(
           'nom' => $eqLogic->getName(),
           'mac' => $eqLogic->macEquipement(),
-          'lan' => self::libelleDisponibilite($lan),
-          'cloud' => self::libelleDisponibilite($cloud),
-          'cloudHistorique' => self::libelleDisponibilite($cloudHistorique),
+          'ip' => $ip,
+          'modele' => $modele,
+          'identifiantCloud' => self::identifiantCloudAffichable($identifiants),
+          'lan' => self::libelleDisponibilite($lan, $lanInterrogee),
+          'cloud' => self::libelleDisponibilite($cloud, $cloudInterrogee),
+          'cloudHistorique' => self::libelleDisponibilite($cloudHistorique, $legacyInterrogee),
+          'enLigne' => $enLigne,
+          'capacites' => $capacites,
           'transport' => $transport,
         );
       }
@@ -2966,6 +3340,117 @@ class smartclim extends eqLogic {
       log::add('smartclim', 'error', 'Synthèse LAN/cloud du scan impossible : ' . get_class($t) . ' : ' . self::neutraliserPourLog($t->getMessage()));
       return array();
     }
+  }
+
+  /**
+   * Valeur affichée pour la colonne « Identifiant cloud » (UC02 du domaine
+   * post-mvp/06-ergonomie-jeedom, § 5.7/D1 de sa spec technique, fonction PURE) : un
+   * seul identifiant -> la valeur nue (préserve strictement l'affichage d'avant cette
+   * UC) ; deux -> préfixés par smartclimCapabilities::libelleTransport() (noms de
+   * marque, AUCUNE clé i18n) et joints par « · ».
+   *
+   * @param array<string,string> $_identifiants code transport => identifiant.
+   * @return string
+   */
+  private static function identifiantCloudAffichable(array $_identifiants) {
+    $valeurs = array();
+    foreach ($_identifiants as $code => $valeur) {
+      if (is_string($valeur) && $valeur !== '') {
+        $valeurs[$code] = $valeur;
+      }
+    }
+    if (count($valeurs) === 0) {
+      return '';
+    }
+    if (count($valeurs) === 1) {
+      return reset($valeurs);
+    }
+    $fragments = array();
+    foreach ($valeurs as $code => $valeur) {
+      $fragments[] = smartclimCapabilities::libelleTransport($code) . ' : ' . $valeur;
+    }
+    return implode(' · ', $fragments);
+  }
+
+  /**
+   * Sections résiduelles du scan (UC02 du domaine post-mvp/06-ergonomie-jeedom, § 5.6/D3
+   * de sa spec technique) : lignes de `equipementId === 0` APRÈS la 2ᵉ passe de
+   * resoudreEquipementLignes(). Classement UNIQUE, dans cette seule méthode — aucune
+   * colonne 'categorie' n'est ajoutée à ligneResultatScan(), donc aucun de ses 15 sites
+   * d'appel n'est touché.
+   *
+   * - famille 'autres' — PREUVE NÉGATIVE, ce n'est pas un climatiseur : LAN
+   *   STATUT_ETAT_ILLISIBLE, legacy ignore_pompe_chaleur / ignore_non_climatiseur.
+   *   ⚠️ Le critère LAN APPELLE categorieLigneLan() (source unique de vérité) : les deux
+   *   ne peuvent donc pas diverger, c'est déjà la preuve qui conditionne la création
+   *   d'équipement. Ne JAMAIS trancher sur 'typeAppareil' (devtype).
+   * - famille 'ecartes' — tout le reste (absence de preuve, climatiseur possible non
+   *   rattaché) : ignore_identifiant, ignore_doublon, ignore_budget, erreur, LAN
+   *   injoignable / refusé / verrouillé / MAC divergente / non sondé.
+   *
+   * AUX Home ne contribue JAMAIS à 'autres' : aucun motif d'exclusion de ce transport
+   * n'est une preuve négative de non-climatiseur (contrairement au legacy).
+   *
+   * @param array $_lan Lignes LAN résolues par resoudreEquipementLignes().
+   * @param array $_legacy Lignes legacy résolues par resoudreEquipementLignes().
+   * @param array $_cloud Lignes AUX Home résolues par resoudreEquipementLignes().
+   * @return array{ecartes:array, autres:array} ligne : array{source:string, nom:string, mac:string, adresse:string, statutLibelle:string}
+   */
+  private static function lignesResiduellesScan(array $_lan, array $_legacy, array $_cloud) {
+    $ecartes = array();
+    $autres = array();
+
+    foreach ($_lan as $ligne) {
+      if (isset($ligne['equipementId']) && (int) $ligne['equipementId'] > 0) {
+        continue;
+      }
+      $ligneResiduelle = array(
+        'source' => smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_BROADLINK_LAN),
+        'nom' => isset($ligne['nom']) && is_string($ligne['nom']) ? $ligne['nom'] : '',
+        'mac' => isset($ligne['mac']) && is_string($ligne['mac']) ? $ligne['mac'] : '',
+        'adresse' => isset($ligne['ip']) && is_string($ligne['ip']) ? $ligne['ip'] : '',
+        'statutLibelle' => isset($ligne['statutLibelle']) && is_string($ligne['statutLibelle']) ? $ligne['statutLibelle'] : '',
+      );
+      $statutLigne = isset($ligne['statut']) ? $ligne['statut'] : '';
+      if (self::categorieLigneLan($statutLigne, isset($ligne['equipementId']) ? $ligne['equipementId'] : 0) === self::CATEGORIE_LAN_AUTRE) {
+        $autres[] = $ligneResiduelle;
+      } else {
+        $ecartes[] = $ligneResiduelle;
+      }
+    }
+
+    foreach ($_legacy as $ligne) {
+      if (isset($ligne['equipementId']) && (int) $ligne['equipementId'] > 0) {
+        continue;
+      }
+      $ligneResiduelle = array(
+        'source' => smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY),
+        'nom' => isset($ligne['nom']) && is_string($ligne['nom']) ? $ligne['nom'] : '',
+        'mac' => isset($ligne['mac']) && is_string($ligne['mac']) ? $ligne['mac'] : '',
+        'adresse' => isset($ligne['identifiant']) && is_string($ligne['identifiant']) ? $ligne['identifiant'] : '',
+        'statutLibelle' => isset($ligne['statutLibelle']) && is_string($ligne['statutLibelle']) ? $ligne['statutLibelle'] : '',
+      );
+      if (isset($ligne['statut']) && in_array($ligne['statut'], array('ignore_pompe_chaleur', 'ignore_non_climatiseur'), true)) {
+        $autres[] = $ligneResiduelle;
+      } else {
+        $ecartes[] = $ligneResiduelle;
+      }
+    }
+
+    foreach ($_cloud as $ligne) {
+      if (isset($ligne['equipementId']) && (int) $ligne['equipementId'] > 0) {
+        continue;
+      }
+      $ecartes[] = array(
+        'source' => smartclimCapabilities::libelleTransport(smartclimCapabilities::TRANSPORT_AUX_HOME),
+        'nom' => isset($ligne['nom']) && is_string($ligne['nom']) ? $ligne['nom'] : '',
+        'mac' => isset($ligne['mac']) && is_string($ligne['mac']) ? $ligne['mac'] : '',
+        'adresse' => isset($ligne['identifiant']) && is_string($ligne['identifiant']) ? $ligne['identifiant'] : '',
+        'statutLibelle' => isset($ligne['statutLibelle']) && is_string($ligne['statutLibelle']) ? $ligne['statutLibelle'] : '',
+      );
+    }
+
+    return array('ecartes' => $ecartes, 'autres' => $autres);
   }
 
   /**

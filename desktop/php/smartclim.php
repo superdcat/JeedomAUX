@@ -48,7 +48,22 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 		</div>
 		<div class="col-xs-12" id="div_scanResultat" style="display:none;">
 			<legend><i class="fas fa-search"></i> {{Résultat}}</legend>
-			<p id="span_scanResume"></p>
+			<div id="div_scanSourcesWrapper">
+				<h4>{{Sources interrogées}}</h4>
+				<div class="table-responsive">
+					<table id="table_scanSources" class="table table-bordered table-condensed">
+						<thead>
+							<tr>
+								<th>{{Source}}</th>
+								<th>{{État}}</th>
+								<th>{{Détail}}</th>
+							</tr>
+						</thead>
+						<tbody>
+						</tbody>
+					</table>
+				</div>
+			</div>
 			<div id="div_scanClimatiseursWrapper">
 				<h4>{{Climatiseurs (LAN + cloud)}}</h4>
 				<div class="table-responsive">
@@ -57,9 +72,14 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 							<tr>
 								<th>{{Nom}}</th>
 								<th>{{Adresse MAC}}</th>
+								<th>{{Adresse IP}}</th>
+								<th>{{Modèle}}</th>
+								<th>{{Identifiant cloud}}</th>
 								<th>{{Disponible en LAN}}</th>
 								<th>{{Disponible dans le cloud}}</th>
 								<th>{{Disponible dans le cloud historique}}</th>
+								<th>{{État en ligne}}</th>
+								<th>{{Capacités détectées}}</th>
 								<th>{{Transport actif}}</th>
 							</tr>
 						</thead>
@@ -68,17 +88,17 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 					</table>
 				</div>
 			</div>
-			<div id="div_scanTrouvesWrapper">
-				<h4>{{Climatiseurs trouvés}}</h4>
+			<div id="div_scanEcartesWrapper" class="hidden">
+				<h4>{{Appareils écartés}}</h4>
+				<p>{{Ces appareils ont été détectés mais n'ont pas pu être rattachés automatiquement à un climatiseur (identifiant manquant, doublon dans une réponse, budget de temps épuisé, erreur…). Ce ne sont pas forcément des climatiseurs.}}</p>
 				<div class="table-responsive">
-					<table id="table_scanTrouves" class="table table-bordered table-condensed">
+					<table id="table_scanEcartes" class="table table-bordered table-condensed">
 						<thead>
 							<tr>
+								<th>{{Source}}</th>
 								<th>{{Nom}}</th>
-								<th>{{Modèle}}</th>
 								<th>{{Adresse MAC}}</th>
-								<th>{{Identifiant cloud}}</th>
-								<th>{{État}}</th>
+								<th>{{Adresse}}</th>
 								<th>{{Résultat}}</th>
 							</tr>
 						</thead>
@@ -87,26 +107,7 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 					</table>
 				</div>
 			</div>
-			<div id="div_scanAuxCloudWrapper">
-				<h4>{{Climatiseurs trouvés sur le cloud historique}}</h4>
-				<div class="table-responsive">
-					<table id="table_scanAuxCloud" class="table table-bordered table-condensed">
-						<thead>
-							<tr>
-								<th>{{Nom}}</th>
-								<th>{{Modèle}}</th>
-								<th>{{Adresse MAC}}</th>
-								<th>{{Identifiant cloud}}</th>
-								<th>{{État}}</th>
-								<th>{{Résultat}}</th>
-							</tr>
-						</thead>
-						<tbody>
-						</tbody>
-					</table>
-				</div>
-			</div>
-			<div id="div_scanDisparusWrapper">
+			<div id="div_scanDisparusWrapper" class="hidden">
 				<h4>{{Climatiseurs introuvables sur le compte}}</h4>
 				<div class="table-responsive">
 					<table id="table_scanDisparus" class="table table-bordered table-condensed">
@@ -123,36 +124,17 @@ sendVarToJS('smartclimEtatsConnexion', $smartclimEtatsConnexion);
 					</table>
 				</div>
 			</div>
-			<div id="div_scanLanWrapper">
-				<h4>{{Climatiseurs détectés sur le réseau local}}</h4>
-				<p id="span_scanResumeLan"></p>
-				<div class="table-responsive">
-					<table id="table_scanLan" class="table table-bordered table-condensed">
-						<thead>
-							<tr>
-								<th>{{Nom}}</th>
-								<th>{{Adresse MAC}}</th>
-								<th>{{Adresse IP}}</th>
-								<th>{{Type d'appareil}}</th>
-								<th>{{Résultat}}</th>
-							</tr>
-						</thead>
-						<tbody>
-						</tbody>
-					</table>
-				</div>
-			</div>
 			<div id="div_scanLanAutresWrapper" class="hidden">
-				<h4>{{Autres appareils Broadlink détectés}}</h4>
-				<p>{{Ces appareils ont répondu sur le réseau local mais ne renvoient aucun état de climatisation exploitable : ce ne sont pas des climatiseurs (télécommande RM, prise connectée, etc.). Ils ne sont jamais ajoutés comme équipements.}}</p>
+				<h4>{{Autres appareils détectés}}</h4>
+				<p>{{Ces appareils ont répondu mais ne renvoient aucun état de climatisation exploitable : ce ne sont pas des climatiseurs (télécommande RM, prise connectée, pompe à chaleur, etc.). Ils ne sont jamais ajoutés comme équipements.}}</p>
 				<div class="table-responsive">
 					<table id="table_scanLanAutres" class="table table-bordered table-condensed">
 						<thead>
 							<tr>
+								<th>{{Source}}</th>
 								<th>{{Nom}}</th>
 								<th>{{Adresse MAC}}</th>
-								<th>{{Adresse IP}}</th>
-								<th>{{Type d'appareil}}</th>
+								<th>{{Adresse}}</th>
 								<th>{{Résultat}}</th>
 							</tr>
 						</thead>

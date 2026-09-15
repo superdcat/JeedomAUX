@@ -288,9 +288,10 @@ function saveEqLogic(_eqLogic) {
   return _eqLogic
 }
 
-/* Découverte des climatiseurs AUX Home (UC03). Toute la logique (rapprochement,
-   création/mise à jour, libellés traduits) vit côté serveur
-   (core/ajax/smartclim.ajax.php -> smartclim::scannerAuxHome()) : ce JS n'envoie
+/* Découverte des climatiseurs AUX Home (UC03), unifiée à l'UC02 du domaine
+   post-mvp/06-ergonomie-jeedom. Toute la logique (rapprochement, création/mise à
+   jour, fusion des trois sources, libellés traduits) vit côté serveur
+   (core/ajax/smartclim.ajax.php -> smartclim::scannerClimatiseurs()) : ce JS n'envoie
    aucun paramètre, il affiche uniquement le résultat déjà curaté. */
 function ajouterLigneScan($table, valeurs) {
   var tr = $('<tr></tr>')
@@ -300,17 +301,38 @@ function ajouterLigneScan($table, valeurs) {
   $table.find('tbody').append(tr)
 }
 
+// UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.2/D2/§ 6 de la spec technique) :
+// bloc persistant « Sources interrogées », DÉJÀ curaté côté serveur (sourcesScan()) —
+// ce JS n'assemble rien, il injecte les 3 valeurs déjà traduites et ne fait qu'une
+// seule chose à partir d'un code serveur : mapper 'niveau' sur une classe CSS de ligne
+// (même doctrine que smartclimClassesNiveau ci-dessus pour les badges, jamais de
+// raisonnement sur 'etat'). ajouterLigneScan() reste réutilisée telle quelle.
+var smartclimClassesLigneSource = {
+  ok: 'success',
+  warning: 'warning',
+  neutre: ''
+}
+
+function ajouterLigneScanSource($table, source) {
+  ajouterLigneScan($table, [source.libelle, source.etatLibelle, source.detail])
+  var classe = smartclimClassesLigneSource[source.niveau] || ''
+  if (classe) {
+    $table.find('tbody tr:last').addClass(classe)
+  }
+}
+
 $('#bt_scannerClimatiseurs').off('click').on('click', function () {
   var $bouton = $(this)
   var libelleInitial = $bouton.find('span').text()
   $bouton.addClass('disableCard')
   $bouton.find('span').text("{{Scan en cours…}}")
+  $('#table_scanSources tbody').empty()
   $('#table_scanClimatiseurs tbody').empty()
-  $('#table_scanTrouves tbody').empty()
-  $('#table_scanAuxCloud tbody').empty()
+  $('#table_scanEcartes tbody').empty()
   $('#table_scanDisparus tbody').empty()
-  $('#table_scanLan tbody').empty()
   $('#table_scanLanAutres tbody').empty()
+  $('#div_scanEcartesWrapper').addClass('hidden')
+  $('#div_scanDisparusWrapper').addClass('hidden')
   $('#div_scanLanAutresWrapper').addClass('hidden')
   $('#bt_scanRecharger').addClass('hidden')
   $('#div_scanResultat').hide()
@@ -339,84 +361,85 @@ $('#bt_scannerClimatiseurs').off('click').on('click', function () {
         return
       }
       var resultat = data.result
-      $('#span_scanResume').text(resultat.resume)
+
+      $.each(resultat.sources, function (index, source) {
+        ajouterLigneScanSource($('#table_scanSources'), source)
+      })
+
       // UC04 du domaine post-mvp/01-transport-broadlink-lan (§ 3/5.10 de la spec
-      // technique), enrichie à l'UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 6.2) :
-      // table de synthèse, DÉJÀ curatée côté serveur (lignesFusionScan()) — ce JS
-      // n'assemble rien, il injecte les 6 valeurs déjà traduites.
+      // technique), enrichie à l'UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 6.2)
+      // puis à l'UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.3/5.5/D3) : tableau
+      // UNIQUE de climatiseurs, DÉJÀ curaté côté serveur (lignesFusionScan()) — ce JS
+      // n'assemble rien, il injecte les 11 valeurs déjà traduites.
       $.each(resultat.climatiseurs, function (index, climatiseur) {
         ajouterLigneScan($('#table_scanClimatiseurs'), [
           climatiseur.nom,
           climatiseur.mac,
+          climatiseur.ip,
+          climatiseur.modele,
+          climatiseur.identifiantCloud,
           climatiseur.lan,
           climatiseur.cloud,
           climatiseur.cloudHistorique,
+          climatiseur.enLigne,
+          climatiseur.capacites,
           climatiseur.transport
         ])
       })
       // UC01 du domaine post-mvp/01-transport-broadlink-lan (§ 3/5.6 de la spec
       // technique) : le scan cloud a pu échouer SANS empêcher le scan LAN (D-POSTMVP0101-10)
       // — un cloudErreur non vide est un avertissement (warning), jamais une panne (danger).
+      // UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.2/D2) : ne vaut plus JAMAIS
+      // pour un compte non configuré — ce cas s'affiche désormais dans le bloc
+      // « Sources interrogées » ci-dessus, sans alerte modale.
       if (resultat.cloudErreur) {
         $('#div_alert').showAlert({ message: resultat.cloudErreur, level: 'warning' })
       }
       // UC02 du domaine post-mvp/03-cloud-aux-legacy (§ 6.2 de sa spec technique) : même
-      // doctrine que cloudErreur ci-dessus — un legacyErreur non vide est un
-      // avertissement, jamais une panne (un utilisateur purement AUX Home n'a pas de
-      // compte legacy configuré, ce n'est pas une erreur pour lui).
+      // doctrine que cloudErreur ci-dessus.
       if (resultat.legacyErreur) {
         $('#div_alert').showAlert({ message: resultat.legacyErreur, level: 'warning' })
       }
-      if (resultat.legacy) {
-        $.each(resultat.legacy.appareils, function (index, appareil) {
-          ajouterLigneScan($('#table_scanAuxCloud'), [
+
+      // UC02 du domaine post-mvp/06-ergonomie-jeedom (§ 5.6/D3 de sa spec technique) :
+      // sections résiduelles, masquées quand vides — « écartés » (absence de preuve) et
+      // « autres appareils » (preuve négative), toutes deux DÉJÀ curatées côté serveur
+      // (lignesResiduellesScan()).
+      if (resultat.ecartes && resultat.ecartes.length > 0) {
+        $.each(resultat.ecartes, function (index, ligne) {
+          ajouterLigneScan($('#table_scanEcartes'), [
+            ligne.source,
+            ligne.nom,
+            ligne.mac,
+            ligne.adresse,
+            ligne.statutLibelle
+          ])
+        })
+        $('#div_scanEcartesWrapper').removeClass('hidden')
+      }
+      if (resultat.autres && resultat.autres.length > 0) {
+        $.each(resultat.autres, function (index, ligne) {
+          ajouterLigneScan($('#table_scanLanAutres'), [
+            ligne.source,
+            ligne.nom,
+            ligne.mac,
+            ligne.adresse,
+            ligne.statutLibelle
+          ])
+        })
+        $('#div_scanLanAutresWrapper').removeClass('hidden')
+      }
+      if (resultat.disparus && resultat.disparus.length > 0) {
+        $.each(resultat.disparus, function (index, appareil) {
+          ajouterLigneScan($('#table_scanDisparus'), [
             appareil.nom,
-            appareil.modele,
             appareil.mac,
             appareil.identifiant,
-            appareil.enLigneLibelle,
             appareil.statutLibelle
           ])
         })
+        $('#div_scanDisparusWrapper').removeClass('hidden')
       }
-      if (resultat.lan) {
-        $('#span_scanResumeLan').text(resultat.lan.resume)
-        $.each(resultat.lan.appareils, function (index, appareil) {
-          // Recette du 2026-09-12 : la diffusion Broadlink ramène TOUS les appareils du
-          // réseau (RM4 Pro, prises…), pas seulement des climatiseurs. La catégorie est
-          // DÉJÀ tranchée côté serveur (smartclim::categorieLigneLan(), sur la preuve de
-          // lecture d'état) : ce JS n'arbitre rien, il aiguille.
-          var autre = (appareil.categorie === 'autre')
-          if (autre) {
-            $('#div_scanLanAutresWrapper').removeClass('hidden')
-          }
-          ajouterLigneScan($(autre ? '#table_scanLanAutres' : '#table_scanLan'), [
-            appareil.nom,
-            appareil.mac,
-            appareil.ip,
-            appareil.typeAppareil,
-            appareil.statutLibelle
-          ])
-        })
-      }
-      $.each(resultat.appareils, function (index, appareil) {
-        ajouterLigneScan($('#table_scanTrouves'), [
-          appareil.nom,
-          appareil.modele,
-          appareil.mac,
-          appareil.identifiant,
-          appareil.enLigneLibelle,
-          appareil.statutLibelle
-        ])
-      })
-      $.each(resultat.disparus, function (index, appareil) {
-        ajouterLigneScan($('#table_scanDisparus'), [
-          appareil.nom,
-          appareil.mac,
-          appareil.identifiant,
-          appareil.statutLibelle
-        ])
-      })
       // UC04 du domaine post-mvp/01-transport-broadlink-lan : une création peut venir
       // du LAN (resultat.lan.compteurs.crees) tout autant que du cloud
       // (resultat.compteurs.crees) — les deux comptent pour proposer le rechargement.

@@ -98,9 +98,14 @@
       charge = null
     }
   }
-  if (!charge || !charge.infos || !charge.infos.power || !charge.actions) {
+  if (!charge || !charge.infos || !charge.infos.power || !charge.actions
+      || typeof charge.pilotable !== 'boolean') {
     return
   }
+  // D2 de la spec technique d'UC03 : champ OBLIGATOIRE, ni fail-open ni fail-closed. AUCUN
+  // opérateur de défaut sur cette lecture (ni !==, ni ===, ni ||, ni ?:) — la garde de forme
+  // ci-dessus est la SEULE protection, et son échec laisse le bandeau dégradé en place.
+  var pilotable = charge.pilotable
 
   $racine.find('.smartclim-tuile-degrade').remove()
   $racine.find('.smartclim-tuile-entete').css('display', 'flex')
@@ -158,10 +163,23 @@
     $bouton.toggleClass('btn-primary', powerActif)
     $bouton.toggleClass('btn-default', !powerActif)
     var nom = ''
-    if (powerActif && charge.actions.off) {
-      nom = charge.actions.off.nom
-    } else if (!powerActif && charge.actions.on) {
-      nom = charge.actions.on.nom
+    if (pilotable) {
+      // Lecture/écriture : le bouton affiche l'ACTION à faire.
+      if (powerActif && charge.actions.off) {
+        nom = charge.actions.off.nom
+      } else if (!powerActif && charge.actions.on) {
+        nom = charge.actions.on.nom
+      }
+    } else {
+      // Lecture seule (AC5, § 5.3 garde 1 de la spec technique d'UC03) : le bouton
+      // n'exécute plus rien, il doit donc afficher l'ÉTAT et non l'action à faire —
+      // sans quoi un climatiseur éteint afficherait « Marche » comme s'il fallait
+      // encore cliquer pour l'allumer.
+      if (powerActif && charge.actions.on) {
+        nom = charge.actions.on.nom
+      } else if (!powerActif && charge.actions.off) {
+        nom = charge.actions.off.nom
+      }
     }
     $boutonTexte.text(nom)
   }
@@ -169,27 +187,31 @@
   abonner(charge.infos.power.id, function (_options) {
     majPower(valeurOptions(_options))
   })
-  $bouton.on('click', function (_event) {
-    _event.preventDefault()
-    if ($bouton.hasClass('disabled')) {
-      return
-    }
-    var cible = powerActif ? charge.actions.off : charge.actions.on
-    if (!cible) {
-      return
-    }
-    $bouton.addClass('disabled')
-    jeedom.cmd.execute({
-      id: cible.id,
-      notify: true,
-      success: function () {
-        $bouton.removeClass('disabled')
-      },
-      error: function () {
-        $bouton.removeClass('disabled')
+  if (pilotable) {
+    $bouton.on('click', function (_event) {
+      _event.preventDefault()
+      if ($bouton.hasClass('disabled')) {
+        return
       }
+      var cible = powerActif ? charge.actions.off : charge.actions.on
+      if (!cible) {
+        return
+      }
+      $bouton.addClass('disabled')
+      jeedom.cmd.execute({
+        id: cible.id,
+        notify: true,
+        success: function () {
+          $bouton.removeClass('disabled')
+        },
+        error: function () {
+          $bouton.removeClass('disabled')
+        }
+      })
     })
-  })
+  } else {
+    $bouton.addClass('disabled')
+  }
 
   // ---- Température ambiante (sa commande info est masquée depuis la v2 du périmètre) ----
   var $ambiante = $racine.find('.smartclim-tuile-ambiante')
@@ -257,12 +279,19 @@
       })
     }
 
-    $boutonMoins.on('click', function () {
-      envoyerConsigne(courante - pas)
-    })
-    $boutonPlus.on('click', function () {
-      envoyerConsigne(courante + pas)
-    })
+    if (pilotable) {
+      $boutonMoins.on('click', function () {
+        envoyerConsigne(courante - pas)
+      })
+      $boutonPlus.on('click', function () {
+        envoyerConsigne(courante + pas)
+      })
+    } else {
+      // AC5 (§ 5.3 garde 2) : la valeur reste affichée et abonnée, seuls les boutons
+      // d'action disparaissent.
+      $boutonMoins.remove()
+      $boutonPlus.remove()
+    }
 
     majAffichageConsigne()
     abonner(charge.infos.target_temp.id, function (_options) {
@@ -289,22 +318,29 @@
         $b.append(' ')
       }
       $('<span></span>').text(_mode.libelle).appendTo($b)
-      $b.on('click', function () {
-        if ($b.hasClass('disabled')) {
-          return
-        }
-        $modes.find('button').addClass('disabled')
-        jeedom.cmd.execute({
-          id: _mode.id,
-          notify: true,
-          success: function () {
-            $modes.find('button').removeClass('disabled')
-          },
-          error: function () {
-            $modes.find('button').removeClass('disabled')
+      if (pilotable) {
+        $b.on('click', function () {
+          if ($b.hasClass('disabled')) {
+            return
           }
+          $modes.find('button').addClass('disabled')
+          jeedom.cmd.execute({
+            id: _mode.id,
+            notify: true,
+            success: function () {
+              $modes.find('button').removeClass('disabled')
+            },
+            error: function () {
+              $modes.find('button').removeClass('disabled')
+            }
+          })
         })
-      })
+      } else {
+        // AC5 (§ 5.3 garde 3) : le libellé et la mise en évidence du mode actif
+        // restent construits — c'est ce qui porte l'AC3 — seul le gestionnaire de
+        // clic n'est pas enregistré.
+        $b.addClass('disabled')
+      }
       $modes.append($b)
     })
     if (charge.infos.mode) {
@@ -336,22 +372,27 @@
       $b.attr('data-code', _vitesse.code)
       $b.attr('title', _vitesse.nom)
       $('<span></span>').text(_vitesse.libelle).appendTo($b)
-      $b.on('click', function () {
-        if ($b.hasClass('disabled')) {
-          return
-        }
-        $vitesses.find('button').addClass('disabled')
-        jeedom.cmd.execute({
-          id: _vitesse.id,
-          notify: true,
-          success: function () {
-            $vitesses.find('button').removeClass('disabled')
-          },
-          error: function () {
-            $vitesses.find('button').removeClass('disabled')
+      if (pilotable) {
+        $b.on('click', function () {
+          if ($b.hasClass('disabled')) {
+            return
           }
+          $vitesses.find('button').addClass('disabled')
+          jeedom.cmd.execute({
+            id: _vitesse.id,
+            notify: true,
+            success: function () {
+              $vitesses.find('button').removeClass('disabled')
+            },
+            error: function () {
+              $vitesses.find('button').removeClass('disabled')
+            }
+          })
         })
-      })
+      } else {
+        // AC5 (§ 5.3 garde 4), même patron que les modes ci-dessus.
+        $b.addClass('disabled')
+      }
       $vitesses.append($b)
     })
     if (charge.infos.fan_speed) {

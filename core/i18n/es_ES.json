@@ -371,5 +371,11 @@
     "plugins/smartclim/core/class/smartclimWidget.class.php": {
         "Diminuer la consigne": "Disminuir la consigna",
         "Augmenter la consigne": "Aumentar la consigna"
+    },
+    "plugins/smartclim/desktop/php/panel.php": {
+        "401 - Accès non autorisé": "401 - Acceso no autorizado",
+        "Mes climatiseurs": "Mis climatizadores",
+        "Aucun climatiseur accessible": "Ningún climatizador accesible",
+        "Sans objet": "Ninguna estancia asignada"
     }
 }

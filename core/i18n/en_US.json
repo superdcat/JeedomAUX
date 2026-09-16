@@ -371,5 +371,11 @@
     "plugins/smartclim/core/class/smartclimWidget.class.php": {
         "Diminuer la consigne": "Decrease the target temperature",
         "Augmenter la consigne": "Increase the target temperature"
+    },
+    "plugins/smartclim/desktop/php/panel.php": {
+        "401 - Accès non autorisé": "401 - Unauthorized access",
+        "Mes climatiseurs": "My air conditioners",
+        "Aucun climatiseur accessible": "No air conditioner accessible",
+        "Sans objet": "No room assigned"
     }
 }

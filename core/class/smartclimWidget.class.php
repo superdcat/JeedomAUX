@@ -17,10 +17,16 @@
 
 /**
  * Assemblage de la charge du widget de tuile « climatiseur » (UC01 du domaine
- * post-mvp/06-ergonomie-jeedom). Même statut que smartclimDiagnostic : mise en forme
- * PURE, aucune E/S, aucun config::, aucun cache::, aucun réseau, aucun cmd::save()/
- * eqLogic::save(). Le SEUL accès au modèle est une lecture ($_eqLogic->getCmd(null,
- * null) et les valeurs déjà en cache des commandes info) — jamais une écriture.
+ * post-mvp/06-ergonomie-jeedom). Même statut que smartclimDiagnostic pour l'ESSENTIEL :
+ * aucun config::, aucun cache::, aucun réseau, aucun cmd::save()/eqLogic::save(). Le SEUL
+ * accès au modèle est une lecture ($_eqLogic->getCmd(null, null) et les valeurs déjà en
+ * cache des commandes info) — jamais une écriture.
+ *
+ * ⚠️ Depuis l'UC03 du même domaine (page-panneau), chargeTuile() n'est PLUS une fonction
+ * PURE : elle lit aussi le CONTEXTE D'AUTHENTIFICATION de la requête courante via
+ * $_eqLogic->hasRight('x') (clé 'pilotable'). Ce n'est ni une E/S ni une écriture, mais
+ * c'est une dépendance à la session en cours — à NE PAS retirer en croyant « nettoyer »
+ * un appel qui semble hors de propos dans une classe de mise en forme.
  *
  * Un seul appelant : smartclimCmd::toHtml(), au moment du rendu d'une commande portant
  * smartclim::WIDGET_TUILE. La charge produite est injectée dans le canal $_options de
@@ -171,20 +177,15 @@ class smartclimWidget {
     $bornes = $_eqLogic->bornesTemperature();
 
     return array(
-      // Version de FORME de la charge (schéma), pas une version d'écran : défensif côté
-      // client, jamais consommé côté serveur. Avec 'eqLogic.id' ci-dessous, ce champ n'est
-      // volontairement lu par aucun des deux templates de cette UC : il anticipe l'UC03 du
-      // domaine (page-panneau multi-climatiseurs), qui distinguera les tuiles entre elles.
-      'version' => 1,
-      'eqLogic' => array(
-        'id' => (int) $_eqLogic->getId(),
-        // getName(), JAMAIS getHumanName() : le second rend la forme technique
-        // « [Objet][Équipement] » (recette du 2026-09-12). Le nom n'est plus affiché par
-        // la tuile — le bandeau de l'équipement le porte déjà — mais il reste dans la
-        // charge pour l'UC03 du domaine (page-panneau multi-climatiseurs), qui aura bien
-        // besoin d'un nom lisible.
-        'nom' => (string) $_eqLogic->getName(),
-      ),
+      // Droit d'EXÉCUTION de l'utilisateur COURANT sur cet équipement (UC03 du domaine,
+      // D2 de sa spec technique) : bool, TOUJOURS présente — c'est un champ OBLIGATOIRE
+      // du schéma de charge, pas un simple confort d'affichage. Sa garde de forme côté
+      // template n'accepte AUCUN opérateur de défaut (ni !==, ni ===, ni ||, ni ?:) : sa
+      // seule absence doit faire basculer la tuile dans son mode dégradé déjà spécifié.
+      // ⚠️ Ce drapeau n'est PAS une frontière d'autorisation : la seule barrière réelle
+      // est core/ajax/cmd.ajax.php (contrôle 'x' avant exécution). Même statut que
+      // 'actionConfirm' dans CLAUDE.md — de l'ergonomie, jamais la sécurité.
+      'pilotable' => $_eqLogic->hasRight('x'),
       'infos' => $infos,
       'actions' => array_merge($actions, array(
         'modes' => $modes,

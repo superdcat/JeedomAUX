@@ -371,5 +371,11 @@
     "plugins/smartclim/core/class/smartclimWidget.class.php": {
         "Diminuer la consigne": "Sollwert verringern",
         "Augmenter la consigne": "Sollwert erhöhen"
+    },
+    "plugins/smartclim/desktop/php/panel.php": {
+        "401 - Accès non autorisé": "401 - Nicht autorisierter Zugriff",
+        "Mes climatiseurs": "Meine Klimaanlagen",
+        "Aucun climatiseur accessible": "Keine Klimaanlage zugänglich",
+        "Sans objet": "Kein Raum zugewiesen"
     }
 }

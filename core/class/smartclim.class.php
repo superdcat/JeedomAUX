@@ -368,6 +368,58 @@ class smartclim extends eqLogic {
   }
 
   /**
+   * Climatiseurs affichables par l'utilisateur COURANT, groupés par objet parent, pour la
+   * page-panneau (UC03 du domaine post-mvp/06-ergonomie-jeedom). Triple filtre, dans cet
+   * ordre :
+   *   1. eqLogic::byType('smartclim', true) -> activés seulement (le core n'a AUCUN
+   *      filtre de droits ici : byType est une requête SQL nue) ;
+   *   2. getIsVisible()                     -> convention du core (core/ajax/eqLogic.ajax.php:38) ;
+   *   3. hasRight('r')                      -> AC2.
+   * Ne lève JAMAIS. Aucun appel réseau, aucun save(), aucune écriture de cache.
+   *
+   * POSTCONDITION (porteur de l'AC2 « pas de ligne vide ») : aucun groupe vide n'est
+   * JAMAIS construit. L'entrée de groupe est créée PARESSEUSEMENT, au premier équipement
+   * qui franchit les trois filtres — il n'existe donc pas de chemin par lequel un objet
+   * dont tous les climatiseurs sont écartés obtienne une entrée. Ne pas « nettoyer » après
+   * coup par un array_filter : l'invariant est structurel, pas défensif, et c'est ce qui le
+   * rend vérifiable en dix lignes.
+   *
+   * @return array<int, array{nom:string, equipements:smartclim[]}> clé = id d'objet, 0 =
+   *         sans objet ; 'nom' = nom BRUT de l'objet, à échapper AU POINT DE SORTIE ; ''
+   *         si aucun objet
+   */
+  public static function climatiseursVisibles() {
+    $groupes = array();
+    foreach (eqLogic::byType('smartclim', true) as $eqLogic) {
+      if (!($eqLogic instanceof smartclim)) {
+        continue;
+      }
+      if ($eqLogic->getIsVisible() != 1) {
+        continue;
+      }
+      if (!$eqLogic->hasRight('r')) {
+        continue;
+      }
+      $idObjet = (int) $eqLogic->getObject_id();
+      if (!isset($groupes[$idObjet])) {
+        $nomObjet = '';
+        if ($idObjet > 0) {
+          $objet = jeeObject::byId($idObjet);
+          if ($objet !== null) {
+            $nomObjet = (string) $objet->getName();
+          }
+        }
+        $groupes[$idObjet] = array(
+          'nom' => $nomObjet,
+          'equipements' => array(),
+        );
+      }
+      $groupes[$idObjet]['equipements'][] = $eqLogic;
+    }
+    return $groupes;
+  }
+
+  /**
    * Profil de capacités AFFICHABLE (chaînes déjà traduites) de plusieurs équipements,
    * indexé par ID d'équipement — sert directement de charge à sendVarToJS() (§ Server
    * vs Client de la spec technique UC04 : tout le rendu de texte est SERVEUR).

@@ -1007,9 +1007,46 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   `.memory/analyse/jeedom-config-plugin-et-cycle-de-vie.md` § 12.
 - **`desktop/js/smartclim.js`** — front-end (lignes de commandes, tri, helpers `jeedom.*`).
 - **`desktop/modal/modal.smartclim.php`** — modale(s) de la page de config.
-- **`desktop/php/<fichier>.php` déclaré par `info.json "display"`** — page-panneau optionnelle au **menu
-  d'accueil** Jeedom (usage utilisateur, `isConnect()` non-admin). Prévue au domaine post-MVP 06. Détail :
-  `.memory/analyse/jeedom-panel-page-menu.md`.
+- **`desktop/php/panel.php`** — **existe** depuis l'UC03 du domaine post-MVP 06. Page-panneau au **menu
+  d'accueil** Jeedom (`info.json` → `"display": "panel"`), et **seul point d'entrée NON-ADMIN du plugin** :
+  `isConnect()` **sans argument**, jamais `isConnect('admin')`. Elle liste les climatiseurs sur lesquels
+  l'utilisateur connecté a le droit de lecture, groupés par objet parent, et les rend par la tuile d'UC01.
+  Détail : `.memory/analyse/jeedom-panel-page-menu.md` (§ 5 pour le contrat réel des droits) et la spec
+  technique `.memory/specs/post-mvp/06-ergonomie-jeedom/03-page-panneau-utilisateur-tech.md`.
+  ⚠⚠ **Elle n'ouvre AUCUNE surface web, et c'est l'invariant à préserver en premier** : aucun endpoint
+  AJAX, aucun JS de page, aucune classe nouvelle, aucune clé de configuration. Le rendu est **100 %
+  serveur** par `eqLogic::toHtml()` **natif** ; les seules requêtes réseau qu'elle déclenche sont celles du
+  core (`cmd.ajax.php`, `event.ajax.php`). Le socle JS (`jeedom.cmd.execute`, `addUpdateFunction`,
+  **`moment`**) est chargé inconditionnellement par `desktop/php/index.php` **avant** le contenu de page —
+  vérifié en source, **rien à inclure**. Ne jamais y inclure `plugin.template.js` (il pose
+  `data-type=plugin` et pilote la liste d'équipements **admin**) ni `dashboard.js` (Packery + mode édition).
+  ⚠⚠ **Le core NE MASQUE PAS de lui-même les commandes d'action à un utilisateur en lecture seule** : il
+  n'appelle jamais `cmd::hasRight()` depuis `toHtml()`. D'où la clé `pilotable` (= `hasRight('x')`) posée
+  par `smartclimWidget::chargeTuile()` et consommée par les deux templates de tuile. ⚠ C'est une garde
+  d'**ergonomie**, **jamais** une frontière d'autorisation — la barrière est `core/ajax/cmd.ajax.php`, qui
+  refuse déjà toute action sans `hasRight('x')` (même statut qu'`actionConfirm`).
+  ⚠⚠ **`pilotable` est un champ OBLIGATOIRE du schéma de charge** : la garde de forme des templates exige
+  `typeof charge.pilotable === 'boolean'`, puis lit `var pilotable = charge.pilotable` **en clair**. Ni
+  `!== false` (fail-open : l'exigence de lecture seule deviendrait fausse **en silence**, sur le critère
+  précisément le moins testable), ni `=== true` (fail-closed : la tuile deviendrait inerte **pour tout le
+  monde, sur le dashboard**). Une clé manquante bascule la tuile dans son **mode dégradé déjà spécifié**.
+  **Ne jamais y remettre d'opérateur de défaut.**
+  ⚠ **Un en-tête de groupe ne s'émet qu'APRÈS avoir du contenu** (tampon `$tuiles` + `continue`) :
+  `eqLogic::preToHtml()` réévalue les droits **au moment du rendu**, donc une liste filtrée en amont peut
+  voir une de ses tuiles rendre `''` — sans le tampon, un objet dont tous les climatiseurs deviennent
+  invisibles laisserait un **titre orphelin**.
+  ⚠ **Un seul et même message pour « aucun climatiseur accessible » et « aucun climatiseur installé »** :
+  décision de **sécurité** — distinguer les deux révélerait l'existence d'équipements que l'utilisateur
+  n'a pas le droit de voir.
+  ⚠ **Recette impossible avec un profil `user`** : `eqLogic::hasRight()` rend `true` **inconditionnellement**
+  pour `admin` **et** `user` — les droits par équipement n'existent que pour le profil **`restricted`**, et
+  il n'existe **aucun droit `w`** sur un eqLogic (`n` / `r` / **`rx`** seulement). Créer un utilisateur
+  `restricted` est l'**étape 0 non contournable** de sa recette.
+  ⚠ L'entrée de menu reste **masquée** tant qu'un administrateur n'a pas coché « Afficher le panneau
+  desktop » (`displayDesktopPanel`, défaut **0**) — comportement **natif** du core, rien à coder.
+  ⚠ Le panneau **mobile** n'est pas déclaré : le core conditionne la clé `"mobile"` à l'existence du
+  dossier **`mobile/html`** (et **non** `mobile/php`), si bien qu'en ne déclarant que `"display"` **aucune
+  case mobile morte** n'apparaît dans l'IHM.
 - **`plugin_info/configuration.php`** — formulaire de la page de config **plugin** (`gotoPluginConf`).
   Champs liés en `class="configKey" data-l1key="<clé>"` (auto-load/save core via
   `config::byKey/save(..., 'smartclim')`). Gardé par **`isConnect('admin')`**, comme les autres points

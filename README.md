@@ -117,16 +117,13 @@ enveloppées (`{{...}}` en HTML/JS, `__('...', __FILE__)` en PHP), traductions d
 
 ## Crédits
 
-L'implémentation s'appuie sur l'analyse de projets open source ayant documenté ces protocoles, notamment
-[`maeek/ha-aux-cloud`](https://github.com/maeek/ha-aux-cloud),
-[`fparrav/homebridge-aux-cloud`](https://github.com/fparrav/homebridge-aux-cloud),
-[`azadaydinli/ac_freedom`](https://github.com/azadaydinli/ac_freedom),
-[`azadaydinli/homebridge-ac-freedom`](https://github.com/azadaydinli/homebridge-ac-freedom),
-[`latentharbor/ha-aux-a-plus`](https://github.com/latentharbor/ha-aux-a-plus) et
-[`GijsZwegers/com.zwegersit.auxairco`](https://github.com/GijsZwegers/com.zwegersit.auxairco).
-La liste complète, avec les licences et notices, sera publiée avec la documentation utilisateur.
+L'implémentation s'appuie sur l'analyse de plusieurs projets open source ayant documenté ces protocoles, et
+reprend du code de certains d'entre eux dans le respect de leur licence. La liste complète, avec les
+auteurs, les licences et les notices, est publiée dans la documentation utilisateur :
+[`docs/fr_FR/credits.md`](docs/fr_FR/credits.md).
 
 ## Licence
 
-AGPL — voir la doc [développeur Jeedom](https://doc.jeedom.com/fr_FR/dev/) pour le cadre de publication des
-plugins.
+**GPL-3.0-or-later** (GNU General Public License version 3 ou ultérieure) — texte complet dans le fichier
+[`LICENSE`](LICENSE). Voir aussi la doc [développeur Jeedom](https://doc.jeedom.com/fr_FR/dev/) pour le cadre
+de publication des plugins.

@@ -17,7 +17,7 @@
 | `category` | **`wellness`** | Le plugin rend un service de **confort thermique** à l'utilisateur final (« Bien-être » dans le market FR), catégorie où vivent les plugins de chauffage/climatisation/thermostat. `devicecommunication` décrirait un **pont d'appareils** (l'aspect multi-transport est un moyen, pas la finalité). Repli si la modération du market préfère : `devicecommunication`. |
 | `hasOwnDeamon` | **`false`** au MVP | cf. `smartclim-daemon-choix.md` |
 | `hasDependency` | **`false`** au MVP | aucun paquet pip/apt tant qu'il n'y a pas de démon |
-| `licence` | `AGPL` (inchangé) | crédits MIT/Apache-2.0 à conserver, cf. `smartclim-ecosysteme-aux-broadlink.md` § 6 |
+| `licence` | **`GPL`** (était `AGPL`, aligné à l'UC02 du domaine post-MVP 07 : `LICENSE` portait GPL **v2**, les en-têtes GPL **v3**) | crédits MIT/Apache-2.0 à conserver, cf. `smartclim-ecosysteme-aux-broadlink.md` § 6 et `docs/fr_FR/credits.md` |
 | `description` | ≥ 80 caractères **par langue**, **dans `info.json`** | règle market ; ⚠️ **pas** dans `core/i18n/*.json` (cf. `CLAUDE.md`) |
 
 ## 2. Classes et fichiers (⚠️ 1 classe ↔ 1 fichier + `require_once` obligatoire)

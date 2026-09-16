@@ -201,7 +201,7 @@
 |---|---|
 | **Quel protocole parle CET appareil ?** générations G1/G2/G3, marques, matrice de décision, **une MAC Broadlink ne garantit rien** | `smartclim-ecosysteme-aux-broadlink.md` §§ 1-4 |
 | ⚠️ **Mon appareil G3 parle-t-il un protocole LAN (AUXLink) ?** sonde de découverte lecture seule livrée (UC04 post-mvp/05), verdict **en attente** de campagne d'observation réelle | `smartclim-ecosysteme-aux-broadlink.md` § 8 |
-| **Licences** des projets étudiés : qui est réutilisable, sous quelle condition (AGPL du plugin) | `smartclim-ecosysteme-aux-broadlink.md` § 6 |
+| **Licences** des projets étudiés : qui est réutilisable, sous quelle condition (plugin en **GPL-3.0-or-later**) ; où vivent les notices à reproduire | `smartclim-ecosysteme-aux-broadlink.md` § 6, puis `docs/fr_FR/credits.md` § 3.1 |
 | **AUX Home** (`eu-smthome-api.aux-global.com`) : `getPubkey`, chiffrement RSA/AES du login, bearer, `/app/user_device`, `/app/device/v2/control` | `smartclim-transport-aux-home.md` §§ 1-4 |
 | En-tête **`country` (ISO-3)** : cause documentée d'échec de login AUX Home | `smartclim-transport-aux-home.md` § 5 |
 | Décoder `status.control` / `status.running` (trames `bb00…`) ; **température ambiante = octet[15] − 32** ; fraîcheur très lente | `smartclim-transport-aux-home.md` § 6 |

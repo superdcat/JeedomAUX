@@ -1637,6 +1637,34 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   expose l'URL du dépôt distant, et un **jeton** si le clone utilisait `https://user:token@…`. Aucun
   `.htaccess` interne ne peut le fermer. Préférer une installation **par archive**.
 - `docs/<langue>/` = documentation **utilisateur** ; `.memory/` = analyse & specs **internes** (français).
+  Depuis l'UC02 du domaine post-MVP 07, `docs/fr_FR/` porte une vraie documentation : `index.md` (10
+  sections, du premier install aux limites connues), `credits.md` et `reseau-local.md`. ⚠️ **Le core ne
+  rend AUCUN Markdown local** : les clés `documentation`/`changelog` d'`info.json` sont des **liens web**
+  (substitution `#language#`, repli FR), et celles déclarées aujourd'hui rendent **HTTP 404** — ce chemin
+  n'existe que pour un plugin publié au market. Écrire la doc ne la rend donc pas atteignable depuis le
+  bouton « Documentation » : **dépendance bloquante de l'UC04** du même domaine (GitHub Pages sur `/docs`,
+  ou publication officielle).
+  ⚠️ **Règle de rédaction de cette doc** : tout terme de protocole (*transport*, *cloud*, *LAN*, *MAC*,
+  *scan*, *capacités*) est défini **à sa première occurrence, sans renvoi**, et `index.md` ne pointe
+  **jamais** vers `.memory/` ni vers un chemin de code. ⚠️ **Zéro capture d'écran** (la machine de dev n'a
+  ni PHP ni Jeedom : une capture ne pourrait venir que d'une installation réelle, avec de vrais
+  identifiants à l'écran), et un **seul** jeu d'exemples fictifs — `mon.compte@exemple.fr`,
+  `192.168.1.42`, `aa:bb:cc:dd:ee:ff`. ⚠️ **`docs/` n'est couvert par AUCUN filet automatique** :
+  `verif-plugin.py` ne parcourt que `core/`, `desktop/` et `plugin_info/`.
+  ⚠️ **Piège de fins de ligne** : les `.md` de `docs/fr_FR/` sont en **CRLF**, mais `README.md` est en
+  **LF pur** — respecter l'existant fichier par fichier, ne pas uniformiser.
+- **Licence du plugin : `GPL-3.0-or-later`**, alignée à l'UC02 du domaine post-MVP 07 — elle est
+  **contrainte, pas choisie** : le squelette `jeedom/plugin-template` dont dérive tout le plugin est
+  GPL-3.0-or-later, seule dépendance **copyleft**. Le dépôt donnait jusque-là **trois** réponses
+  contradictoires (`LICENSE` = texte GPL **v2**, en-têtes de tous les sources = GPL **v3**, `info.json` +
+  `README.md` = **AGPL**) ; les trois sont désormais alignées. Ne pas réintroduire « AGPL ».
+  ⚠️ **Les notices MIT des sources tierces vivent dans `docs/fr_FR/credits.md` § 3.1**, reproduites
+  **verbatim** depuis les `LICENSE` des dépôts d'origine — jamais paraphrasées, jamais complétées d'une
+  année ou d'un nom manquant (le titulaire de `fparrav/homebridge-aux-cloud` est **Felipe Parra** ; celui
+  de `latentharbor/ha-aux-a-plus` **n'est pas nommé**). ⚠️ La table du § 6 de
+  `.memory/analyse/smartclim-ecosysteme-aux-broadlink.md` a **omis `mjg59/python-broadlink` et
+  `jeedom/plugin-template` jusqu'à cette UC** : la source de vérité des crédits est l'ensemble des
+  **en-têtes de classes et de modules**, pas cette table.
 
 ## Internationalisation (i18n) — natif multilingue
 

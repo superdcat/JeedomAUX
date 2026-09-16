@@ -1,30 +1,12 @@
-# Changelog plugin template
+# Changelog SmartClim
 
->**IMPORTANT**
+> **IMPORTANT**
 >
->S'il n'y a pas d'information sur la mise à jour, c'est que celle-ci concerne uniquement de la mise à jour de documentation, de traduction ou de texte.
+> S'il n'y a pas d'information sur une mise à jour, c'est que celle-ci concerne uniquement de la mise à
+> jour de documentation, de traduction ou de texte.
 
-# 19/01/2022
+# En cours de développement
 
-- Optimisations V4.2
-
-# 20/11/2020
-
-- Présentation officielle V4
-- Ajouts d'éléments d'informations et de paramètres pour les commandes
-
-# 16/11/2020
-
-- version minimale Jeedom: 3.3.39 (dernière MAJ critique)
-
-# 04/11/2020
-
-- Nouvelle présentation de la liste des objets
-
-# 07/08/2020
-
-- Ajout de commentaires
-
-# 17/05/2020
-
-- Mise à jour de la documentation
+- Développement initial de SmartClim : pilotage des climatiseurs AUX Home, Broadlink LAN et AUX Cloud
+  (AC Freedom), stratégies de transport, fonctions de confort, ergonomie Jeedom (widget, page-panneau) et
+  documentation utilisateur.

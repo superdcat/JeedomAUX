@@ -80,9 +80,9 @@ respecte ces obligations.
 
 - La traduction de cette documentation utilisateur vers `en_US`/`de_DE`/`es_ES` n'est pas couverte ici (le
   périmètre imposé par `CLAUDE.md` pour `docs/<langue>/` est distinct du mécanisme d'i18n de l'interface) ;
-  seule la conformité des liens de documentation déclarés dans le manifeste est vérifiée par l'UC03 de ce
+  seule la conformité des liens de documentation déclarés dans le manifeste est vérifiée par l'UC04 de ce
   domaine.
 - La vérification de complétude et de conformité des traductions de l'**interface** (`core/i18n/*.json`) et
-  de la `description` du manifeste → UC03 de ce domaine.
+  de la `description` du manifeste → UC04 de ce domaine.
 - La documentation technique interne (`.memory/`) n'est pas concernée : elle reste un artefact de
   développement, pas une documentation utilisateur.

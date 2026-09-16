@@ -101,6 +101,8 @@ Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.m
 
 | Projet | Langage | Portée | Licence | Réutilisation |
 |---|---|---|---|---|
+| `mjg59/python-broadlink` | Python | **Broadlink LAN** — découverte, authentification `0x65`, `send_packet`, horodatage | **MIT** | ✅ **contrat protocolaire entièrement repris** — retenu comme SOURCE DE VÉRITÉ UNIQUE du transport LAN (notice dans le docblock de `smartclimBroadlinkLan` **et** dans `docs/fr_FR/credits.md`) |
+| `jeedom/plugin-template` | PHP/Python | squelette du plugin ; `resources/smartclimd/jeedom/` | **GPL-3.0-or-later** | ✅ **seule dépendance COPYLEFT** — c'est elle qui fixe la licence du plugin |
 | `GijsZwegers/com.zwegersit.auxairco` | TypeScript | **AUX Home EU** (login RSA+AES, `user_device`, `v2/control`, décodage trame) + legacy | **MIT** | ✅ portage de code autorisé (conserver la notice) |
 | `zwegersit.nl/projecten/airco-homey/` | article (NL) | démarche + contrat AUX Home vérifié à la capture réseau | article | ✅ source factuelle, à citer |
 | `maeek/ha-aux-cloud` | Python | **AUX Cloud legacy** complet + WebSocket relay | **MIT** | ✅ portage autorisé |
@@ -114,10 +116,13 @@ Ordre de préférence recommandé quand plusieurs transports répondent (cf. `.m
 | `azadaydinli/homebridge-ac-freedom` | JS | multimarque, presets | **AUCUNE licence** | ❌ idem |
 | `GrKoR/esphome_aux_ac_component` | C++ | protocole AUX série (UART) | `NOASSERTION` | ⚠️ licence à vérifier avant tout emprunt |
 
-> **Compatibilité** : le plugin Jeedom est sous **AGPL-3.0** (`info.json "licence": "AGPL"`). MIT et
-> Apache-2.0 sont compatibles *en aval* (intégration dans un projet AGPL) **à condition de conserver les
-> notices de copyright et de licence** des sources d'origine. Prévoir une section « Crédits » dans la doc
-> utilisateur (`docs/fr_FR/`).
+> **Compatibilité** : le plugin est sous **GPL-3.0-or-later** — aligné à l'UC02 du domaine post-MVP 07
+> (`LICENSE` = texte GPL v3, `info.json "licence": "GPL"`, en-têtes de tous les sources). ⚠️ **Il a longtemps été décrit ici comme AGPL-3.0 — c'était FAUX** : `LICENSE` portait le texte GPL **v2**, les en-têtes
+> disaient GPL **v3**, et seul `info.json` disait AGPL. La licence est d'ailleurs **contrainte**, pas choisie : le squelette `jeedom/plugin-template` est GPL-3.0-or-later.
+> MIT et Apache-2.0 sont compatibles *en aval* **à condition de conserver les notices de copyright et de licence** des sources d'origine.
+>
+> ⚠⚠ **Cette table a omis `python-broadlink` et `plugin-template` jusqu'à l'UC02 du domaine 07** — les deux emprunts les plus lourds, dont le seul copyleft. Une section « Crédits » rédigée depuis ce § seul aurait été incomplète sur ses entrées les plus contraignantes : **la source de vérité des crédits est l'ensemble des en-têtes de classes et de modules**, cette table n'en est qu'un complément.
+> ⚠️ **Une notice se recopie du fichier `LICENSE` du dépôt d'origine**, jamais du nom du dépôt : le titulaire de `fparrav/homebridge-aux-cloud` est **Felipe Parra**, et celui de `latentharbor/ha-aux-a-plus` **n'est pas nommé** (« Copyright (c) 2026 » seul). Les notices vérifiées sont dans `docs/fr_FR/credits.md` § 3.1.
 >
 > ❌ **Les deux dépôts `azadaydinli` sont sans fichier `LICENSE`** (vérifié :
 > `raw.githubusercontent.com/azadaydinli/ac_freedom/main/LICENSE` → HTTP 404) : par défaut « tous droits

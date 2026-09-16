@@ -403,6 +403,22 @@ class smartclimBroadlinkLan {
     $lisibles = smartclimFrame::conceptsLisibles($trameControle, $trameLongue);
     $statut = !empty($lisibles) ? self::STATUT_ETAT_LU : self::STATUT_ETAT_ILLISIBLE;
 
+    // UC01 du domaine post-mvp/07-multimarque-documentation-et-diffusion (§ 3.3 de sa
+    // spec technique, AC4) : SEUL site traversé par TOUS les appareils LAN, reconnus ou
+    // non — un appareil dont la trame est ILLISIBLE n'est jamais créé et ne traverse donc
+    // jamais capacitesAppareil() ; c'est pourtant précisément l'appareil « non reconnu »
+    // qu'AC4 existe pour diagnostiquer. Non bloquant, en 'debug' uniquement : le statut
+    // et le retour restent déterminés par $lisibles ci-dessus.
+    smartclim::journaliserChargeBrute(
+      smartclimCapabilities::TRANSPORT_BROADLINK_LAN,
+      $macNorm,
+      array('controle' => $trameControle, 'longue' => $trameLongue),
+      array(
+        'statut' => $statut,
+        'devtype' => isset($_appareil['type_appareil']) && is_scalar($_appareil['type_appareil']) ? (string) $_appareil['type_appareil'] : '',
+      )
+    );
+
     return array(
       'session' => $statutSession,
       'statut' => $statut,
@@ -434,39 +450,64 @@ class smartclimBroadlinkLan {
   }
 
   /**
-   * Profil de capacités GÉNÉRIQUE de CE transport, à partir d'une lecture lireEtat() (UC02,
-   * § 5.2 de la spec technique). 'modes' et 'vitesses' VIDES à dessein (R1, § 9 de la spec
-   * technique) : le LAN n'a AUCUN équivalent de feature.coolType (le champ déclaré du
-   * cloud qui permet d'EXCLURE un mode) — il ne peut donc rien exclure. Publier ici le
-   * catalogue COMPLET du transport réintroduirait, via l'UNION de
-   * smartclim::appliquerCapacites(), un mode déjà écarté par le cloud (ex. Chauffage sur
-   * une unité froid-seul) dès qu'un scan LAN tourne sans qu'un scan cloud repasse
-   * derrière. UC02 étant en LECTURE SEULE, aucun catalogue d'action n'est nécessaire ici.
+   * Profil de capacités GÉNÉRIQUE de CE transport, à partir d'une lecture lireEtat().
+   * Publie désormais le CATALOGUE COMPLET de modes/vitesses que ce transport sait écrire
+   * (UC01 du domaine post-mvp/07-multimarque-documentation-et-diffusion, § 3.1 de sa spec
+   * technique — AC2 : socle pilotable minimal pour un appareil découvert par le SEUL LAN).
+   *
+   * ⚠️ CE N'ÉTAIT PAS LE CAS jusqu'ici (UC02 du domaine post-mvp/04, R1) : le LAN publiait
+   * 'modes'/'vitesses' VIDES, faute d'équivalent LAN de feature.coolType (le champ déclaré
+   * du cloud qui permet d'EXCLURE un mode PAR APPAREIL) — publier le catalogue complet
+   * aurait réintroduit, via l'UNION de smartclim::appliquerCapacites(), un mode déjà
+   * écarté par le cloud (ex. Chauffage sur une unité froid-seul) dès qu'un scan LAN
+   * tournait sans qu'un scan cloud repasse derrière.
+   *
+   * Ce risque est désormais neutralisé PLUS EN AMONT, sans toucher à cette méthode :
+   * smartclim::appliquerCapacites() neutralise 'modes'/'vitesses' de CE profil dès que
+   * l'équipement porte un `auxhome_device_id` non vide — c'est le mécanisme
+   * `catalogue_par_defaut` (posé ci-dessous), introduit à l'UC03 du domaine
+   * post-mvp/03-cloud-aux-legacy pour le cloud legacy et réutilisé ici tel quel. Un
+   * équipement AUX Home également scruté en LAN garde donc EXACTEMENT son comportement
+   * d'aujourd'hui ; ce catalogue n'est effectivement admis que sur un équipement SANS
+   * compte AUX Home rattaché — le cas cible de cette UC (appareil vu par le SEUL LAN).
    *
    * @param array $_lecture Renvoyé par lireEtat() ci-dessus.
-   * @return array{concepts:array<int,string>, modes:array<int,string>, vitesses:array<int,string>, modes_exclus:array<int,string>, temperature:array{min:int,max:int,pas:float}, source:string}
+   * @return array{concepts:array<int,string>, modes:array<int,string>, vitesses:array<int,string>, modes_exclus:array<int,string>, catalogue_par_defaut:bool, temperature:array{min:int,max:int,pas:float}, source:string}
    */
   public static function capacitesAppareil(array $_lecture) {
     $trameControle = isset($_lecture['trame_controle']) && is_string($_lecture['trame_controle']) ? $_lecture['trame_controle'] : '';
     $trameLongue = isset($_lecture['trame_longue']) && is_string($_lecture['trame_longue']) ? $_lecture['trame_longue'] : '';
 
     // UC02 du domaine post-mvp/04-fonctions-avancees (§ 5.4 de sa spec technique) : MÊME
-    // fusion que smartclimAuxHomeApi::capacitesAppareil(), strictement symétrique. Le
-    // profil LAN continue de publier 'modes'/'vitesses' vides (aucun équivalent de
-    // feature.coolType), mais PEUT publier les concepts d'oscillation : contrairement aux
-    // modes, l'union n'y réintroduit rien qui aurait été exclu sur preuve, puisqu'aucune
-    // exclusion d'oscillation n'existe côté cloud (§ 2.6 de la spec technique).
+    // fusion que smartclimAuxHomeApi::capacitesAppareil(), strictement symétrique.
     $concepts = array_values(array_unique(array_merge(
       array(smartclimCapabilities::CONCEPT_ONLINE),
       smartclimFrame::conceptsLisibles($trameControle, $trameLongue),
       smartclimFrame::conceptsOscillables($trameControle, $trameLongue)
     )));
 
+    // Catalogue LAN, strictement calqué sur smartclimAuxHomeApi::capacitesAppareil() :
+    // c'est exactement ce que smartclimFrame::encoderOrdre() sait écrire pour ce
+    // transport (colonne 'intent' = colonne 'fil' de smartclimCapabilities::tables()) —
+    // aucune commande sans effet ne peut naître de ce catalogue (AC3 tenu malgré A1).
+    $modes = in_array(smartclimCapabilities::CONCEPT_MODE, $concepts, true)
+      ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_BROADLINK_LAN, smartclimCapabilities::CONCEPT_MODE)
+      : array();
+    $vitesses = in_array(smartclimCapabilities::CONCEPT_FAN_SPEED, $concepts, true)
+      ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_BROADLINK_LAN, smartclimCapabilities::CONCEPT_FAN_SPEED)
+      : array();
+
     return array(
       'concepts' => $concepts,
-      'modes' => array(),
-      'vitesses' => array(),
+      'modes' => $modes,
+      'vitesses' => $vitesses,
       'modes_exclus' => array(),
+      // Aucun équivalent LAN de feature.coolType : ce catalogue n'est pas un raffinement
+      // PAR APPAREIL, il est le catalogue PAR DÉFAUT du transport — même statut que le
+      // catalogue legacy (smartclimAuxCloudApi::capacitesAppareil()). C'est ce drapeau,
+      // lu par smartclim::appliquerCapacites(), qui neutralise 'modes'/'vitesses' de CE
+      // profil sur un équipement déjà couvert par AUX Home.
+      'catalogue_par_defaut' => true,
       'temperature' => smartclimCapabilities::bornesParDefaut(),
       'source' => smartclimCapabilities::TRANSPORT_BROADLINK_LAN,
     );

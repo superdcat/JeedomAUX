@@ -351,8 +351,11 @@ class smartclimFrame {
    *
    * ⚠️ Corps COPIÉ VERBATIM depuis l'ex-smartclimAuxHomeApi::etatAppareil() (§ 2.1 de la
    * spec technique) : aucune valeur d'octet, aucun décalage, aucune borne ne change. Les
-   * trames ne sont NI journalisées NI persistées telles quelles ; seuls les codes fil
-   * (entiers) et les longueurs peuvent apparaître en 'debug'.
+   * trames ne sont journalisées QUE par smartclim::journaliserChargeBrute() (UC01 du
+   * domaine post-mvp/07-multimarque-documentation-et-diffusion, § 3.3 de sa spec
+   * technique), en 'debug', sous ses barrières de forme — JAMAIS par ce décodeur ni par
+   * un transport en direct ; seuls les codes fil (entiers) et les longueurs peuvent
+   * apparaître ailleurs en 'debug'.
    *
    * @param string $_transport smartclimCapabilities::TRANSPORT_*.
    * @param string $_trameControle Trame hexadécimale déjà nettoyée par le transport appelant.

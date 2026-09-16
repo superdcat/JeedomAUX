@@ -867,8 +867,17 @@ class smartclimAuxHomeApi {
   }
 
   /**
-   * Table des EXCLUSIONS de capacités déduites du profil déclaré par l'appareil :
-   * nom déclaré => valeur observée => codes génériques que l'appareil ne sait PAS exécuter.
+   * Table des EXCLUSIONS de capacités déduites d'un ATTRIBUT DÉCLARÉ PAR L'APPAREIL :
+   * attribut => valeur observée => codes génériques que l'appareil ne sait PAS exécuter.
+   *
+   * ⚠️ UC01 du domaine post-mvp/07-multimarque-documentation-et-diffusion (§ 3.2 de sa
+   * spec technique, AC5) : la clé de 1er niveau n'est PLUS seulement un nom d'entrée du
+   * champ `feature` — c'est plus largement un **attribut déclaré par l'appareil**, soit
+   * une entrée de `feature` (ex. `coolType` ci-dessous), soit l'attribut réservé
+   * **`modelId`** (la référence commerciale/produit). C'est la SEULE table du plugin
+   * indexée par une référence commerciale, et c'est délibéré : ajouter la prise en charge
+   * d'un modèle se traduit par l'ajout d'UNE LIGNE ici, sans toucher au reste du plugin
+   * (preuve d'AC5 — cf. § 7 de la spec technique de cette UC).
    *
    * Pourquoi une table d'EXCLUSIONS et non une table d'inclusions — c'est le cœur de la
    * conception, à ne pas inverser :
@@ -890,6 +899,23 @@ class smartclimAuxHomeApi {
    * ⚠️ Le sens de coolType=0 reste INCONNU (un seul appareil observé) : il n'est donc
    * volontairement PAS dans la table. Toute autre valeur n'exclut rien.
    *
+   * ⚠️⚠️ Ce que cette table sait faire et ce qu'elle ne sait PAS faire (à lire avant toute
+   * extension) : elle EXCLUT DES MODES, rien d'autre. Ni vitesses, ni ajout de capacité.
+   * Ce n'est PAS une limite d'implémentation de cette méthode, c'est une conséquence de
+   * smartclim::appliquerCapacites() : `modes_exclus` est la SEULE voie d'amputation
+   * acceptée par son union (elle unionne `concepts`/`modes`/`vitesses` sans jamais les
+   * réduire, sauf via ce champ précis). Une `vitesses_exclues` exigerait une NOUVELLE
+   * branche d'amputation dans la fusion — donc du CODE, pas de la donnée : exactement
+   * contre l'objectif de cette UC (AC5 : étendre le support = éditer une table). Ne pas
+   * l'ajouter sans preuve d'un besoin réel. Symétriquement, aucune ligne de cette table ne
+   * peut faire APPARAÎTRE une capacité absente du profil détecté : elle amute sur preuve,
+   * elle n'invente jamais.
+   *
+   * ⚠️ Pas de jumeau côté legacy ni LAN : le `productId` legacy est un opaque de 32 hex
+   * sans sémantique lue, et le devtype LAN est explicitement interdit comme critère (cf.
+   * `.memory/analyse/smartclim-transport-broadlink-lan.md` § 14). Un équivalent vide y
+   * serait du code mort non exerçable — non livré ici (dette D-3 de la spec technique).
+   *
    * @return array<string, array<string, array<int,string>>>
    */
   private static function exclusionsAuxHome() {
@@ -902,19 +928,27 @@ class smartclimAuxHomeApi {
 
   /**
    * Codes génériques de mode que CET appareil ne sait pas exécuter, d'après son profil
-   * déclaré. Renvoie un tableau VIDE dès que le profil est absent ou muet : l'absence de
-   * preuve n'exclut rien (un scan hors ligne ne doit pas amputer un profil).
+   * déclaré ET, depuis UC01 du domaine post-mvp/07 (§ 3.2 de sa spec technique), sa
+   * référence commerciale. Renvoie un tableau VIDE dès que rien ne correspond dans
+   * exclusionsAuxHome() : l'absence de preuve n'exclut rien (un scan hors ligne ne doit
+   * pas amputer un profil, et un modèle inconnu des tables n'est jamais amputé).
    *
    * @param array<string,string> $_capacitesBrutes
+   * @param string $_modele Référence commerciale (`modelId`), déjà assainie par
+   *   nettoyerTexteExterne(). '' si absente/inconnue — défaut choisi pour ne casser aucun
+   *   autre appelant.
    * @return array<int,string>
    */
-  private static function modesExclusAuxHome(array $_capacitesBrutes) {
+  private static function modesExclusAuxHome(array $_capacitesBrutes, $_modele = '') {
+    // Le TOP-LEVEL (modelId, autoritaire) l'emporte sur un hypothétique 'feature.modelId'
+    // — ordre volontaire de array_merge().
+    $attributs = array_merge($_capacitesBrutes, ($_modele !== '') ? array('modelId' => $_modele) : array());
     $exclus = array();
     foreach (self::exclusionsAuxHome() as $nom => $valeurs) {
-      if (!isset($_capacitesBrutes[$nom]) || !isset($valeurs[$_capacitesBrutes[$nom]])) {
+      if (!isset($attributs[$nom]) || !isset($valeurs[$attributs[$nom]])) {
         continue;
       }
-      foreach ($valeurs[$_capacitesBrutes[$nom]] as $mode) {
+      foreach ($valeurs[$attributs[$nom]] as $mode) {
         if (!in_array($mode, $exclus, true)) {
           $exclus[] = $mode;
         }
@@ -1048,7 +1082,11 @@ class smartclimAuxHomeApi {
     )));
 
     $capacitesBrutes = isset($_appareil['capacites_brutes']) && is_array($_appareil['capacites_brutes']) ? $_appareil['capacites_brutes'] : array();
-    $modesExclus = self::modesExclusAuxHome($capacitesBrutes);
+    // UC01 du domaine post-mvp/07-multimarque-documentation-et-diffusion (§ 3.2 de sa
+    // spec technique, AC5) : la référence commerciale entre dans le raffinement de
+    // capacités au même titre que le profil déclaré — $_appareil['modele'] est déjà
+    // assainie par nettoyerTexteExterne() (normaliserAppareil() ci-dessus).
+    $modesExclus = self::modesExclusAuxHome($capacitesBrutes, isset($_appareil['modele']) && is_string($_appareil['modele']) ? $_appareil['modele'] : '');
 
     $modes = in_array(smartclimCapabilities::CONCEPT_MODE, $concepts, true)
       ? smartclimCapabilities::valeursLisibles(smartclimCapabilities::TRANSPORT_AUX_HOME, smartclimCapabilities::CONCEPT_MODE)

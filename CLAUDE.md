@@ -280,6 +280,20 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   couples `[valeur, drapeau]`) et l'expose sous la clé générique `capacites_brutes` — destination
   **exclusive** `capacitesAppareil()`, même statut que les trames ; `exclusionsAuxHome()` est la table
   `valeur observée => codes génériques NON supportés`.
+  ⚠️ **Depuis l'UC01 du domaine post-MVP 07, sa clé de 1er niveau est un « ATTRIBUT DÉCLARÉ PAR
+  L'APPAREIL »** — soit une entrée de `feature` (`coolType`…), soit l'attribut réservé **`modelId`**,
+  c'est-à-dire la **référence commerciale**. C'est **la** table que le brief promet (« ajouter une marque
+  = ajouter une ligne de données, jamais une branche de code ») : `modesExclusAuxHome()` prend un 2ᵉ
+  paramètre `$_modele` et le fusionne en position **autoritaire** (`array_merge`, top-level après
+  `feature`). ⚠️ **Ce n'est PAS une whitelist** — l'absence d'entrée n'exclut rien, elle ne retire
+  simplement aucun mode. ⚠️ Et cette table **ne sait qu'EXCLURE DES MODES** : ni vitesses, ni ajout de
+  capacité — non par paresse, mais parce que `modes_exclus` est la **seule** voie d'amputation acceptée
+  par l'union de `appliquerCapacites()` ; une `vitesses_exclues` exigerait une branche de fusion
+  nouvelle, donc du **code**, contre l'objet même de l'UC. ⚠️ La clé se **copie-colle** depuis la valeur
+  observée : `nettoyerTexteExterne()` ne normalise **ni la casse ni les espaces internes**, et le
+  rapprochement est une **égalité stricte de chaîne** — une clé retapée ne matche pas, et le mécanisme
+  paraît alors cassé. Aucun jumeau legacy ni LAN : `productId` est un opaque sans sémantique lue, et le
+  devtype LAN est **interdit** comme critère.
   Depuis l'UC03 du domaine post-MVP 04, elle porte aussi `conceptsProtectionAuxHome()` — **voie d'entrée
   au profil** de `child_lock`, 3ᵉ terme de fusion de `capacitesAppareil()`, **AUX Home seul** (le LAN ne
   publie pas ce concept : il ne sait pas l'écrire, et cette asymétrie **est** le contrat). Elle vit ici,
@@ -451,10 +465,17 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **`lireEtat()` ne lève JAMAIS non plus** : comme `ouvrirSession()`, tout échec devient un statut.
   ⚠️ **`etatAppareil()` du LAN ne pose JAMAIS `online => false`** : un LAN muet ne prouve pas qu'un
   appareil est hors ligne (VLAN, pare-feu, diffusion filtrée) — seul le cloud sait le dire.
-  ⚠️ **Le profil LAN publie `modes` et `vitesses` VIDES**, et ce n'est pas une paresse : le LAN n'a aucun
-  équivalent de `feature.coolType`, donc il ne peut **rien exclure**. S'il publiait son catalogue complet,
-  l'**union** de `appliquerCapacites()` réintroduirait « Chauffage » sur une unité froid-seul — la
-  régression corrigée le 2026-08-26 — dès qu'un scan LAN tourne sans qu'un scan cloud repasse derrière.
+  ⚠️ **Le profil LAN publie son CATALOGUE depuis l'UC01 du domaine post-MVP 07** — il publiait `modes` et
+  `vitesses` **vides** jusque-là, et la raison de ce vide (le LAN n'a aucun équivalent de
+  `feature.coolType`, donc il ne peut **rien exclure** ; publier le catalogue réintroduisait « Chauffage »
+  sur une unité froid-seul par l'**union** de `appliquerCapacites()` — la régression du 2026-08-26) est
+  désormais tenue par **`catalogue_par_defaut => true`**, jamais par un catalogue vide : `appliquerCapacites()`
+  neutralise `modes`/`vitesses` **dès que `auxhome_device_id` est non vide**, donc un équipement couvert par
+  AUX Home se comporte exactement comme avant. ⚠️ **Le vide était devenu la cause d'un AUTRE défaut** : un
+  équipement créé par la **seule diffusion LAN** — le cas cible du domaine 07 — n'obtenait **aucune commande
+  de mode ni de vitesse**, tout en affichant le mode courant en lecture. Prix assumé de la bascule
+  (arbitré le 2026-09-16) : un LAN-seul **froid-seul** porte un bouton « Mode Chauffage » inopérant tant
+  qu'aucun scan cloud ne l'a contredit — le LAN ne peut pas le savoir.
   ⚠️ **`requete()` appelle `authentifier()` et JAMAIS `ouvrirSession()`** : le verrou est déjà tenu par
   l'appelant (`lireEtat()` ou `appliquerOrdre()`), et `flock` **n'est pas réentrant** entre deux
   descripteurs du même processus. Elle reçoit **16 octets en lecture, 32 en écriture** — `construirePaquet()`
@@ -807,10 +828,13 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   ⚠️ **Le `productId` inconnu se journalise HORS de `journaliserErreurLegacy()`** : 32 caractères
   hexadécimaux, il serait masqué en `[hex]` par la passe de neutralisation, et l'exigence de traçabilité
   deviendrait invérifiable **sans aucune erreur visible**.
-  ⚠️ **Le profil LAN et le profil legacy publient tous deux `modes`/`vitesses` VIDES**, pour la raison
-  identique : le jeu de paramètres dit que `ac_mode` existe, jamais **quelles valeurs** l'appareil accepte —
-  aucun équivalent de `feature.coolType`, donc **rien à exclure**. Publier le catalogue réintroduirait
-  « Chauffage » sur une unité froid-seul par l'union de `appliquerCapacites()`.
+  ⚠️ **Le profil legacy publie son catalogue + `catalogue_par_defaut`** (et le profil LAN fait de même
+  depuis l'UC01 du domaine post-MVP 07 — cf. `smartclimBroadlinkLan` ci-dessus). Motif commun aux deux :
+  le jeu de paramètres dit que `ac_mode` existe, jamais **quelles valeurs** l'appareil accepte — aucun
+  équivalent de `feature.coolType`, donc **rien à exclure**. C'est le drapeau, et non un catalogue vide,
+  qui empêche l'union de `appliquerCapacites()` de réintroduire « Chauffage » sur une unité froid-seul.
+  ⚠️ **Ne PAS écrire que « le LAN et le legacy publient des catalogues vides »** : c'était vrai du legacy
+  jusqu'à l'UC02 du domaine 03, du LAN jusqu'à l'UC01 du domaine 07, et c'est faux des deux aujourd'hui.
   ⚠️⚠️ **La sentinelle de succès de ce backend est `status == 0`, PAS `code == 200`** comme AUX Home. Un
   `!== 200` recopié depuis le transport jumeau ferait échouer **tous** les logins **et** classerait l'échec
   en `TYPE_AUTH` — donc afficherait « vérifiez vos identifiants » sur des identifiants parfaitement valides.
@@ -1574,6 +1598,21 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
   lignes et donner l'illusion d'un fichier CRLF.
   Règle générale : **respecter l'existant fichier par fichier**.
 - Logs via `log::add('smartclim', 'debug'|'info'|'warning'|'error', $msg)` ; **jamais** de secret exposé.
+  ⚠️ **Une charge utile de protocole (trame HVAC, attributs d'appareil) ne se journalise QUE par
+  `smartclim::journaliserChargeBrute()`** (UC01 du domaine post-MVP 07, AC4), en **`debug`** — jamais
+  en direct depuis un transport, jamais depuis `smartclimFrame` (son décodeur n'en journalise aucune).
+  Le niveau `debug`, désactivé par défaut, **EST** le gate : la journalisation n'est **pas** conditionnée
+  à « appareil non reconnu », sans quoi le contrôle dépendrait du signal qu'il cherche.
+  **Trois barrières, indépendantes, chacune doit protéger seule** : (1) **allowlist au point d'appel** —
+  ne **jamais** passer un `$appareil` entier (`normaliserAppareilLegacy()` y pose `cookie` et
+  `dev_session`), construire explicitement les tableaux ; (2) forme de trame (hex minuscule, longueur
+  paire, ≤ `LONGUEUR_MAX_TRAME_LOG`) ; (3) forme d'attribut (nom et valeur bornés,
+  ≤ `LONGUEUR_MAX_ATTRIBUT_LOG`), sinon la paire est **omise**.
+  ⚠️ **Les deux clouds ne sont PAS au même niveau de protection** : `capacites_brutes` (AUX Home) est
+  déjà filtrée à la source, mais `recomposerValeurs()` (legacy) filtre les **noms** et **pas les
+  valeurs** — la barrière 3 y est donc **seule**. Ne jamais la relâcher en croyant qu'un assainissement
+  amont compense. La méthode **ne lève jamais** (elle est appelée depuis `lireEtat()`, dont c'est le
+  contrat) : aucun `hex2bin`, aucun `json_decode`.
 - **Robustesse cron** : un équipement en erreur ne doit **pas** interrompre la boucle → `try/catch` **par
   équipement**. Un seul appel réseau global par cycle quand l'API le permet, puis distribution.
   ⚠️ **Période de grâce après commande** (~60 s) : un état scruté plus ancien qu'une commande envoyée ne

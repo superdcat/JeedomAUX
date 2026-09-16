@@ -75,6 +75,11 @@ class smartclim extends eqLogic {
   const CLE_CACHE_VERROU_SCAN = 'smartclim::scan_en_cours';
   const DUREE_VERROU_SCAN = 60;
 
+  // Bornes de forme de journaliserChargeBrute() (UC01 du domaine
+  // post-mvp/07-multimarque-documentation-et-diffusion, § 3.3 de sa spec technique, AC4).
+  const LONGUEUR_MAX_TRAME_LOG = 400;
+  const LONGUEUR_MAX_ATTRIBUT_LOG = 64;
+
   // Clés de configuration PAR ÉQUIPEMENT du profil de capacités (UC04). Espaces de
   // nommage DISJOINTS entre le profil détecté (CLE_CONF_CAPACITES) et les bornes
   // personnalisées (CLE_CONF_TEMP_*) : c'est cette séparation STRUCTURELLE, pas une
@@ -938,6 +943,17 @@ class smartclim extends eqLogic {
           // d'entrée externe » ne s'applique pas à ce fichier).
           $capacites = smartclimAuxHomeApi::capacitesAppareil($appareil);
 
+          // UC01 du domaine post-mvp/07-multimarque-documentation-et-diffusion (§ 3.3 de
+          // sa spec technique, AC4) : allowlist explicite au point d'appel — jamais
+          // $appareil entier, qui n'a ici aucun secret mais fixe la doctrine reprise par
+          // les deux autres transports.
+          self::journaliserChargeBrute(
+            smartclimCapabilities::TRANSPORT_AUX_HOME,
+            $identifiant !== '' ? $identifiant : $macNorm,
+            array('controle' => $appareil['trame_controle'], 'running' => $appareil['trame_running']),
+            array_merge($appareil['capacites_brutes'], array('modelId' => $appareil['modele']))
+          );
+
           $logicalId = $macNorm !== '' ? ('mac:' . $macNorm) : ('auxhome:' . $identifiant);
           $eqLogic = self::chercherEquipementExistant($macNorm, $identifiant, $index);
           // Clé de "consommation" = l'identité RÉELLE de l'équipement rapproché (son
@@ -1120,6 +1136,22 @@ class smartclim extends eqLogic {
             $appareilsResultat[] = self::ligneResultatScan($nomAffiche, $appareil['type_produit'], $macNorm, $identifiant, $appareil['enLigne'], 'ignore_identifiant');
             continue;
           }
+
+          // UC01 du domaine post-mvp/07-multimarque-documentation-et-diffusion (§ 3.3 de
+          // sa spec technique, AC4/A3) : EN AMONT des trois `continue` qui suivent
+          // (ignore_pompe_chaleur / ignore_budget / ignore_non_climatiseur) — et non
+          // après, par symétrie avec le choix LAN (lireEtat()). ignore_non_climatiseur
+          // est l'analogue exact de STATUT_ETAT_ILLISIBLE côté LAN : journaliser après
+          // ces branches raterait structurellement la cible d'AC4, l'« appareil jamais
+          // vu, productId inconnu, aucune preuve ». Allowlist explicite : jamais
+          // $appareil entier ($appareil['cookie']/['dev_session'] y sont posés par
+          // normaliserAppareilLegacy() et n'ont RIEN à faire dans ce journal).
+          self::journaliserChargeBrute(
+            smartclimCapabilities::TRANSPORT_AUX_CLOUD_LEGACY,
+            $identifiant !== '' ? $identifiant : $macNorm,
+            array(),
+            array_merge(isset($appareil['valeurs']) && is_array($appareil['valeurs']) ? $appareil['valeurs'] : array(), array('productId' => $appareil['type_produit']))
+          );
 
           // Correctif reviews croisées (findings major #1/#2) : les motifs d'exclusion
           // ÉTABLIS PAR LE TRANSPORT — indépendants de tout rapprochement Jeedom — sont
@@ -3522,6 +3554,75 @@ class smartclim extends eqLogic {
       return '';
     }
     return preg_replace('/[\x00-\x1F\x7F]/', ' ', (string) $_valeur);
+  }
+
+  /**
+   * Journalise, en niveau DEBUG uniquement, la charge utile brute reçue pour un appareil
+   * lors d'un scan (UC01 du domaine post-mvp/07-multimarque-documentation-et-diffusion,
+   * § 3.3 de sa spec technique, AC4) — filet de diagnostic communautaire pour un modèle ou
+   * une génération inconnus des tables internes. NE LÈVE JAMAIS : aucun accès disque ni
+   * réseau, uniquement des contrôles de forme et log::add().
+   *
+   * Trois barrières, INDÉPENDANTES et ordonnées de la plus forte à la plus faible (leçon
+   * projet « filtres de masquage emboîtés » : chacune protège seule, sans dépendre du
+   * déclenchement d'une autre) :
+   * 1. ALLOWLIST AU POINT D'APPEL — la barrière principale, et elle n'est pas dans cette
+   *    méthode : on ne passe JAMAIS un tableau d'appareil entier ($appareil), qui peut
+   *    porter des secrets (ex. 'cookie'/'dev_session' côté legacy). Chaque appelant
+   *    construit explicitement $_trames et $_attributs avec les seules clés autorisées.
+   * 2. FORME DE TRAME — journalisée seulement si hexadécimale minuscule (2 caractères
+   *    minimum, longueur paire) ET `strlen <= LONGUEUR_MAX_TRAME_LOG` ; sinon un marqueur
+   *    `(<n> car., forme inattendue)` la remplace.
+   * 3. FORME D'ATTRIBUT — une paire n'est journalisée que si le NOM vérifie
+   *    `[A-Za-z0-9_]{1,40}` ET la VALEUR (une fois castée en chaîne) vérifie
+   *    `[0-9A-Za-z._-]{0,64}` ; sinon la paire est OMISE (jamais forgée).
+   *
+   * ⚠️ La journalisation n'est PAS conditionnée à « appareil non reconnu » : gater sur
+   * l'inconnu ferait dépendre le contrôle du signal qu'il cherche (leçon projet « un
+   * critère d'exemption qui aveugle le contrôle »). Le niveau 'debug', désactivé par
+   * défaut, EST le gate.
+   *
+   * @param string $_transport smartclimCapabilities::TRANSPORT_*.
+   * @param string $_reference Repère d'appareil déjà journalisé ailleurs en clair (MAC
+   *   normalisée, deviceId, endpointId) — neutralisé par la méthode elle-même via
+   *   neutraliserPourLog(), rien n'est exigé de l'appelant.
+   * @param array<string,string> $_trames Libellé court => trame hexadécimale.
+   * @param array<string,scalar> $_attributs Nom d'attribut => valeur.
+   * @return void
+   */
+  public static function journaliserChargeBrute($_transport, $_reference, array $_trames, array $_attributs) {
+    $reference = self::neutraliserPourLog($_reference);
+
+    $fragmentsTrames = array();
+    foreach ($_trames as $libelle => $trame) {
+      if (!is_string($libelle)) {
+        continue;
+      }
+      $trame = is_scalar($trame) ? (string) $trame : '';
+      if (preg_match('/\A[0-9a-f]{2,}\z/', $trame) === 1 && strlen($trame) <= self::LONGUEUR_MAX_TRAME_LOG && strlen($trame) % 2 === 0) {
+        $fragmentsTrames[] = $libelle . '=' . $trame;
+      } else {
+        $fragmentsTrames[] = $libelle . '=(' . strlen($trame) . ' car., forme inattendue)';
+      }
+    }
+
+    $fragmentsAttributs = array();
+    foreach ($_attributs as $nom => $valeur) {
+      if (!is_string($nom) || preg_match('/\A[A-Za-z0-9_]{1,40}\z/', $nom) !== 1) {
+        continue;
+      }
+      if (!is_scalar($valeur)) {
+        continue;
+      }
+      $valeur = (string) $valeur;
+      if (strlen($valeur) > self::LONGUEUR_MAX_ATTRIBUT_LOG || preg_match('/\A[0-9A-Za-z._-]{0,' . self::LONGUEUR_MAX_ATTRIBUT_LOG . '}\z/', $valeur) !== 1) {
+        continue;
+      }
+      $fragmentsAttributs[] = $nom . '=' . $valeur;
+    }
+
+    log::add('smartclim', 'debug', 'Charge brute (' . smartclimCapabilities::libelleTransport($_transport) . ', ' . $reference . ') : '
+      . 'trames[' . implode(', ', $fragmentsTrames) . '] attributs[' . implode(', ', $fragmentsAttributs) . ']');
   }
 
   /**

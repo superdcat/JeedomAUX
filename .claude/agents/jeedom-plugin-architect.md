@@ -116,7 +116,8 @@ Format de retour :
 
 - **Pas de specs** (`NN-nom.md`) : déléguées au sous-agent `spec-writer` par l'orchestrateur.
 - **Pas de code**, pas de mise à jour de `CLAUDE.md` / `README.md` (ressort de l'orchestrateur).
-- **Pas de renommage** du squelette (id des fichiers) : c'est le rôle de `helperConfiguration.php`.
+- **Pas de renommage** du squelette (id des fichiers) : c'est le rôle de l'orchestrateur `/init-plugin`
+  (étape 4), via `helperConfiguration.php`/`.py` (supprimés après usage sur ce dépôt, cf. ce fichier).
 - **Pas d'invention** de contrat externe : ce qui n'est pas confirmé va en « à confirmer » / `openQuestions`.
 
 ## Rapport

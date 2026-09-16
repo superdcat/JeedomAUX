@@ -423,20 +423,19 @@ def check_i18n():
         except Exception as e:
             problemes.append('%s : JSON invalide (%s)' % (chemin, e))
             continue
-        manquantes, orphelines, hors_perimetre = [], [], []
+        manquantes, orphelines = [], []
         for cible, attendues in source.items():
             traduites = set(data.get(cible, {}))
             absentes = sorted(attendues - traduites)
             if not absentes:
                 continue
-            # Heuristique de périmètre : un fichier dont AUCUNE clé n'est traduite n'est pas
-            # « en retard », il est simplement hors périmètre (chaînes héritées du squelette,
-            # dont le balayage i18n complet relève de post-mvp/07). Un fichier déjà entamé et
-            # incomplet, en revanche, est un vrai trou.
-            if not traduites:
-                hors_perimetre.append((cible, len(absentes)))
-            else:
-                manquantes += ['%s :: %s' % (cible, k) for k in absentes]
+            # ⚠️ Durcissement A1 (post-mvp/07 UC04) : un fichier dont AUCUNE clé n'est traduite
+            # N'EST PLUS classé « hors périmètre ». Exempter une catégorie sur le signal même
+            # que le contrôle cherche (0 clé traduite) rend le contrôle inatteignable en
+            # silence — c'était précisément le trou que cette UC referme. Un fichier source
+            # sans aucune traduction est donc un PROBLÈME au même titre qu'un fichier
+            # partiellement traduit.
+            manquantes += ['%s :: %s' % (cible, k) for k in absentes]
         for cible, trad in data.items():
             orphelines += ['%s :: %s' % (cible, k)
                            for k in sorted(set(trad) - source.get(cible, set()))]
@@ -444,13 +443,8 @@ def check_i18n():
         etat = '%-6s %3d clé(s), %d section(s)' % (lg, nb, len(data))
         if manquantes:
             etat += ' | %d MANQUANTE(S)' % len(manquantes)
-            problemes.append('%s : %d clé(s) manquante(s) dans une section DÉJÀ traduite, dont %s'
+            problemes.append('%s : %d clé(s) manquante(s), dont %s'
                              % (chemin, len(manquantes), manquantes[0]))
-        if hors_perimetre:
-            etat += ' | %d fichier(s) hors périmètre' % len(hors_perimetre)
-            for cible, cpt in hors_perimetre:
-                avis.append('%s : %s n\'a aucune traduction (%d clé(s)) — hors périmètre, '
-                            'ou traduction pas encore lancée' % (chemin, cible, cpt))
         if orphelines:
             etat += ' | %d orpheline(s)' % len(orphelines)
             avis.append('%s : %d clé(s) traduite(s) sans source dans le code, dont %s'
@@ -500,12 +494,339 @@ def check_interdits(fichiers):
                                 % (rel, num, pourquoi, nu[:80]))
 
 
+# --------------------------------------------------------------- A2 : fr_FR.json absent
+
+
+def check_fr_fr_absent():
+    """PROBLEME si `core/i18n/fr_FR.json` existe (AC2).
+
+    La clé française EST le texte source (cf. CLAUDE.md § i18n) : un fichier fr_FR.json
+    n'a donc structurellement rien à contenir de plus, et sa seule apparition — par exemple
+    un `translator` futur le recréant « par symétrie » avec les trois autres langues —
+    est une régression à elle seule.
+    """
+    chemin = 'core/i18n/fr_FR.json'
+    if os.path.isfile(os.path.join(RACINE, chemin)):
+        problemes.append("%s : ne doit PAS exister — la clé française EST le texte source, "
+                         "aucune traduction fr_FR n'a de sens" % chemin)
+
+
+# ------------------------------------------------ A3 : '{{' dans un template de widget
+
+
+def check_template_sans_i18n():
+    """PROBLEME si '{{' apparaît dans un fichier de `core/template/**`, commentaire compris.
+
+    Ce n'est pas prudentiel : `cmd::toHtml()` rend un template de plugin via
+    `translate::exec($template, 'core/template/...')`, et `getWidgetTemplateCode()` renvoie
+    `isCoreWidget => true` MÊME pour un template trouvé dans un plugin — `translate::
+    getPluginFromName('core/template/...')` ne trouve pas `plugins/` et renvoie `core`. Une
+    entrée `plugins/smartclim/core/template/...` d'un `core/i18n/*.json` ne peut donc JAMAIS
+    être lue : toute double-accolade dans un widget est structurellement inatteignable par
+    traduction, quel que soit l'effort mis à la traduire.
+    """
+    base_rel = 'core/template'
+    base_abs = os.path.join(RACINE, base_rel)
+    if not os.path.isdir(base_abs):
+        return
+    trouve = False
+    for rep, _, noms in os.walk(base_abs):
+        for nom in noms:
+            chemin_abs = os.path.join(rep, nom)
+            rel = os.path.relpath(chemin_abs, RACINE).replace('\\', '/')
+            try:
+                texte = lire_octets(rel).decode('utf-8', 'replace')
+            except Exception:
+                continue
+            occurrences = [m.start() for m in re.finditer(r'\{\{', texte)]
+            if occurrences:
+                trouve = True
+                lignes = ', '.join(str(texte.count('\n', 0, p) + 1) for p in occurrences[:5])
+                problemes.append("%s : '{{' interdit dans un template de widget (jamais lu par "
+                                 "le moteur i18n du core pour un template de plugin) — l. %s%s"
+                                 % (rel, lignes, '…' if len(occurrences) > 5 else ''))
+    if not trouve:
+        print("  templates de widget (core/template/**) : aucune '{{' — OK")
+
+
+# --------------------------------------------------- A4 : attributs/texte non enveloppés
+
+
+# ⚠️ Liste FERMÉE, fondée sur l'ATTRIBUT — même patron que `EXT_BINAIRE` ci-dessus : à
+# COMPLÉTER dès qu'un nouvel attribut porteur de texte utilisateur apparaît (`data-content`
+# d'un popover, `data-title`, `summary`…). Un attribut absent de cette liste n'est pas
+# « toléré » : il est INVISIBLE au contrôle, donc AC4 devient faux sans aucun signal.
+ATTRS_TEXTE_A4 = ('title', 'placeholder', 'alt', 'data-original-title', 'aria-label',
+                  'data-confirm')
+RE_ATTR_A4 = re.compile(r'\b(' + '|'.join(ATTRS_TEXTE_A4) + r')\s*=\s*"([^"]*)"', re.I)
+RE_TEXTE_NOEUD_A4 = re.compile(r'>([^<>{}#\n]{3,}?)<')
+
+
+def _neutraliser_a4(rel, texte):
+    t = re.sub(r'<\?php.*?\?>', ' ', texte, flags=re.S)
+    t = re.sub(r'<\?=.*?\?>', ' ', t, flags=re.S)
+    if not rel.endswith('.js'):        # un .js n'a pas de balise <script> à retirer
+        t = re.sub(r'<script[^>]*>.*?</script>', ' ', t, flags=re.S | re.I)
+    t = re.sub(r'<!--.*?-->', ' ', t, flags=re.S)
+    t = re.sub(r'\{\{.*?\}\}', '', t, flags=re.S)      # déjà enveloppé : hors du périmètre
+    return t
+
+
+def _est_bruit_a4(valeur):
+    if '<?php' in valeur or '<?=' in valeur:
+        return True
+    if "' ." in valeur or ". '" in valeur or '" +' in valeur:
+        return True
+    if "' +" in valeur or "+ '" in valeur or '" +' in valeur:
+        return True                    # concaténation JS (`+`), symétrique de la PHP (`.`)
+    if '#' in valeur:                  # jeton de widget #clé#
+        return True
+    if re.match(r'^[a-z0-9_\-\. ]+$', valeur):
+        return True                    # classe/id technique (tout minuscule, sans accent)
+    return False
+
+
+def check_chaines_non_enveloppees():
+    """AC4 — attribut/texte visible non enveloppé par {{...}} (portée honnête, cf. § 6.5)."""
+    for rel in fichiers_tout():
+        if not rel.startswith(PREFIXES_RENDUS):
+            continue
+        try:
+            texte = lire_octets(rel).decode('utf-8', 'replace')
+        except Exception:
+            continue
+        propre = _neutraliser_a4(rel, texte)
+        for m in RE_ATTR_A4.finditer(propre):
+            valeur = m.group(2).strip()
+            if not valeur or _est_bruit_a4(valeur):
+                continue
+            num = propre.count('\n', 0, m.start()) + 1
+            problemes.append("%s:%d : attribut %s=\"%s\" non enveloppé par {{...}}"
+                             % (rel, num, m.group(1), valeur[:60]))
+        for m in RE_TEXTE_NOEUD_A4.finditer(propre):
+            valeur = m.group(1).strip()
+            if len(valeur) < 3 or _est_bruit_a4(valeur):
+                continue
+            if not re.search(r'[A-Za-zÀ-ÖØ-öø-ÿ]{3,}', valeur):
+                continue
+            num = propre.count('\n', 0, m.start()) + 1
+            avis.append("%s:%d : texte visible '%s' hors {{...}} (à vérifier)"
+                        % (rel, num, valeur[:60]))
+
+
+# ---------------------------------------------------------- A5 : appels __() sur variable
+
+
+def check_appels_traduction():
+    """AC5 — chaque appel `__(...)` a un 1er argument LITTÉRAL et un 2e argument `__FILE__`.
+
+    Lexeur minimal (commentaires puis chaînes sautés) : un `__($var)` ou `__('x' . $v, ...)`
+    échapperait sinon totalement à `_cles_source()` (regex sur littéral) — la clé construite
+    à l'exécution ne correspond à aucune entrée de `core/i18n/*.json`, et la chaîne source
+    sort en français sans laisser aucune trace dans le rapport de complétude (AC1).
+    """
+    total = conforme = 0
+    for rel in fichiers_tout():
+        if not rel.endswith('.php'):
+            continue
+        try:
+            texte = lire_octets(rel).decode('utf-8', 'replace')
+        except Exception:
+            continue
+        n = len(texte)
+        i = 0
+        while i < n:
+            deux = texte[i:i + 2]
+            if deux == '/*':
+                fin = texte.find('*/', i + 2)
+                i = n if fin < 0 else fin + 2
+                continue
+            if deux == '//':
+                fin = texte.find('\n', i)
+                i = n if fin < 0 else fin
+                continue
+            if texte[i] == '#' and deux != '#[':
+                fin = texte.find('\n', i)
+                i = n if fin < 0 else fin
+                continue
+            if texte[i] in '"\'':
+                quote = texte[i]
+                i += 1
+                while i < n:
+                    if texte[i] == '\\':
+                        i += 2
+                        continue
+                    if texte[i] == quote:
+                        i += 1
+                        break
+                    i += 1
+                continue
+            if texte[i:i + 3] == '__(' and (
+                    i == 0 or not (texte[i - 1].isalnum() or texte[i - 1] in '_$')):
+                debut_ligne = texte.rfind('\n', 0, i) + 1
+                fin_ligne = texte.find('\n', i)
+                fin_ligne = n if fin_ligne < 0 else fin_ligne
+                ligne_nu = texte[debut_ligne:fin_ligne].strip()
+                num = texte.count('\n', 0, i) + 1
+                # ⚠️ Redondant avec le saut de commentaires du lexeur ci-dessus (/* */, //,
+                # #) : ce point n'est normalement jamais atteint depuis une ligne de
+                # commentaire, puisque le lexeur en a déjà sauté le contenu. Conservé
+                # volontairement comme filet de défense en profondeur si ce lexeur est un
+                # jour retouché — ne pas le prendre pour la protection principale.
+                if ligne_nu.startswith(('*', '//', '#')):
+                    i += 3
+                    continue
+                total += 1
+                j = i + 3
+                while j < n and texte[j] in ' \t\r\n':
+                    j += 1
+                lit_ok, fin_lit = False, j
+                if j < n and texte[j] in '"\'':
+                    quote = texte[j]
+                    k = j + 1
+                    ferme = False
+                    while k < n and texte[k] != '\n':
+                        if texte[k] == '\\':
+                            k += 2
+                            continue
+                        if texte[k] == quote:
+                            ferme = True
+                            break
+                        k += 1
+                    if ferme:
+                        fin_lit, lit_ok = k + 1, True
+                if not lit_ok:
+                    problemes.append("%s:%d : __() — 1er argument non littéral (concaténation) "
+                                     "— la clé construite à l'exécution n'existera dans aucun "
+                                     "core/i18n/*.json" % (rel, num))
+                    i += 3
+                    continue
+                m2 = fin_lit
+                while m2 < n and texte[m2] in ' \t\r\n':
+                    m2 += 1
+                if m2 >= n or texte[m2] != ',':
+                    problemes.append("%s:%d : __() — 1er argument non littéral (concaténation) "
+                                     "— la clé construite à l'exécution n'existera dans aucun "
+                                     "core/i18n/*.json" % (rel, num))
+                    i = fin_lit
+                    continue
+                m3 = m2 + 1
+                while m3 < n and texte[m3] in ' \t\r\n':
+                    m3 += 1
+                if texte[m3:m3 + 8] != '__FILE__':
+                    problemes.append("%s:%d : __() — __FILE__ manquant (2e argument)"
+                                     % (rel, num))
+                    i = fin_lit
+                    continue
+                conforme += 1
+                i = fin_lit
+                continue
+            i += 1
+    print('  __() : %d appel(s), %d conforme(s)' % (total, conforme))
+
+
+# --------------------------------------------------------- A6 : manifeste info.json
+
+
+# Nomenclature « category » du market Jeedom — recopiée du tableau « NOMENCLATURE
+# CATEGORIES » de doc.jeedom.com/fr_FR/dev/structure_info_json, vérifiée le 2026-09-16.
+# Liste FERMÉE : une valeur absente de la doc n'y est pas ajoutée « par prudence ». La doc
+# étant la seule source et pouvant évoluer, toute alerte de ce contrôle se recoupe contre
+# elle avant de conclure à une catégorie invalide.
+CATEGORIES_MARKET = (
+    'communication', 'wellness', 'energy', 'weather', 'monitoring', 'multimedia',
+    'nature', 'devicecommunication', 'organization', 'home automation protocol',
+    'programming', 'automation protocol', 'health', 'security', 'automatisation',
+)
+
+
+def _valeurs_chaines(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            for x in _valeurs_chaines(v):
+                yield x
+    elif isinstance(obj, list):
+        for v in obj:
+            for x in _valeurs_chaines(v):
+                yield x
+
+
+def check_manifeste():
+    """AC3 + AC7 — description multilingue, category documentée, aucune trace de `template`,
+    et les 4 URL de doc/changelog présentes, en https:// et hors du namespace doc.jeedom.com
+    (réservé aux plugins hébergés par Jeedom : 404 garanti pour un plugin tiers).
+
+    ⚠️ N'inclut AUCUN contrôle sur `licence` — refus motivé (§ 2.5 de la spec technique) :
+    aucune nomenclature n'est documentée pour ce champ, une liste blanche à 6 échantillons
+    inventerait une contrainte que ni le core ni la doc n'imposent.
+    """
+    chemin = 'plugin_info/info.json'
+    try:
+        data = json.loads(lire_octets(chemin).decode('utf-8'))
+    except Exception as e:
+        problemes.append('%s : JSON invalide (%s)' % (chemin, e))
+        return
+
+    langues = data.get('language') or []
+    description = data.get('description')
+    if not isinstance(description, dict):
+        problemes.append('%s : "description" doit être un objet à clés de langue' % chemin)
+    else:
+        manquantes = sorted(set(langues) - set(description))
+        orphelines = sorted(set(description) - set(langues))
+        if manquantes:
+            problemes.append('%s : description sans entrée pour %s'
+                             % (chemin, ', '.join(manquantes)))
+        if orphelines:
+            avis.append('%s : description porte une langue hors de "language" : %s'
+                        % (chemin, ', '.join(orphelines)))
+        for lg, texte in description.items():
+            taille = len(texte) if isinstance(texte, str) else 0
+            if taille < 80:
+                problemes.append('%s : description[%s] fait %d caractère(s), attendu >= 80'
+                                 % (chemin, lg, taille))
+
+    categorie = data.get('category')
+    if categorie not in CATEGORIES_MARKET:
+        problemes.append('%s : category "%s" hors de la nomenclature market documentée'
+                         % (chemin, categorie))
+
+    for valeur in _valeurs_chaines(data):
+        if 'template' in valeur.lower():
+            problemes.append('%s : valeur contenant "template" (résidu du squelette) : %s'
+                             % (chemin, valeur[:80]))
+
+    for cle in ('documentation', 'documentation_beta', 'changelog', 'changelog_beta'):
+        url = data.get(cle)
+        if not isinstance(url, str) or not url:
+            problemes.append('%s : "%s" absent ou vide' % (chemin, cle))
+            continue
+        if not url.startswith('https://'):
+            problemes.append('%s : "%s" n\'est pas en https:// (%s)' % (chemin, cle, url))
+        if 'doc.jeedom.com' in url:
+            problemes.append('%s : "%s" pointe encore vers doc.jeedom.com (namespace réservé '
+                             'aux plugins hébergés par Jeedom, 404 garanti pour un plugin '
+                             'tiers) : %s' % (chemin, cle, url))
+
+
 # ------------------------------------------------------------------------ main
 
 
 def main():
+    # ⚠️ Toute forme de drapeau NON reconnue doit échouer bruyamment (stderr + code 2) : la
+    # version précédente jetait silencieusement tout `--*`, ce qui a rendu `--tous` — la forme
+    # documentée par erreur dans CLAUDE.md — vert à 0 fichier analysé (aucun contrôle par
+    # fichier joué, sortie « Aucun problème détecté »). Une seule forme est acceptée : `--tout`.
+    drapeaux = [a for a in sys.argv[1:] if a.startswith('--')]
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    if '--tout' in sys.argv:
+    inconnus = [d for d in drapeaux if d != '--tout']
+    if inconnus:
+        sys.stderr.write('drapeau(x) inconnu(s) : %s — seule forme acceptée : --tout\n'
+                         % ', '.join(inconnus))
+        return 2
+    if '--tout' in drapeaux:
         fichiers = fichiers_tout()
     elif args:
         fichiers = [a.replace('\\', '/') for a in args]
@@ -537,6 +858,11 @@ def main():
     check_miroir(fichiers)
     check_i18n()
     check_interdits(fichiers)
+    check_fr_fr_absent()
+    check_template_sans_i18n()
+    check_chaines_non_enveloppees()
+    check_appels_traduction()
+    check_manifeste()
 
     if avis:
         print('\n=== AVIS (%d) — à regarder, non bloquant ===' % len(avis))

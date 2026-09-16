@@ -1,7 +1,7 @@
 {
 	"id": "smartclim",
 	"name": "SmartClim",
-	"pluginVersion": "0.46",
+	"pluginVersion": "0.47",
 	"description": {
 		"fr_FR": "Pilotez depuis Jeedom vos climatiseurs Wi-Fi de l'écosystème AUX, Broadlink et AC Freedom (AUX Home, Ballu, Centek, Tornado, Royal Clima…) : marche/arrêt, mode, température de consigne, ventilation et fonctions de confort, en réseau local ou via le cloud.",
 		"en_US": "Control your AUX, Broadlink and AC Freedom Wi-Fi air conditioners from Jeedom (AUX Home, Ballu, Centek, Tornado, Royal Clima and more): power, mode, target temperature, fan speed and comfort features, over the local network or through the cloud.",
@@ -9,7 +9,7 @@
 		"es_ES": "Controla desde Jeedom tus aires acondicionados Wi-Fi del ecosistema AUX, Broadlink y AC Freedom (AUX Home, Ballu, Centek, Tornado, Royal Clima…): encendido, modo, consigna de temperatura, ventilación y funciones de confort, en red local o a través de la nube."
 	},
 	"licence": "GPL",
-	"author": "dcat",
+	"author": "superdcat",
 	"require": "4.2",
 	"os" : {
 		"min" : 10,
@@ -19,10 +19,10 @@
 	"display": "panel",
 	"hasDependency": true,
 	"hasOwnDeamon": true,
-	"changelog_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/beta\/changelog",
-	"changelog": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/changelog",
-	"documentation_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim\/beta",
-	"documentation": "https:\/\/doc.jeedom.com\/#language#\/plugins\/wellness\/smartclim",
+	"changelog_beta": "https:\/\/superdcat.github.io\/JeedomAUX\/fr_FR\/changelog_beta",
+	"changelog": "https:\/\/superdcat.github.io\/JeedomAUX\/fr_FR\/changelog",
+	"documentation_beta": "https:\/\/superdcat.github.io\/JeedomAUX\/fr_FR\/",
+	"documentation": "https:\/\/superdcat.github.io\/JeedomAUX\/fr_FR\/",
 	"link": {
 		"forum": "https:\/\/community.jeedom.com\/"
 	},

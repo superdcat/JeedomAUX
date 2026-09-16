@@ -4,8 +4,9 @@ Plugin [Jeedom](https://jeedom.com) pour piloter les **climatiseurs Wi-Fi de l'�
 AC Freedom**, *quelle que soit la marque commerciale* : AUX, Ballu, Centek, Dunham Bush, Kenwood, Rinnai,
 Rcool, Tornado, Akai, Hyundai, Hisense, Royal Clima… **et toute autre marque utilisant le même protocole**.
 
-> 🚧 **Statut : en développement.** Le socle MVP est spécifié et en cours d'implémentation, une UC à la
-> fois. Le plugin n'est pas encore publiable sur le market.
+> 🚧 **Statut : en préparation de publication.** Le socle MVP et les domaines post-MVP sont implémentés ;
+> les transports Broadlink LAN et AUX Cloud legacy sont livrés mais **non recettés sur du matériel réel**
+> (aucun appareil Broadlink ni compte AC Freedom disponible côté développement).
 
 ## Pourquoi ce plugin
 
@@ -33,14 +34,13 @@ Conséquences concrètes :
 
 | Transport | Statut | Ce qu'il apporte |
 |---|---|---|
-| **AUX Home** (cloud récent) | 🟢 socle MVP | Les appareils récents, qui ne répondent plus au Broadlink UDP |
-| **Broadlink LAN** (UDP port 80) | ⚪ prévu | Pilotage **local**, sans Internet, latence divisée |
-| **AUX Cloud legacy / AC Freedom** | ⚪ prévu | Le parc historique et les régions USA / Chine / Russie |
+| **AUX Home** (cloud récent) | 🟢 livré, recetté | Les appareils récents, qui ne répondent plus au Broadlink UDP |
+| **Broadlink LAN** (UDP port 80) | 🟡 livré, non recetté | Pilotage **local**, sans Internet, latence divisée |
+| **AUX Cloud legacy / AC Freedom** | 🟡 livré, non recetté | Le parc historique et les régions USA / Chine / Russie |
 
-Une fois plusieurs transports disponibles, trois stratégies seront proposées **par équipement** :
-**AUTO** (défaut — LAN prioritaire, repli cloud automatique en cas d'échecs répétés, et retour au LAN
-dès qu'il redevient joignable), **LOCAL** (jamais de cloud) et **CLOUD** (jamais de LAN). Le transport
-réellement utilisé reste **visible** dans l'interface.
+Trois stratégies sont proposées **par équipement** : **AUTO** (défaut — LAN prioritaire, repli cloud
+automatique en cas d'échecs répétés, et retour au LAN dès qu'il redevient joignable), **LOCAL** (jamais de
+cloud) et **CLOUD** (jamais de LAN). Le transport réellement utilisé reste **visible** dans l'interface.
 
 ## Fonctionnalités visées
 
@@ -50,8 +50,8 @@ réellement utilisé reste **visible** dans l'interface.
   consigne, vitesse de ventilation, oscillations verticale et horizontale.
 - **Lecture d'état** : température ambiante, état en ligne, transport actif, fraîcheur de la donnée — y
   compris après un changement fait **à la télécommande** ou **dans l'application constructeur**.
-- **Fonctions de confort** selon l'appareil : éco, sommeil, afficheur, ioniseur/santé, anti-moisissure,
-  nettoyage, silence, sécurité enfant, codes d'erreur.
+- **Fonctions de confort** selon l'appareil : sommeil, afficheur, ioniseur/santé, anti-moisissure,
+  nettoyage, sécurité enfant, codes d'erreur.
 - **Ergonomie Jeedom** : widget « climatiseur » (dashboard + mobile) et page-panneau multi-climatiseurs
   accessible aux utilisateurs non-admin.
 
@@ -59,8 +59,12 @@ réellement utilisé reste **visible** dans l'interface.
 
 - Une instance **Jeedom** (4.2 minimum) — le plugin s'installe sous `<jeedom>/plugins/smartclim/` et dépend
   du core Jeedom : il ne fonctionne pas isolément.
-- Un **compte AUX Home** (ou AC Freedom pour le transport historique) et au moins un climatiseur compatible.
-- Aucune dépendance système au MVP : le plugin est **100 % PHP**, sans démon.
+- Un **compte AUX Home** (ou AC Freedom pour le transport historique) et au moins un climatiseur compatible
+  — avec le transport Broadlink LAN livré, un climatiseur joignable **par diffusion locale** suffit aussi,
+  sans compte cloud.
+- Un **démon Python** (2 dépendances pip, plancher Python 3.7) accélère le temps réel du cloud legacy et la
+  sonde AUXLink : il est **latéral et optionnel**, le pilotage par scrutation reste pleinement opérant
+  démon arrêté, en erreur, ou dépendances non installées.
 
 ## Limites connues
 
@@ -93,6 +97,7 @@ via son `INDEX.md`. Le brief d'origine est dans **`.memory/brief.md`**. Les conv
 core/            Cœur PHP (classes eqLogic/cmd, ajax, includes, widgets)
 desktop/         UI desktop (page de config PHP, JS, modales)
 plugin_info/     Manifeste (info.json), install, configuration, packages.json
+resources/       Démon Python (smartclimd/) et sa lib de pont vers Jeedom
 docs/            Documentation utilisateur (par langue)
 .claude/         Outillage Claude Code (commandes, agents, skills, mémoire)
 .memory/         Brief, specs, analyses et index de doc (connaissance interne, versionnée)

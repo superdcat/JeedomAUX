@@ -82,7 +82,10 @@ passe à l'étape 4 qu'avec une identité **et** une roadmap validées.
 
 Le template porte l'id `template`. Renomme-le à l'id validé **toi-même** — n'attends pas que l'utilisateur
 lance `helperConfiguration.php` (souvent impossible : pas de `php` en local). Utilise le **port Python** du
-helper, non interactif :
+helper, non interactif — ⚠️ **`plugin_info/helperConfiguration.{php,py}` sont supprimés une fois le
+renommage joué** (dette d'outillage à usage unique, purgée à l'UC04 du domaine post-MVP 07) : pour un
+nouveau plugin bootstrapé depuis ce même dépôt gabarit, restaure-les d'abord depuis `jeedom/plugin-template`
+amont ou l'historique git avant de lancer la commande ci-dessous :
 
 ```bash
 python plugin_info/helperConfiguration.py \
@@ -156,7 +159,7 @@ la section « Convention » (format des specs) et « Conventions transverses ».
 ```
 ✅ Plugin initialisé : <id> — <Nom>
 
-🔤 Squelette renommé : template → <id> (info.json, fichiers, contenu) — sans PHP, via helperConfiguration.py
+🔤 Squelette renommé : template → <id> (info.json, fichiers, contenu) — sans PHP, via helperConfiguration.py (supprimé après usage, cf. étape 4)
 📄 CLAUDE.md / README.md : mis à jour (identité réelle du plugin)
 🧠 Analyses : .memory/analyse/<id>-*.md (+ INDEX à jour)
 🗺️  Roadmap : <N> UC MVP + <M> UC post-MVP (<X> domaines)

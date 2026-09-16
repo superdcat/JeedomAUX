@@ -1119,9 +1119,11 @@ Disposition Jeedom fixe (type MVC). Pièces principales, nommées d'après l'id 
   (Debian 10 = Python 3.7 ; `websocket-client` 1.6.2 et au-delà exigent 3.8), **pas** un choix esthétique
   (cf. Démon & dépendances). ⚠️ Chaque paquet ajouté re-déclenche un cycle d'installation **sur tout le
   parc** : ne pas en ajouter à la légère, ni « moderniser » une version sans relire ce point.
-- **`plugin_info/helperConfiguration.php` / `.py`** — assistant de renommage du squelette. **Déjà joué**
-  (`template` → `smartclim`) : ces fichiers ne servent plus, ils sont conservés comme outillage hérité du
-  template d'origine.
+- **`plugin_info/helperConfiguration.php` / `.py`** — **supprimés à l'UC04 du domaine post-MVP 07** :
+  assistant de renommage du squelette (`template` → `smartclim`), **déjà joué**, sans aucun appelant dans
+  le plugin, et le `.php` n'avait ni garde CLI ni `isConnect()` sur un fichier livré à chaque installation.
+  Récupérable depuis l'historique git ou depuis `jeedom/plugin-template` amont si `/init-plugin` devait un
+  jour se rejouer sur un autre plugin.
 - **`plugin_info/smartclim_icon.png`** — icône du plugin, **propre depuis l'UC03 du domaine post-MVP 07**
   (elle était jusque-là la copie renommée de celle du template, **au vert `#95C12B` des plugins officiels
   Jeedom**, ce que la doc demande précisément d'éviter). PNG 309 × 348 imposé par le core, dont seul le
@@ -1639,11 +1641,15 @@ d'UC02, deux UC livrées sans bump, avec pour symptôme un Jeedom qui affiche en
 - `docs/<langue>/` = documentation **utilisateur** ; `.memory/` = analyse & specs **internes** (français).
   Depuis l'UC02 du domaine post-MVP 07, `docs/fr_FR/` porte une vraie documentation : `index.md` (10
   sections, du premier install aux limites connues), `credits.md` et `reseau-local.md`. ⚠️ **Le core ne
-  rend AUCUN Markdown local** : les clés `documentation`/`changelog` d'`info.json` sont des **liens web**
-  (substitution `#language#`, repli FR), et celles déclarées aujourd'hui rendent **HTTP 404** — ce chemin
-  n'existe que pour un plugin publié au market. Écrire la doc ne la rend donc pas atteignable depuis le
-  bouton « Documentation » : **dépendance bloquante de l'UC04** du même domaine (GitHub Pages sur `/docs`,
-  ou publication officielle).
+  rend AUCUN Markdown local** : les clés `documentation`/`changelog` d'`info.json` sont des **liens web**.
+  Depuis l'UC04 du domaine post-MVP 07 elles pointent en dur vers
+  `https://superdcat.github.io/JeedomAUX/fr_FR/…` (**`fr_FR` figé, pas `#language#`** : la substitution du
+  core — `core/class/plugin.class.php`, `str_replace('#language#', config::byKey('language', 'core',
+  'fr_FR'), …)` — prend la langue de l'**instance Jeedom** sans jamais consulter le tableau `language[]` du
+  plugin, et **ne retombe pas sur le français** si la page cible manque ; comme `docs/` ne porte que
+  `fr_FR/`, garder `#language#` produirait un 404 pour tout utilisateur non francophone). ⚠️ Ces URL restent
+  en **HTTP 404** tant que GitHub Pages n'est pas activé et que `master` n'est pas poussé — dette
+  D-07UC04-01, cf. `.memory/specs/post-mvp/07-multimarque-documentation-et-diffusion/04-internationalisation-et-publication-tech.md`.
   ⚠️ **Règle de rédaction de cette doc** : tout terme de protocole (*transport*, *cloud*, *LAN*, *MAC*,
   *scan*, *capacités*) est défini **à sa première occurrence, sans renvoi**, et `index.md` ne pointe
   **jamais** vers `.memory/` ni vers un chemin de code. ⚠️ **Zéro capture d'écran** (la machine de dev n'a
@@ -1754,7 +1760,7 @@ spec : c'est ce qui garde son contexte plat sur tout un run), et **un commit sur
   ⚠️ **Un run interrompu puis committé À LA MAIN casse ces trois indices d'un coup** (vécu le
   2026-08-26 sur UC06) : `etat.json` annonçait `phase: verif`, `commit: null`, l'arbre était propre — et
   pourtant le code était déjà dans `HEAD`, reviews et traduction jamais jouées. Le tell fiable est
-  ailleurs : **`python .claude/scripts/verif-plugin.py --tous` remontant des clés i18n manquantes**. La
+  ailleurs : **`python .claude/scripts/verif-plugin.py --tout` remontant des clés i18n manquantes**. La
   traduction étant *toujours* la dernière étape d'un cycle, une UC dont le code est en place mais dont
   l'i18n est incomplète est une UC **non terminée** — reprendre à l'étape « reviews croisées », pas
   rejouer le plan ni l'implémentation.
